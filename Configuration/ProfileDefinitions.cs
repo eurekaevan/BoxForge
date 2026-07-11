@@ -20,7 +20,5 @@ public static class ProfileDefinitions
         new(ServiceGroupNames.Steam, RegionId.HongKong, ["geosite-steam"]),
         new(ServiceGroupNames.Ai, RegionId.UnitedStates, ["geosite-category-ai-!cn"]),
         new(ServiceGroupNames.Microsoft, RegionId.HongKong, ["geosite-microsoft"]),
-        // Telegram 融合了 geosite 和 geoip，直接放在同一个列表里即可
-        new(ServiceGroupNames.Telegram, null, ["geosite-telegram", "geoip-telegram"]) 
     ];
 }

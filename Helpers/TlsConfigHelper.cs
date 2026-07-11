@@ -15,7 +15,6 @@ public static class TlsConfigHelper
         OutboundReality? realityConfig = null;
         if (isReality && p.TryGetValue("reality-opts", out var ro) && ro is Dictionary<object, object> realityOpts)
         {
-            // 内层对象字典也可以快速取值
             string? pk = realityOpts.TryGetValue("public-key", out var pkObj) ? pkObj?.ToString() : null;
             string? sid = realityOpts.TryGetValue("short-id", out var sidObj) ? sidObj?.ToString() : null;
 
@@ -27,12 +26,20 @@ public static class TlsConfigHelper
             };
         }
 
+        string? fingerprint = p.GetString("client-fingerprint");
+
         return new OutboundTls
         {
             Enabled = true,
             ServerName = p.GetString("sni") ?? p.GetString("servername") ?? server,
             Insecure = p.GetNullableBool("skip-cert-verify"),
-            Utls = new Utls { Enabled = true, Fingerprint = p.GetString("client-fingerprint") ?? "firefox" },
+            Utls = string.IsNullOrWhiteSpace(fingerprint)
+                ? null
+                : new Utls
+                {
+                    Enabled = true,
+                    Fingerprint = fingerprint
+                },
             Alpn = p.GetStringList("alpn") ?? ["h2", "http/1.1"],
             MinVersion = "1.3",
             Reality = realityConfig

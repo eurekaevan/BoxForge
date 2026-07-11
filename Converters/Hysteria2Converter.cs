@@ -23,10 +23,22 @@ public class Hysteria2Converter : IProxyConverter
             List<string>? serverPorts = null;
 
             string? portsStr = p.GetString("ports");
-            if (portsStr != null)
+            if (!string.IsNullOrWhiteSpace(portsStr))
             {
-                if (portsStr.Contains('-') || portsStr.Contains(',')) serverPorts = [portsStr];
-                else if (int.TryParse(portsStr, out int singlePort)) serverPort = singlePort;
+                if (portsStr.Contains(','))
+                {
+                    serverPorts = [.. portsStr
+                        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                        .Select(p => p.Replace('-', ':'))];
+                }
+                else if (portsStr.Contains('-'))
+                {
+                    serverPorts = [portsStr.Replace('-', ':')];
+                }
+                else if (int.TryParse(portsStr, out int singlePort))
+                {
+                    serverPort = singlePort;
+                }
             }
             else
             {

@@ -11,16 +11,14 @@ public class RouteProfileBuilder(IOptions<AppSettings> options) : IConfigCompone
     public void Build(BuildContext ctx)
     {
         ctx.Route.RuleSet.AddRange([
-            CreateRemoteRuleSet("geosite-category-ads-all", "geosite", "category-ads-all"),
-            CreateRemoteRuleSet("geosite-category-pt", "geosite", "category-pt"),
-            CreateRemoteRuleSet("geosite-cn", "geosite", "cn"),
-            CreateRemoteRuleSet("geoip-cn", "geoip", "cn"),
-            CreateRemoteRuleSet("geosite-spotify", "geosite", "spotify"),
-            CreateRemoteRuleSet("geosite-steam", "geosite", "steam"),
-            CreateRemoteRuleSet("geosite-category-ai-!cn", "geosite", "category-ai-!cn"),
-            CreateRemoteRuleSet("geosite-microsoft", "geosite", "microsoft"),
-            CreateRemoteRuleSet("geosite-telegram", "geosite", "telegram"),
-            CreateRemoteRuleSet("geoip-telegram", "geoip", "tg")
+            CreateRemoteRuleSet("geosite-category-ads-all", "geosite", "geosite-category-ads-all"),
+            CreateRemoteRuleSet("geosite-category-pt", "geosite", "geosite-category-pt"),
+            CreateRemoteRuleSet("geosite-cn", "geosite", "geosite-cn"),
+            CreateRemoteRuleSet("geoip-cn", "geoip", "geoip-cn"),
+            CreateRemoteRuleSet("geosite-spotify", "geosite", "geosite-spotify"),
+            CreateRemoteRuleSet("geosite-steam", "geosite", "geosite-steam"),
+            CreateRemoteRuleSet("geosite-category-ai-!cn", "geosite", "geosite-category-ai-!cn"),
+            CreateRemoteRuleSet("geosite-microsoft", "geosite", "geosite-microsoft"),
         ]);
 
         var rules = new List<RouteRule>

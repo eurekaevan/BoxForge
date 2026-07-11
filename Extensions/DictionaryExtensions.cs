@@ -73,7 +73,7 @@ public static class DictionaryExtensions
         string? str = dict.GetString(key);
         if (str == null) return null;
         
-        string digits = new string(str.Where(char.IsDigit).ToArray());
+        string digits = new([.. str.Where(char.IsDigit)]);
         return int.TryParse(digits, out int speed) ? speed : null;
     }
 }
