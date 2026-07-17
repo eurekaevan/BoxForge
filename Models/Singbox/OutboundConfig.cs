@@ -57,8 +57,6 @@ public record Hysteria2Outbound : ProxyOutbound
 {
     [JsonPropertyName("server_ports")] public List<string>? ServerPorts { get; init; }
     [JsonPropertyName("password")] public required string Password { get; init; }
-    [JsonPropertyName("up_mbps")] public int? UpMbps { get; init; }
-    [JsonPropertyName("down_mbps")] public int? DownMbps { get; init; }
     [JsonPropertyName("obfs")] public OutboundObfs? Obfs { get; init; }
     [JsonPropertyName("tls")] public OutboundTls? Tls { get; init; }
 }

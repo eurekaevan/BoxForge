@@ -62,8 +62,6 @@ public class Hysteria2Converter : IProxyConverter
                 Server = server,
                 ServerPort = serverPort,
                 ServerPorts = serverPorts,
-                UpMbps = p.GetSpeedMbps("up"),
-                DownMbps = p.GetSpeedMbps("down"),
                 Obfs = obfsConfig,
                 Password = p.GetRequiredString("password"),
                 Tls = TlsConfigHelper.Extract(p, server, forceTls: true),
