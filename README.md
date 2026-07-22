@@ -5,7 +5,7 @@ SubConvert 是一个将 Clash YAML 配置转换为 sing-box `config.json` 的命
 ## 特性
 
 - 从 GitHub 仓库读取 `clashConfigs/*.yaml`
-- 仅转换 `trojan`、`vless` 、`hysteria2` 节点，包含 TLS / REALITY 字段映射
+- 支持转换 `trojan`、`vless`、`hysteria2`、`shadowsocks` (ss) 和 `anytls` 节点，包含相关字段与 TLS 映射
 - 自动生成地区分组与服务分组
 - 自动生成 DNS、路由规则和远程 rule-set
 - 按平台生成差异配置，支持 Windows / Android / Linux

@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using SubConvert.App;
@@ -29,6 +29,8 @@ var host = Host.CreateDefaultBuilder(args)
         services.AddTransient<IProxyConverter, TrojanConverter>();
         services.AddTransient<IProxyConverter, VlessConverter>();
         services.AddTransient<IProxyConverter, Hysteria2Converter>();
+        services.AddTransient<IProxyConverter, ShadowsocksConverter>();
+        services.AddTransient<IProxyConverter, AnyTlsConverter>();
 
         // 注册 Builder 流水线组件 (按照执行顺序注册)
         // 使用 AddTransient，系统解析 IEnumerable<IConfigComponentBuilder> 时会自动聚合成集合

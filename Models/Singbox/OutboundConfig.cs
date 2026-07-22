@@ -9,6 +9,8 @@ namespace SubConvert.Models.Singbox;
 [JsonDerivedType(typeof(VlessOutbound), typeDiscriminator: "vless")]
 [JsonDerivedType(typeof(TrojanOutbound), typeDiscriminator: "trojan")]
 [JsonDerivedType(typeof(Hysteria2Outbound), typeDiscriminator: "hysteria2")]
+[JsonDerivedType(typeof(ShadowsocksOutbound), typeDiscriminator: "shadowsocks")]
+[JsonDerivedType(typeof(AnyTlsOutbound), typeDiscriminator: "anytls")]
 public abstract record Outbound
 {
     // 注意：绝对不要在这里定义 Type 属性，STJ 会全自动处理！
@@ -58,6 +60,22 @@ public record Hysteria2Outbound : ProxyOutbound
     [JsonPropertyName("server_ports")] public List<string>? ServerPorts { get; init; }
     [JsonPropertyName("password")] public required string Password { get; init; }
     [JsonPropertyName("obfs")] public OutboundObfs? Obfs { get; init; }
+    [JsonPropertyName("tls")] public OutboundTls? Tls { get; init; }
+}
+
+public record ShadowsocksOutbound : ProxyOutbound
+{
+    [JsonPropertyName("method")] public required string Method { get; init; }
+    [JsonPropertyName("password")] public required string Password { get; init; }
+    [JsonPropertyName("plugin")] public string? Plugin { get; init; }
+    [JsonPropertyName("plugin_opts")] public string? PluginOpts { get; init; }
+    [JsonPropertyName("udp_over_tcp")] public bool? UdpOverTcp { get; init; }
+}
+
+public record AnyTlsOutbound : ProxyOutbound
+{
+    [JsonPropertyName("password")] public required string Password { get; init; }
+    [JsonPropertyName("idle_timeout")] public string? IdleTimeout { get; init; }
     [JsonPropertyName("tls")] public OutboundTls? Tls { get; init; }
 }
 
