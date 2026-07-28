@@ -2,8 +2,6 @@ using System.Text.Json.Serialization;
 
 namespace SubConvert.Models.Singbox;
 
-// ── 运行时与外部 API 扩展特性模型 ────────────────────────────────────────
-
 public record ExperimentalConfig
 {
     [JsonPropertyName("cache_file")] public CacheFileConfig? CacheFile { get; init; }

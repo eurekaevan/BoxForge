@@ -13,7 +13,6 @@ public static class ProfileDefinitions
         { RegionId.UnitedStates, ("🇺🇸 美国", new Regex(@"(?i)美国|america|洛杉矶|硅谷|🇺🇸|(?<![a-zA-Z])usa?\d*(?![a-zA-Z])", RegexOptions.Compiled)) },
     };
 
-    // 核心聚变：将名称、回退策略、路由规则三合一
     public static readonly IReadOnlyList<ServiceDefinition> Services =
     [
         new(ServiceGroupNames.Spotify, RegionId.UnitedStates, ["geosite-spotify"]),

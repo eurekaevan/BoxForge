@@ -1,7 +1,6 @@
-using System.Collections;
 using SubConvert.Models;
+using SubConvert.Models.Clash;
 using SubConvert.Models.Singbox;
-using SubConvert.Extensions;
 using SubConvert.Exceptions;
 
 namespace SubConvert.Converters;
@@ -12,20 +11,20 @@ public class ShadowsocksConverter : IProxyConverter
         string.Equals(proxyType, "ss", StringComparison.OrdinalIgnoreCase) || 
         string.Equals(proxyType, "shadowsocks", StringComparison.OrdinalIgnoreCase);
 
-    public NodeConversionResult Convert(Dictionary<string, object> p)
+    public NodeConversionResult Convert(ClashProxyNode node)
     {
-        string name = p.GetString("name") ?? "Unknown-SS-Node";
+        string name = node.GetString("name") ?? "Unknown-SS-Node";
 
         try
         {
-            string server = p.GetRequiredString("server");
-            int port = p.GetRequiredInt("port");
-            string method = p.GetString("cipher") ?? p.GetString("method") ?? throw new NodeParseException("缺失加密方式 (cipher 或 method)");
-            string password = p.GetRequiredString("password");
+            string server = node.GetRequiredString("server");
+            int port = node.GetRequiredInt("port");
+            string method = node.GetString("cipher") ?? node.GetString("method") ?? throw new NodeParseException("缺失加密方式 (cipher 或 method)");
+            string password = node.GetRequiredString("password");
 
-            string? plugin = p.GetString("plugin");
-            string? pluginOpts = ExtractPluginOpts(p);
-            bool? udpOverTcp = p.GetNullableBool("udp-over-tcp") ?? p.GetNullableBool("udp_over_tcp");
+            string? plugin = node.GetString("plugin");
+            string? pluginOpts = ExtractPluginOptions(node);
+            bool? udpOverTcp = node.GetNullableBool("udp-over-tcp") ?? node.GetNullableBool("udp_over_tcp");
 
             return NodeConversionResult.Success(new ShadowsocksOutbound
             {
@@ -36,9 +35,7 @@ public class ShadowsocksConverter : IProxyConverter
                 Password = password,
                 Plugin = plugin,
                 PluginOpts = pluginOpts,
-                UdpOverTcp = udpOverTcp,
-                DomainResolver = "node-resolver",
-                ConnectTimeout = "5s"
+                UdpOverTcp = udpOverTcp
             });
         }
         catch (NodeParseException ex)
@@ -47,34 +44,23 @@ public class ShadowsocksConverter : IProxyConverter
         }
     }
 
-    private static string? ExtractPluginOpts(Dictionary<string, object> dict)
+    private static string? ExtractPluginOptions(ClashProxyNode node)
     {
-        if (!dict.TryGetValue("plugin-opts", out var val) && !dict.TryGetValue("plugin_opts", out var val2))
+        var value = node.GetValue("plugin-opts") ?? node.GetValue("plugin_opts");
+        if (value is string stringOptions)
         {
-            val = null;
-        }
-        else if (val == null)
-        {
-            val = dict.GetValueOrDefault("plugin_opts");
+            return stringOptions;
         }
 
-        if (val == null) return null;
-
-        if (val is string strOpts) return strOpts;
-
-        if (val is IDictionary dictOpts)
+        if (value is ClashObject objectOptions)
         {
-            var pairs = new List<string>();
-            foreach (DictionaryEntry entry in dictOpts)
-            {
-                if (entry.Key != null && entry.Value != null)
-                {
-                    pairs.Add($"{entry.Key}={entry.Value}");
-                }
-            }
-            return string.Join(";", pairs);
+            return string.Join(
+                ";",
+                objectOptions.Properties
+                    .Where(property => property.Value != null)
+                    .Select(property => $"{property.Key}={property.Value}"));
         }
 
-        return val.ToString();
+        return value?.ToString();
     }
 }

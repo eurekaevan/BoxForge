@@ -9,6 +9,7 @@ SubConvert 是一个将 Clash YAML 配置转换为 sing-box `config.json` 的命
 - 自动生成地区分组与服务分组
 - 自动生成 DNS、路由规则和远程 rule-set
 - 按平台生成差异配置，支持 Windows / Android / Linux
+- 可选的 sing-box 内置 Tailscale endpoint，手机无需再启动第二个 VPN
 - 支持单机场本地导出，也支持批量上传到 GitHub
 
 ## 运行环境
@@ -60,12 +61,50 @@ dotnet run -- --GitHubOwner=your-name --GitHubToken=your-token
 - `LocalOutputFile`
 - `MainProxyGroup`
 - `Direct`
+- `TailscaleEnabled`：是否生成 Tailscale endpoint，默认 `false`
+- `TailscaleTag` / `TailscaleDnsTag`
+- `TailscaleStateDirectory`：登录状态目录，默认 `tailscale`
+- `TailscaleControlUrl`：留空使用官方控制平面，也可填写 Headscale 地址
+- `TailscaleHostname`
+- `TailscaleAcceptRoutes`：是否接受 tailnet 子网路由，默认 `true`
+- `TailscaleExitNode` / `TailscaleExitNodeAllowLanAccess`
+
+程序内部按 `GitHub`、`Output`、`Singbox`、`Tailscale` 分组管理配置，同时继续
+兼容以上旧键。也可以使用分组形式，例如：
+
+```bash
+dotnet run -- --Tailscale:Enabled=true --Tailscale:Hostname=my-phone
+```
 
 环境变量会使用 `SUBCONVERT_` 前缀，例如：
 
 - `SUBCONVERT_GitHubOwner`
 - `SUBCONVERT_GitHubToken`
 - `SUBCONVERT_RepoName`
+- `SUBCONVERT_TailscaleEnabled=true`
+
+分组配置对应的环境变量使用双下划线，例如
+`SUBCONVERT_Tailscale__Enabled=true`。新旧形式同时存在时，分组形式优先。
+
+## 在手机上使用 Tailscale
+
+生成配置时启用 Tailscale：
+
+```bash
+dotnet run -- --TailscaleEnabled=true
+```
+
+生成结果会包含一个 `tailscale` endpoint。它复用 sing-box 已有的系统 VPN/TUN，
+不会再创建 Tailscale 系统接口，因此 Android 上不需要同时运行 Tailscale App。
+需要使用 sing-box 1.13 或更高版本。
+
+导入并启动配置后，在 sing-box 客户端的“工具 > Endpoints”中完成 Tailscale
+交互式登录。登录状态存放在 `TailscaleStateDirectory`，更新订阅配置不会把认证
+密钥写进 `config.json` 或上传到 GitHub。
+
+MagicDNS 和 tailnet 节点/子网路由会自动进入 Tailscale；其他流量仍沿用原有代理
+规则。如果需要 Headscale，可设置 `TailscaleControlUrl`。如需使用出口节点，
+将 `TailscaleExitNode` 设置为节点名称或 Tailscale IP。
 
 如果未设置这些变量，程序会继续提示输入 `GITHUB_OWNER` 和 `GITHUB_TOKEN`。
 

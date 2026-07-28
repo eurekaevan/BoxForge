@@ -4,26 +4,50 @@ using Microsoft.Extensions.Options;
 
 namespace SubConvert.Builders.Components;
 
-public class DnsProfileBuilder(IOptions<AppSettings> options) : IConfigComponentBuilder
+public class DnsProfileBuilder(
+    IOptions<SingboxOptions> singboxOptions,
+    IOptions<TailscaleOptions> tailscaleOptions)
 {
-    private readonly AppSettings appSettings = options.Value;
-    public void Build(BuildContext ctx)
+    private readonly SingboxOptions singbox = singboxOptions.Value;
+    private readonly TailscaleOptions tailscale = tailscaleOptions.Value;
+
+    public DnsConfig Build(NodeCatalog nodes)
     {
-        ctx.Dns.Servers.AddRange([
-            new DnsServer { Tag = "bootstrap", Type = "local" },
-            new DnsServer { Tag = "node-resolver", Type = "https", Server = "223.5.5.5" },
-            new DnsServer { Tag = "remote", Type = "https", Server = "1.1.1.1", Detour = appSettings.MainProxyGroup },
-            new DnsServer { Tag = "local", Type = "https", Server = "223.5.5.5" }
+        var dns = new DnsConfig();
+
+        dns.Servers.AddRange([
+            new LocalDnsServer { Tag = "bootstrap" },
+            new HttpsDnsServer { Tag = "node-resolver", ServerAddress = "223.5.5.5" },
+            new HttpsDnsServer { Tag = "remote", ServerAddress = "1.1.1.1", DetourTag = singbox.MainProxyGroup },
+            new HttpsDnsServer { Tag = "local", ServerAddress = "223.5.5.5" }
         ]);
 
-        ctx.Dns.Rules.Add(new DnsRule { QueryType = ["AAAA"], Action = "predefined", Rcode = "NOERROR" });
-        ctx.Dns.Rules.Add(new DnsRule { RuleSet = ["geosite-category-ads-all"], Action = "predefined", Rcode = "NOERROR" });
-
-        if (ctx.ProxyServerDomains.Count > 0)
+        if (tailscale.Enabled)
         {
-            ctx.Dns.Rules.Add(new DnsRule { Domain = [.. ctx.ProxyServerDomains], Action = "route", Server = "node-resolver" });
+            dns.Servers.Add(new TailscaleDnsServer
+            {
+                Tag = tailscale.DnsTag,
+                EndpointTag = tailscale.Tag,
+                AcceptDefaultResolversValue = false
+            });
+
+            // sing-box 1.13 的 MagicDNS-only 写法；1.14 起可改用 preferred_by。
+            dns.Rules.Add(new DnsRule
+            {
+                IpAcceptAny = true,
+                Server = tailscale.DnsTag
+            });
         }
 
-        ctx.Dns.Rules.Add(new DnsRule { RuleSet = ["geosite-cn", "geosite-category-pt"], Action = "route", Server = "local" });
+        dns.Rules.Add(new DnsRule { QueryType = ["AAAA"], Action = "predefined", Rcode = "NOERROR" });
+        dns.Rules.Add(new DnsRule { RuleSet = ["geosite-category-ads-all"], Action = "predefined", Rcode = "NOERROR" });
+
+        if (nodes.ServerDomains.Count > 0)
+        {
+            dns.Rules.Add(new DnsRule { Domain = [.. nodes.ServerDomains], Action = "route", Server = "node-resolver" });
+        }
+
+        dns.Rules.Add(new DnsRule { RuleSet = ["geosite-cn", "geosite-category-pt"], Action = "route", Server = "local" });
+        return dns;
     }
 }

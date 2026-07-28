@@ -6,6 +6,8 @@ using SubConvert.Builders;
 using SubConvert.Builders.Components;
 using SubConvert.Configuration;
 using SubConvert.Converters;
+using SubConvert.Infrastructure.FileSystem;
+using SubConvert.Infrastructure.GitHub;
 using SubConvert.Parsers;
 using SubConvert.Services;
 using SubConvert.Ui;
@@ -18,31 +20,32 @@ var host = Host.CreateDefaultBuilder(args)
     })
     .ConfigureServices((context, services) =>
     {
-        services.Configure<AppSettings>(context.Configuration);
+        services.AddSubConvertOptions(context.Configuration);
         services.AddTransient<IUserInterface, ConsoleUi>();
 
-        // 注册核心基础服务
         services.AddSingleton<IClashParser, ClashParser>();
         services.AddSingleton<IConfigSerializer, ConfigSerializer>();
+        services.AddSingleton<ISingboxConfigValidator, SingboxConfigValidator>();
+        services.AddSingleton<IGitHubConfigRepositoryFactory, GitHubConfigRepositoryFactory>();
+        services.AddSingleton<LocalFileDestination>();
 
-        // 注册协议转换器
         services.AddTransient<IProxyConverter, TrojanConverter>();
         services.AddTransient<IProxyConverter, VlessConverter>();
         services.AddTransient<IProxyConverter, Hysteria2Converter>();
         services.AddTransient<IProxyConverter, ShadowsocksConverter>();
         services.AddTransient<IProxyConverter, AnyTlsConverter>();
 
-        // 注册 Builder 流水线组件 (按照执行顺序注册)
-        // 使用 AddTransient，系统解析 IEnumerable<IConfigComponentBuilder> 时会自动聚合成集合
-        services.AddTransient<IConfigComponentBuilder, InboundBuilder>();
-        services.AddTransient<IConfigComponentBuilder, OutboundGroupBuilder>();
-        services.AddTransient<IConfigComponentBuilder, DnsProfileBuilder>();
-        services.AddTransient<IConfigComponentBuilder, RouteProfileBuilder>();
+        services.AddTransient<NodeCatalogBuilder>();
+        services.AddTransient<ProfilePlanner>();
+        services.AddTransient<InboundBuilder>();
+        services.AddTransient<TailscaleEndpointBuilder>();
+        services.AddTransient<DnsProfileBuilder>();
+        services.AddTransient<RouteProfileBuilder>();
+        services.AddTransient<ExperimentalBuilder>();
 
-        // 注册总装配车间
         services.AddTransient<ISingboxConfigBuilder, SingboxConfigBuilder>();
         services.AddTransient<ConversionService>();
-        services.AddTransient<GitHubWorkflow>();
+        services.AddTransient<ConversionWorkflow>();
         
         services.AddTransient<ConversionOrchestrator>();
     })

@@ -2,7 +2,6 @@ using System.Text.Json.Serialization;
 
 namespace SubConvert.Models.Singbox;
 
-// 核心魔法：告诉 JSON 序列化器自动注入 "type" 字段
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
 [JsonDerivedType(typeof(SelectorOutbound), typeDiscriminator: "selector")]
 [JsonDerivedType(typeof(DirectOutbound), typeDiscriminator: "direct")]
@@ -13,11 +12,9 @@ namespace SubConvert.Models.Singbox;
 [JsonDerivedType(typeof(AnyTlsOutbound), typeDiscriminator: "anytls")]
 public abstract record Outbound
 {
-    // 注意：绝对不要在这里定义 Type 属性，STJ 会全自动处理！
     [JsonPropertyName("tag")] public required string Tag { get; init; }
 }
 
-// ── 1. 逻辑控制类 Outbound ────────────────────────────────────────────────
 public record SelectorOutbound : Outbound
 {
     [JsonPropertyName("outbounds")] public required List<string> Outbounds { get; init; }
@@ -30,17 +27,15 @@ public record DirectOutbound : Outbound
     [JsonPropertyName("domain_resolver")] public required string DomainResolver { get; init; }
 }
 
-// ── 2. 代理节点基础抽象类 ─────────────────────────────────────────────────
 public abstract record ProxyOutbound : Outbound
 {
     [JsonPropertyName("server")] public required string Server { get; init; }   
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] 
     [JsonPropertyName("server_port")] public int? ServerPort { get; init; }
-    [JsonPropertyName("domain_resolver")] public required string DomainResolver { get; init; }
-    [JsonPropertyName("connect_timeout")] public required string ConnectTimeout { get; init; }
+    [JsonPropertyName("domain_resolver")] public string DomainResolver { get; init; } = "node-resolver";
+    [JsonPropertyName("connect_timeout")] public string ConnectTimeout { get; init; } = "5s";
 }
 
-// ── 3. 具体代理协议类 (各自只拥有属于自己的字段) ──────────────────────────
 public record VlessOutbound : ProxyOutbound
 {
     [JsonPropertyName("uuid")] public required string Uuid { get; init; }

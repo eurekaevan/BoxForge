@@ -1,58 +1,47 @@
-using Microsoft.Extensions.Options;
-using SubConvert.Configuration;
+using SubConvert.Builders.Components;
 using SubConvert.Models;
-using SubConvert.Models.Clash;
 using SubConvert.Models.Singbox;
 
 namespace SubConvert.Builders;
 
 public interface ISingboxConfigBuilder
 {
-    SingboxConfig Build(ClashConfig clashConfig, TargetPlatform platform);
+    SingboxConfig Build(SingboxBuildRequest request);
 }
 
-// 注入流水线组件和配置
 public class SingboxConfigBuilder(
-    IEnumerable<IConfigComponentBuilder> pipeline, 
-    IOptions<AppSettings> options) : ISingboxConfigBuilder
+    NodeCatalogBuilder nodeCatalogBuilder,
+    ProfilePlanner profilePlanner,
+    InboundBuilder inboundBuilder,
+    TailscaleEndpointBuilder tailscaleEndpointBuilder,
+    DnsProfileBuilder dnsProfileBuilder,
+    RouteProfileBuilder routeProfileBuilder,
+    ExperimentalBuilder experimentalBuilder) : ISingboxConfigBuilder
 {
-    private readonly AppSettings _appSettings = options.Value;
-
-    public SingboxConfig Build(ClashConfig clashConfig, TargetPlatform platform)
+    public SingboxConfig Build(SingboxBuildRequest request)
     {
-        // 1. 初始化带有动态参数的上下文
-        var ctx = new BuildContext
-        {
-            RawClashConfig = clashConfig,
-            Platform = platform,
-            Route = new RouteConfig { Final = _appSettings.MainProxyGroup }
-        };
+        var nodes = nodeCatalogBuilder.Build(request.ClashConfig);
+        var profiles = profilePlanner.Plan(nodes);
+        var endpoints = tailscaleEndpointBuilder.Build();
 
-        // 2. 执行 DI 容器提供的所有流水线组件
-        foreach (var component in pipeline)
-        {
-            component.Build(ctx);
-        }
-
-        // 3. 收割成品组装
         var orderedOutbounds = new List<Outbound>();
-        orderedOutbounds.AddRange(ctx.MainOutbounds);
-        orderedOutbounds.AddRange(ctx.RegionOutbounds);
-        orderedOutbounds.AddRange(ctx.ServiceOutbounds);
-        orderedOutbounds.AddRange(ctx.NodeOutbounds);
-        
-        if (ctx.DirectOutbound != null)
-        {
-            orderedOutbounds.Add(ctx.DirectOutbound);
-        }
+        orderedOutbounds.Add(profiles.MainOutbound);
+        orderedOutbounds.AddRange(profiles.RegionOutbounds);
+        orderedOutbounds.AddRange(profiles.ServiceOutbounds);
+        orderedOutbounds.AddRange(nodes.Outbounds);
+        orderedOutbounds.Add(profiles.DirectOutbound);
 
         return new SingboxConfig
         {
-            Log = ctx.Log,
-            Dns = ctx.Dns,
-            Inbounds = ctx.Inbounds,
+            Log = new LogConfig(),
+            Dns = dnsProfileBuilder.Build(nodes),
+            Inbounds = inboundBuilder.Build(request.Platform),
+            Endpoints = endpoints.Count > 0 ? endpoints : null,
             Outbounds = orderedOutbounds,
-            Route = ctx.Route,
+            Route = routeProfileBuilder.Build(),
+            Experimental = experimentalBuilder.Build(
+                request.Platform,
+                request.CacheId)
         };
     }
 }

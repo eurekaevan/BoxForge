@@ -1,0 +1,37 @@
+using Microsoft.Extensions.Options;
+using SubConvert.Configuration;
+using SubConvert.Models.Singbox;
+
+namespace SubConvert.Builders.Components;
+
+public class TailscaleEndpointBuilder(IOptions<TailscaleOptions> options)
+{
+    private readonly TailscaleOptions tailscaleOptions = options.Value;
+
+    public List<Endpoint> Build()
+    {
+        if (!tailscaleOptions.Enabled)
+        {
+            return [];
+        }
+
+        return
+        [
+            new TailscaleEndpoint
+            {
+                Tag = tailscaleOptions.Tag,
+                StateDirectory = NullIfWhiteSpace(tailscaleOptions.StateDirectory),
+                ControlUrl = NullIfWhiteSpace(tailscaleOptions.ControlUrl),
+                Hostname = NullIfWhiteSpace(tailscaleOptions.Hostname),
+                AcceptRoutes = tailscaleOptions.AcceptRoutes,
+                ExitNode = NullIfWhiteSpace(tailscaleOptions.ExitNode),
+                ExitNodeAllowLanAccess = string.IsNullOrWhiteSpace(tailscaleOptions.ExitNode)
+                    ? null
+                    : tailscaleOptions.ExitNodeAllowLanAccess
+            }
+        ];
+    }
+
+    private static string? NullIfWhiteSpace(string value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+}

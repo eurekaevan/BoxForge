@@ -33,6 +33,7 @@ public record RouteRule
     [JsonPropertyName("rule_set")] public List<string>? RuleSet { get; init; }
     [JsonPropertyName("ip_cidr")] public List<string>? IpCidr { get; init; }
     [JsonPropertyName("ip_is_private")] public bool? IpIsPrivate { get; init; }
+    [JsonPropertyName("preferred_by")] public List<string>? PreferredBy { get; init; }
     [JsonPropertyName("outbound")] public string? Outbound { get; init; }
     [JsonPropertyName("timeout")] public string? Timeout { get; init; }
 }

@@ -2,8 +2,6 @@ using System.Text.Json.Serialization;
 
 namespace SubConvert.Models.GitHub;
 
-// ── GitHub API 响应模型 ────────────────────────────────────────────────────────
-
 public record GitHubContentItem
 {
     [JsonPropertyName("name")] public string Name { get; init; } = "";

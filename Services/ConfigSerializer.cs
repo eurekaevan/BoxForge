@@ -13,7 +13,6 @@ public interface IConfigSerializer
     string GetContentHash(string content);
 }
 
-// 移除 static，实现接口
 public class ConfigSerializer : IConfigSerializer
 {
     private readonly JsonSerializerOptions _jsonOptions = new()

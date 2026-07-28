@@ -4,13 +4,18 @@ using Microsoft.Extensions.Options;
 
 namespace SubConvert.Builders.Components;
 
-public class RouteProfileBuilder(IOptions<AppSettings> options) : IConfigComponentBuilder
+public class RouteProfileBuilder(
+    IOptions<SingboxOptions> singboxOptions,
+    IOptions<TailscaleOptions> tailscaleOptions)
 {
-    private readonly AppSettings appSettings = options.Value;
+    private readonly SingboxOptions singbox = singboxOptions.Value;
+    private readonly TailscaleOptions tailscale = tailscaleOptions.Value;
 
-    public void Build(BuildContext ctx)
+    public RouteConfig Build()
     {
-        ctx.Route.RuleSet.AddRange([
+        var route = new RouteConfig { Final = singbox.MainProxyGroup };
+
+        route.RuleSet.AddRange([
             CreateRemoteRuleSet("geosite-category-ads-all", "geosite", "geosite-category-ads-all"),
             CreateRemoteRuleSet("geosite-category-pt", "geosite", "geosite-category-pt"),
             CreateRemoteRuleSet("geosite-cn", "geosite", "geosite-cn"),
@@ -37,18 +42,32 @@ public class RouteProfileBuilder(IOptions<AppSettings> options) : IConfigCompone
                     }
                 ],
                 Action = "hijack-dns"
-            },
-            new() { IpIsPrivate = true, Action = "route", Outbound = appSettings.Direct },
+            }
+        };
+
+        if (tailscale.Enabled)
+        {
+            // 必须位于私网直连规则之前，才能覆盖 tailnet 通告的私有子网路由。
+            rules.Add(new RouteRule
+            {
+                Inbound = ["tun-in", "mixed-in"],
+                PreferredBy = [tailscale.Tag],
+                Action = "route",
+                Outbound = tailscale.Tag
+            });
+        }
+
+        rules.AddRange([
+            new RouteRule { IpIsPrivate = true, Action = "route", Outbound = singbox.Direct },
             new() { IpCidr = ["::/0"], Action = "reject" },
-            new() { IpCidr = ["223.5.5.5/32"], Action = "route", Outbound = appSettings.Direct },
+            new() { IpCidr = ["223.5.5.5/32"], Action = "route", Outbound = singbox.Direct },
             new() { Port = [3478, 3479, 19302, 19303], Network = ["udp"], Action = "reject" },
             new() { Inbound = ["tun-in", "mixed-in"], Port = [443], Network = ["udp"], Action = "reject" },
             new() { Inbound = ["tun-in", "mixed-in"], Action = "sniff", Timeout = "300ms" },
-            new() { Protocol = ["ssh"], Action = "route", Outbound = appSettings.Direct },
+            new() { Protocol = ["ssh"], Action = "route", Outbound = singbox.Direct },
             new() { RuleSet = ["geosite-category-ads-all"], Action = "reject" }
-        };
+        ]);
 
-        // 数据驱动：自动化织入服务分流规则
         foreach (var service in ProfileDefinitions.Services)
         {
             if (service.RuleSets.Count > 0)
@@ -63,12 +82,13 @@ public class RouteProfileBuilder(IOptions<AppSettings> options) : IConfigCompone
         }
 
         rules.AddRange([
-            new RouteRule { RuleSet = ["geosite-cn", "geosite-category-pt"], Action = "route", Outbound = appSettings.Direct },
+            new RouteRule { RuleSet = ["geosite-cn", "geosite-category-pt"], Action = "route", Outbound = singbox.Direct },
             new RouteRule { Inbound = ["mixed-in"], Action = "resolve" },
-            new RouteRule { RuleSet = ["geoip-cn"], Action = "route", Outbound = appSettings.Direct }
+            new RouteRule { RuleSet = ["geoip-cn"], Action = "route", Outbound = singbox.Direct }
         ]);
 
-        ctx.Route.Rules.AddRange(rules);
+        route.Rules.AddRange(rules);
+        return route;
     }
 
     private SingboxRuleSet CreateRemoteRuleSet(string tag, string repoType, string fileName) => new()
@@ -77,7 +97,7 @@ public class RouteProfileBuilder(IOptions<AppSettings> options) : IConfigCompone
         Type = "remote",
         Format = "binary",
         Url = $"https://fastly.jsdelivr.net/gh/SagerNet/sing-{repoType}@rule-set/{fileName}.srs",
-        DownloadDetour = appSettings.Direct,
+        DownloadDetour = singbox.Direct,
         UpdateInterval = "1d"
     };
 }

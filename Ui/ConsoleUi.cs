@@ -4,15 +4,13 @@ using SubConvert.Models;
 
 namespace SubConvert.Ui;
 
-// 1. 提取 UI 抽象接口
 public interface IUserInterface
 {
     string RequireInput(string envVar, string prompt, bool secret = false);
     TargetPlatform SelectPlatform();
-    int SelectAirport(List<(string DisplayName, string RepoPath)> files);
+    int SelectAirport(IReadOnlyList<ConfigSourceItem> files);
 }
 
-// 2. 实现控制台版本的 UI（移除 static，注入 Logger）
 public class ConsoleUi(ILogger<ConsoleUi> logger) : IUserInterface
 {
     public string RequireInput(string envVar, string prompt, bool secret = false)
@@ -24,7 +22,6 @@ public class ConsoleUi(ILogger<ConsoleUi> logger) : IUserInterface
             return value.Trim();
         }
 
-        // UI 交互的提示信息依然保留 Console.Write
         Console.Write(prompt);
         if (secret)
         {
@@ -62,7 +59,7 @@ public class ConsoleUi(ILogger<ConsoleUi> logger) : IUserInterface
         return platform;
     }
 
-    public int SelectAirport(List<(string DisplayName, string RepoPath)> files)
+    public int SelectAirport(IReadOnlyList<ConfigSourceItem> files)
     {
         Console.WriteLine("\n请选择要处理的机场配置：");
         for (int i = 0; i < files.Count; i++)
@@ -74,7 +71,7 @@ public class ConsoleUi(ILogger<ConsoleUi> logger) : IUserInterface
             || selection < 1
             || selection > files.Count + 1)
         {
-            return -1; // 代表无效选项
+            return -1;
         }
         return selection;
     }

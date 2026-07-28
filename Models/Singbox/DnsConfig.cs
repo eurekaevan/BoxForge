@@ -11,12 +11,39 @@ public record DnsConfig
     [JsonPropertyName("reverse_mapping")] public bool ReverseMapping { get; init; } = true;
 }
 
-public record DnsServer
+public abstract record DnsServer
 {
     [JsonPropertyName("tag")] public string? Tag { get; init; }
-    [JsonPropertyName("type")] public string? Type { get; init; }
-    [JsonPropertyName("server")] public string? Server { get; init; }
-    [JsonPropertyName("detour")] public string? Detour { get; init; }
+    [JsonPropertyName("type")] public abstract string Type { get; }
+    [JsonPropertyName("server")] public virtual string? Server => null;
+    [JsonPropertyName("detour")] public virtual string? Detour => null;
+    [JsonPropertyName("endpoint")] public virtual string? Endpoint => null;
+    [JsonPropertyName("accept_default_resolvers")] public virtual bool? AcceptDefaultResolvers => null;
+}
+
+public record LocalDnsServer : DnsServer
+{
+    public override string Type => "local";
+}
+
+public record HttpsDnsServer : DnsServer
+{
+    public override string Type => "https";
+    public override string Server => ServerAddress;
+    public override string? Detour => DetourTag;
+
+    [JsonIgnore] public required string ServerAddress { get; init; }
+    [JsonIgnore] public string? DetourTag { get; init; }
+}
+
+public record TailscaleDnsServer : DnsServer
+{
+    public override string Type => "tailscale";
+    public override string Endpoint => EndpointTag;
+    public override bool? AcceptDefaultResolvers => AcceptDefaultResolversValue;
+
+    [JsonIgnore] public required string EndpointTag { get; init; }
+    [JsonIgnore] public bool? AcceptDefaultResolversValue { get; init; }
 }
 
 public record DnsRule
@@ -28,4 +55,5 @@ public record DnsRule
     [JsonPropertyName("action")] public string? Action { get; init; }
     [JsonPropertyName("server")] public string? Server { get; init; }
     [JsonPropertyName("rcode")] public string? Rcode { get; init; }
+    [JsonPropertyName("ip_accept_any")] public bool? IpAcceptAny { get; init; }
 }

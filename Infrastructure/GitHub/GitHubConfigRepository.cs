@@ -1,17 +1,19 @@
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using SubConvert.Models;
 using SubConvert.Models.GitHub;
+using SubConvert.Services;
 
-namespace SubConvert.Services;
+namespace SubConvert.Infrastructure.GitHub;
 
-// ── GitHub API 服务封装 ───────────────────────────────────────────────────────
-
-public class GitHubService(string token, string owner, string repo)
+public sealed class GitHubConfigRepository(
+    string token,
+    string owner,
+    string repository) : IConfigRepository
 {
     private static readonly HttpClient Http = new();
 
-    // 每次请求都使用最新 token，避免跨实例污染
     private HttpRequestMessage NewRequest(HttpMethod method, string url)
     {
         var req = new HttpRequestMessage(method, url);
@@ -22,10 +24,9 @@ public class GitHubService(string token, string owner, string repo)
         return req;
     }
 
-    /// <summary>列出指定文件夹下所有 .yaml 文件，返回 (显示名, 仓库路径) 列表。</summary>
-    public async Task<List<(string DisplayName, string RepoPath)>> ListYamlFilesAsync(string folderPath)
+    public async Task<IReadOnlyList<ConfigSourceItem>> ListAsync(string folderPath)
     {
-        string url = $"https://api.github.com/repos/{owner}/{repo}/contents/{folderPath}";
+        string url = $"https://api.github.com/repos/{owner}/{repository}/contents/{folderPath}";
         using var req = NewRequest(HttpMethod.Get, url);
         using var resp = await Http.SendAsync(req);
         resp.EnsureSuccessStatusCode();
@@ -36,15 +37,14 @@ public class GitHubService(string token, string owner, string repo)
         return [.. items
             .Where(i => i.Type == "file" &&
                         i.Name.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase))
-            .Select(i => (
-                DisplayName: Path.GetFileNameWithoutExtension(i.Name),
-                RepoPath: i.Path))];
+            .Select(item => new ConfigSourceItem(
+                Path.GetFileNameWithoutExtension(item.Name),
+                item.Path))];
     }
 
-    /// <summary>下载指定路径的文件内容，返回 UTF-8 字符串。</summary>
-    public async Task<string> DownloadFileAsync(string repoPath)
+    public async Task<string> ReadAsync(string path)
     {
-        string url = $"https://api.github.com/repos/{owner}/{repo}/contents/{repoPath}";
+        string url = $"https://api.github.com/repos/{owner}/{repository}/contents/{path}";
         using var req = NewRequest(HttpMethod.Get, url);
         using var resp = await Http.SendAsync(req);
         resp.EnsureSuccessStatusCode();
@@ -53,20 +53,17 @@ public class GitHubService(string token, string owner, string repo)
         var item = JsonSerializer.Deserialize<GitHubContentItem>(json)
                    ?? throw new InvalidOperationException("GitHub API 返回了空响应。");
 
-        // Content 字段是 Base64（GitHub 会插入换行，需先移除）
         string base64 = item.Content!.Replace("\n", "").Replace("\r", "");
         return Encoding.UTF8.GetString(Convert.FromBase64String(base64));
     }
 
-    /// <summary>
-    /// 将文本内容上传（新建或覆盖）到仓库指定路径。
-    /// 若文件已存在，自动获取其 sha 再执行更新。
-    /// </summary>
-    public async Task UploadFileAsync(string repoPath, string textContent, string commitMessage)
+    public async Task WriteAsync(
+        string path,
+        string content,
+        string? changeMessage = null)
     {
-        string url = $"https://api.github.com/repos/{owner}/{repo}/contents/{repoPath}";
+        string url = $"https://api.github.com/repos/{owner}/{repository}/contents/{path}";
 
-        // 先查询文件是否存在以获取 sha（更新文件时必须提供）
         string? existingSha = null;
         using (var checkReq = NewRequest(HttpMethod.Get, url))
         using (var checkResp = await Http.SendAsync(checkReq))
@@ -78,11 +75,10 @@ public class GitHubService(string token, string owner, string repo)
             }
         }
 
-        // 构造 PUT 请求体
         var body = new Dictionary<string, string?>
         {
-            ["message"] = commitMessage,
-            ["content"] = Convert.ToBase64String(Encoding.UTF8.GetBytes(textContent))
+            ["message"] = changeMessage ?? $"chore: update {path}",
+            ["content"] = Convert.ToBase64String(Encoding.UTF8.GetBytes(content))
         };
         if (existingSha != null)
             body["sha"] = existingSha;
@@ -93,4 +89,14 @@ public class GitHubService(string token, string owner, string repo)
         using var putResp = await Http.SendAsync(putReq);
         putResp.EnsureSuccessStatusCode();
     }
+}
+
+public sealed class GitHubConfigRepositoryFactory
+    : IGitHubConfigRepositoryFactory
+{
+    public IConfigRepository Create(
+        string token,
+        string owner,
+        string repository) =>
+        new GitHubConfigRepository(token, owner, repository);
 }

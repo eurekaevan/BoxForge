@@ -1,38 +1,36 @@
 using SubConvert.Models.Singbox;
-using SubConvert.Extensions;
+using SubConvert.Models.Clash;
 
 namespace SubConvert.Helpers;
 
 public static class TlsConfigHelper
 {
-    public static OutboundTls? Extract(Dictionary<string, object> p, string server, bool forceTls = false)
+    public static OutboundTls? Extract(ClashProxyNode node, string server, bool forceTls = false)
     {
-        bool isTls = p.GetBool("tls");
-        bool isReality = p.ContainsKey("reality-opts");
+        bool isTls = node.GetBool("tls");
+        var realityOptions = node.GetObject("reality-opts");
+        bool isReality = realityOptions != null;
 
         if (!forceTls && !isTls && !isReality) return null;
 
         OutboundReality? realityConfig = null;
-        if (isReality && p.TryGetValue("reality-opts", out var ro) && ro is Dictionary<object, object> realityOpts)
+        if (realityOptions != null)
         {
-            string? pk = realityOpts.TryGetValue("public-key", out var pkObj) ? pkObj?.ToString() : null;
-            string? sid = realityOpts.TryGetValue("short-id", out var sidObj) ? sidObj?.ToString() : null;
-
             realityConfig = new OutboundReality
             {
                 Enabled = true,
-                PublicKey = pk ?? "",
-                ShortId = sid ?? ""
+                PublicKey = realityOptions.GetRawString("public-key") ?? "",
+                ShortId = realityOptions.GetRawString("short-id") ?? ""
             };
         }
 
-        string? fingerprint = p.GetString("client-fingerprint");
+        string? fingerprint = node.GetString("client-fingerprint");
 
         return new OutboundTls
         {
             Enabled = true,
-            ServerName = p.GetString("sni") ?? p.GetString("servername") ?? server,
-            Insecure = p.GetNullableBool("skip-cert-verify"),
+            ServerName = node.GetString("sni") ?? node.GetString("servername") ?? server,
+            Insecure = node.GetNullableBool("skip-cert-verify"),
             Utls = string.IsNullOrWhiteSpace(fingerprint)
                 ? null
                 : new Utls
@@ -40,7 +38,7 @@ public static class TlsConfigHelper
                     Enabled = true,
                     Fingerprint = fingerprint
                 },
-            Alpn = p.GetStringList("alpn") ?? ["h2", "http/1.1"],
+            Alpn = node.GetStringList("alpn") ?? ["h2", "http/1.1"],
             MinVersion = "1.3",
             Reality = realityConfig
         };

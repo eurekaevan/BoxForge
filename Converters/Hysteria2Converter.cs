@@ -1,7 +1,7 @@
 using SubConvert.Models;
+using SubConvert.Models.Clash;
 using SubConvert.Models.Singbox;
 using SubConvert.Helpers;
-using SubConvert.Extensions;
 using SubConvert.Exceptions;
 
 namespace SubConvert.Converters;
@@ -10,19 +10,19 @@ public class Hysteria2Converter : IProxyConverter
 {
     public bool CanHandle(string proxyType) => proxyType == "hysteria2";
 
-    public NodeConversionResult Convert(Dictionary<string, object> p)
+    public NodeConversionResult Convert(ClashProxyNode node)
     {
-        string name = p.GetString("name") ?? "Unknown-HY2-Node";
+        string name = node.GetString("name") ?? "Unknown-HY2-Node";
 
         try
         {
-            string server = p.GetRequiredString("server");
+            string server = node.GetRequiredString("server");
 
             // 解析跳跃端口逻辑
             int? serverPort = null;
             List<string>? serverPorts = null;
 
-            string? portsStr = p.GetString("ports");
+            string? portsStr = node.GetString("ports");
             if (!string.IsNullOrWhiteSpace(portsStr))
             {
                 if (portsStr.Contains(','))
@@ -42,7 +42,7 @@ public class Hysteria2Converter : IProxyConverter
             }
             else
             {
-                serverPort = p.GetInt("port");
+                serverPort = node.GetInt("port");
             }
 
             if (serverPort == null && serverPorts == null)
@@ -50,10 +50,10 @@ public class Hysteria2Converter : IProxyConverter
 
             // 组装混淆配置 (可选)
             OutboundObfs? obfsConfig = null;
-            string? obfsType = p.GetString("obfs");
+            string? obfsType = node.GetString("obfs");
             if (obfsType != null)
             {
-                obfsConfig = new OutboundObfs { Type = obfsType, Password = p.GetString("obfs-password") };
+                obfsConfig = new OutboundObfs { Type = obfsType, Password = node.GetString("obfs-password") };
             }
 
             return NodeConversionResult.Success(new Hysteria2Outbound
@@ -63,10 +63,8 @@ public class Hysteria2Converter : IProxyConverter
                 ServerPort = serverPort,
                 ServerPorts = serverPorts,
                 Obfs = obfsConfig,
-                Password = p.GetRequiredString("password"),
-                Tls = TlsConfigHelper.Extract(p, server, forceTls: true),
-                DomainResolver = "node-resolver",
-                ConnectTimeout = "5s"                                                
+                Password = node.GetRequiredString("password"),
+                Tls = TlsConfigHelper.Extract(node, server, forceTls: true)
             });
         }
         catch (NodeParseException ex)
