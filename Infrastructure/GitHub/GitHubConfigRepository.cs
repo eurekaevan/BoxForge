@@ -57,12 +57,9 @@ public sealed class GitHubConfigRepository(
         return Encoding.UTF8.GetString(Convert.FromBase64String(base64));
     }
 
-    public async Task WriteAsync(
-        string path,
-        string content,
-        string? changeMessage = null)
+    public async Task WriteAsync(ConfigWriteRequest request)
     {
-        string url = $"https://api.github.com/repos/{owner}/{repository}/contents/{path}";
+        string url = $"https://api.github.com/repos/{owner}/{repository}/contents/{request.Path}";
 
         string? existingSha = null;
         using (var checkReq = NewRequest(HttpMethod.Get, url))
@@ -77,8 +74,10 @@ public sealed class GitHubConfigRepository(
 
         var body = new Dictionary<string, string?>
         {
-            ["message"] = changeMessage ?? $"chore: update {path}",
-            ["content"] = Convert.ToBase64String(Encoding.UTF8.GetBytes(content))
+            ["message"] = request.ChangeDescription == null
+                ? $"chore: update {request.Path}"
+                : $"chore: update {request.ChangeDescription}",
+            ["content"] = Convert.ToBase64String(Encoding.UTF8.GetBytes(request.Content))
         };
         if (existingSha != null)
             body["sha"] = existingSha;

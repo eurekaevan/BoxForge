@@ -8,52 +8,59 @@ namespace SubConvert.Workflows;
 
 public class ConversionWorkflow(
     ConversionService conversionService,
-    IOptions<GitHubOptions> githubOptions,
     IOptions<OutputOptions> outputOptions,
     ILogger<ConversionWorkflow> logger)
 {
-    private readonly GitHubOptions _githubOptions = githubOptions.Value;
     private readonly OutputOptions _outputOptions = outputOptions.Value;
 
     public async Task ProcessBatchAsync(
         IConfigSource source,
         IConfigDestination destination,
         IReadOnlyList<ConfigSourceItem> items,
-        TargetPlatform platform,
-        string owner)
+        TargetPlatform platform)
     {
-        logger.LogInformation("开始批量处理 {Count} 个机场配置...", items.Count);
+        logger.LogInformation("● 开始批量处理，共 {Count} 个配置。", items.Count);
         int success = 0, failed = 0;
 
-        foreach (var item in items)
+        for (int index = 0; index < items.Count; index++)
         {
-            logger.LogInformation("──────────────────────────────────────");
-            logger.LogInformation("处理中：{DisplayName}", item.DisplayName);
+            var item = items[index];
+            logger.LogInformation(
+                "▶ [{Current}/{Total}] {DisplayName}",
+                index + 1,
+                items.Count,
+                item.DisplayName);
             try
             {
                 var result = await ConvertAsync(source, item, platform);
                 
                 string targetPath = $"{_outputOptions.BaseFolder}/{item.DisplayName}/{platform}/config.json";
-                string commitMessage = $"chore: update {item.DisplayName} sing-box config [{platform}]";
+                string changeDescription =
+                    $"{item.DisplayName} sing-box config [{platform}]";
 
-                logger.LogInformation("正在上传到 {Repo}/{TargetPath}...", _githubOptions.Repository, targetPath);
-                await destination.WriteAsync(
+                await destination.WriteAsync(new ConfigWriteRequest(
                     targetPath,
                     result.JsonContent,
-                    commitMessage);
+                    changeDescription));
                 
-                logger.LogInformation("上传成功: {DisplayName} -> {Owner}/{Repo}/{TargetPath}", item.DisplayName, owner, _githubOptions.Repository, targetPath);
+                logger.LogInformation(
+                    "✓ 写入成功：{DisplayName} → {TargetPath}",
+                    item.DisplayName,
+                    targetPath);
                 success++;
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "{DisplayName} 处理失败：{Message}", item.DisplayName, ex.Message);
+                logger.LogError(ex, "✗ {DisplayName} 处理失败：{Message}", item.DisplayName, ex.Message);
                 failed++;
             }
         }
 
-        logger.LogInformation("══════════════════════════════════════");
-        logger.LogInformation("批量处理完成：{Success} 成功，{Failed} 失败。", success, failed);
+        logger.LogInformation(
+            "■ 批量处理完成：✓ {Success} 成功，✗ {Failed} 失败，共 {Total} 个。",
+            success,
+            failed,
+            items.Count);
     }
 
     public async Task ProcessSingleAsync(
@@ -62,19 +69,23 @@ public class ConversionWorkflow(
         ConfigSourceItem item,
         TargetPlatform platform)
     {
-        logger.LogInformation("正在下载 {DisplayName} 配置...", item.DisplayName);
+        logger.LogInformation("▶ 正在处理 {DisplayName}...", item.DisplayName);
         try
         {
             var result = await ConvertAsync(source, item, platform);
 
-            await destination.WriteAsync(
+            await destination.WriteAsync(new ConfigWriteRequest(
                 _outputOptions.LocalFile,
-                result.JsonContent);
-            logger.LogInformation("生成成功: {DisplayName} ({Platform}) -> {LocalOutputFile}", item.DisplayName, platform, _outputOptions.LocalFile);
+                result.JsonContent));
+            logger.LogInformation(
+                "✓ 生成成功：{DisplayName} ({Platform}) → {LocalOutputFile}",
+                item.DisplayName,
+                platform,
+                _outputOptions.LocalFile);
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "处理失败：{Message}", ex.Message);
+            logger.LogError(ex, "✗ 处理失败：{Message}", ex.Message);
         }
     }
 

@@ -1,7 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using SubConvert.Configuration;
-using SubConvert.Infrastructure.FileSystem;
 using SubConvert.Models;
 using SubConvert.Services;
 using SubConvert.Ui;
@@ -12,13 +11,15 @@ namespace SubConvert.App;
 public class ConversionOrchestrator(
     IOptions<GitHubOptions> options,
     IGitHubConfigRepositoryFactory githubFactory,
-    LocalFileDestination localDestination,
+    ILocalConfigDestination localDestination,
     ConversionWorkflow workflow,
     ILogger<ConversionOrchestrator> logger,
     IUserInterface ui)
 {
     public async Task RunAsync()
     {
+        ui.ShowBanner();
+
         var githubOptions = options.Value;
 
         string owner = !string.IsNullOrWhiteSpace(githubOptions.Owner)
@@ -31,13 +32,17 @@ public class ConversionOrchestrator(
 
         if (string.IsNullOrWhiteSpace(owner) || string.IsNullOrWhiteSpace(token))
         {
-            logger.LogError("用户名或 Token 不能为空，程序退出。");
+            logger.LogError("✗ 用户名或 Token 不能为空，程序退出。");
             return;
         }
 
         var github = githubFactory.Create(token, owner, githubOptions.Repository);
         
-        logger.LogInformation("正在获取 {Owner}/{RepoName}/{Folder} 文件列表...", owner, githubOptions.Repository, githubOptions.SourceFolder);
+        logger.LogInformation(
+            "● 正在读取 {Owner}/{RepoName}/{Folder}...",
+            owner,
+            githubOptions.Repository,
+            githubOptions.SourceFolder);
         
         IReadOnlyList<ConfigSourceItem> files;
         try
@@ -46,13 +51,13 @@ public class ConversionOrchestrator(
         }        
         catch (Exception ex)
         {
-            logger.LogError(ex, "获取文件列表失败：{Message}", ex.Message);
+            logger.LogError(ex, "✗ 获取文件列表失败：{Message}", ex.Message);
             return;
         }
 
         if (files.Count == 0)
         {
-            logger.LogError("{Folder}/ 文件夹内未找到任何 YAML 文件。", githubOptions.SourceFolder);
+            logger.LogError("✗ {Folder}/ 文件夹内未找到任何 YAML 文件。", githubOptions.SourceFolder);
             return;
         }
 
@@ -61,7 +66,7 @@ public class ConversionOrchestrator(
         
         if (selection < 1)
         {
-            logger.LogError("无效选项，程序退出。");
+            logger.LogError("✗ 无效选项，程序退出。");
             return;
         }
 
@@ -72,8 +77,7 @@ public class ConversionOrchestrator(
                 github,
                 github,
                 files,
-                platform,
-                owner);
+                platform);
         }
         else
         {

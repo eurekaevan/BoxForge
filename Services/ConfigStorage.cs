@@ -10,13 +10,12 @@ public interface IConfigSource
 
 public interface IConfigDestination
 {
-    Task WriteAsync(
-        string path,
-        string content,
-        string? changeMessage = null);
+    Task WriteAsync(ConfigWriteRequest request);
 }
 
 public interface IConfigRepository : IConfigSource, IConfigDestination;
+
+public interface ILocalConfigDestination : IConfigDestination;
 
 public interface IGitHubConfigRepositoryFactory
 {

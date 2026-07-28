@@ -1,12 +1,10 @@
+using SubConvert.Models;
 using SubConvert.Services;
 
 namespace SubConvert.Infrastructure.FileSystem;
 
-public sealed class LocalFileDestination : IConfigDestination
+public sealed class LocalFileDestination : ILocalConfigDestination
 {
-    public Task WriteAsync(
-        string path,
-        string content,
-        string? changeMessage = null) =>
-        File.WriteAllTextAsync(path, content);
+    public Task WriteAsync(ConfigWriteRequest request) =>
+        File.WriteAllTextAsync(request.Path, request.Content);
 }

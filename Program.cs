@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Console;
 using SubConvert.App;
 using SubConvert.Builders;
 using SubConvert.Builders.Components;
@@ -18,6 +20,18 @@ var host = Host.CreateDefaultBuilder(args)
     {
         config.AddEnvironmentVariables(prefix: "SUBCONVERT_");
     })
+    .ConfigureLogging(logging =>
+    {
+        logging.ClearProviders();
+        logging.AddSimpleConsole(options =>
+        {
+            options.ColorBehavior = Console.IsOutputRedirected
+                ? LoggerColorBehavior.Disabled
+                : LoggerColorBehavior.Enabled;
+            options.SingleLine = true;
+            options.TimestampFormat = "[HH:mm:ss] ";
+        });
+    })
     .ConfigureServices((context, services) =>
     {
         services.AddSubConvertOptions(context.Configuration);
@@ -27,7 +41,7 @@ var host = Host.CreateDefaultBuilder(args)
         services.AddSingleton<IConfigSerializer, ConfigSerializer>();
         services.AddSingleton<ISingboxConfigValidator, SingboxConfigValidator>();
         services.AddSingleton<IGitHubConfigRepositoryFactory, GitHubConfigRepositoryFactory>();
-        services.AddSingleton<LocalFileDestination>();
+        services.AddSingleton<ILocalConfigDestination, LocalFileDestination>();
 
         services.AddTransient<IProxyConverter, TrojanConverter>();
         services.AddTransient<IProxyConverter, VlessConverter>();
