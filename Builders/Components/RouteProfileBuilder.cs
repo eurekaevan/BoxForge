@@ -72,11 +72,11 @@ public class RouteProfileBuilder(
         {
             if (service.RuleSets.Count > 0)
             {
-                rules.Add(new RouteRule 
-                { 
-                    RuleSet = service.RuleSets, 
-                    Action = "route", 
-                    Outbound = service.Name 
+                rules.Add(new RouteRule
+                {
+                    RuleSet = service.RuleSets,
+                    Action = "route",
+                    Outbound = service.Name
                 });
             }
         }

@@ -24,7 +24,7 @@ public class InboundBuilder
                     TargetPlatform.Android => "system",
                     _ => "system"
                 },
-                Mtu = 1400
+                Mtu = 1408
             },
             new Inbound
             {

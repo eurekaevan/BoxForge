@@ -8,7 +8,7 @@ namespace SubConvert.Converters;
 
 public class AnyTlsConverter : IProxyConverter
 {
-    public bool CanHandle(string proxyType) => 
+    public bool CanHandle(string proxyType) =>
         string.Equals(proxyType, "anytls", StringComparison.OrdinalIgnoreCase);
 
     public NodeConversionResult Convert(ClashProxyNode node)

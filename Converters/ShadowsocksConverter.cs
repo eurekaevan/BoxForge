@@ -7,8 +7,8 @@ namespace SubConvert.Converters;
 
 public class ShadowsocksConverter : IProxyConverter
 {
-    public bool CanHandle(string proxyType) => 
-        string.Equals(proxyType, "ss", StringComparison.OrdinalIgnoreCase) || 
+    public bool CanHandle(string proxyType) =>
+        string.Equals(proxyType, "ss", StringComparison.OrdinalIgnoreCase) ||
         string.Equals(proxyType, "shadowsocks", StringComparison.OrdinalIgnoreCase);
 
     public NodeConversionResult Convert(ClashProxyNode node)

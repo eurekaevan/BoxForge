@@ -10,4 +10,5 @@ public record GitHubContentItem
     [JsonPropertyName("sha")] public string? Sha { get; init; }
     // 单文件 GET 时才存在，内容为 Base64（带换行），列目录时为 null
     [JsonPropertyName("content")] public string? Content { get; init; }
+    [JsonPropertyName("encoding")] public string? Encoding { get; init; }
 }

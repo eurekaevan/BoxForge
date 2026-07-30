@@ -12,7 +12,7 @@ public record CacheFileConfig
 {
     [JsonPropertyName("enabled")] public bool Enabled { get; init; }
     [JsonPropertyName("path")] public string? Path { get; init; }
-    
+
     // 缓存 ID，避免切换配置时节点连接复用混乱
     [JsonPropertyName("cache_id")] public string? CacheId { get; init; }
 }

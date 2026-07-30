@@ -74,7 +74,7 @@ public class ConsoleUi(ILogger<ConsoleUi> logger) : IUserInterface
         WriteMenuItem(2, "Android");
         WriteMenuItem(3, "Linux");
         WritePrompt("请选择 [1-3]，直接回车使用 Windows");
-        
+
         TargetPlatform platform = Console.ReadLine()?.Trim() switch
         {
             "2" => TargetPlatform.Android,

@@ -37,18 +37,18 @@ public class ConversionOrchestrator(
         }
 
         var github = githubFactory.Create(token, owner, githubOptions.Repository);
-        
+
         logger.LogInformation(
             "● 正在读取 {Owner}/{RepoName}/{Folder}...",
             owner,
             githubOptions.Repository,
             githubOptions.SourceFolder);
-        
+
         IReadOnlyList<ConfigSourceItem> files;
         try
         {
             files = await github.ListAsync(githubOptions.SourceFolder);
-        }        
+        }
         catch (Exception ex)
         {
             logger.LogError(ex, "✗ 获取文件列表失败：{Message}", ex.Message);
@@ -63,7 +63,7 @@ public class ConversionOrchestrator(
 
         TargetPlatform platform = ui.SelectPlatform();
         int selection = ui.SelectAirport(files);
-        
+
         if (selection < 1)
         {
             logger.LogError("✗ 无效选项，程序退出。");

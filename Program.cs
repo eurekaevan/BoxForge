@@ -60,7 +60,7 @@ var host = Host.CreateDefaultBuilder(args)
         services.AddTransient<ISingboxConfigBuilder, SingboxConfigBuilder>();
         services.AddTransient<ConversionService>();
         services.AddTransient<ConversionWorkflow>();
-        
+
         services.AddTransient<ConversionOrchestrator>();
     })
     .Build();

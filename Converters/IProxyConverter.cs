@@ -6,6 +6,6 @@ namespace SubConvert.Converters;
 public interface IProxyConverter
 {
     bool CanHandle(string proxyType);
-    
+
     NodeConversionResult Convert(ClashProxyNode proxy);
 }

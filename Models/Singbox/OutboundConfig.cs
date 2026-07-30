@@ -29,8 +29,8 @@ public record DirectOutbound : Outbound
 
 public abstract record ProxyOutbound : Outbound
 {
-    [JsonPropertyName("server")] public required string Server { get; init; }   
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] 
+    [JsonPropertyName("server")] public required string Server { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [JsonPropertyName("server_port")] public int? ServerPort { get; init; }
     [JsonPropertyName("domain_resolver")] public string DomainResolver { get; init; } = "node-resolver";
     [JsonPropertyName("connect_timeout")] public string ConnectTimeout { get; init; } = "5s";

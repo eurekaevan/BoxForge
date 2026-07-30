@@ -33,7 +33,7 @@ public class ConversionWorkflow(
             try
             {
                 var result = await ConvertAsync(source, item, platform);
-                
+
                 string targetPath = $"{_outputOptions.BaseFolder}/{item.DisplayName}/{platform}/config.json";
                 string changeDescription =
                     $"{item.DisplayName} sing-box config [{platform}]";
@@ -42,7 +42,7 @@ public class ConversionWorkflow(
                     targetPath,
                     result.JsonContent,
                     changeDescription));
-                
+
                 logger.LogInformation(
                     "✓ 写入成功：{DisplayName} → {TargetPath}",
                     item.DisplayName,

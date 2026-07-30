@@ -17,36 +17,7 @@ public class Hysteria2Converter : IProxyConverter
         try
         {
             string server = node.GetRequiredString("server");
-
-            // 解析跳跃端口逻辑
-            int? serverPort = null;
-            List<string>? serverPorts = null;
-
-            string? portsStr = node.GetString("ports");
-            if (!string.IsNullOrWhiteSpace(portsStr))
-            {
-                if (portsStr.Contains(','))
-                {
-                    serverPorts = [.. portsStr
-                        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                        .Select(p => p.Replace('-', ':'))];
-                }
-                else if (portsStr.Contains('-'))
-                {
-                    serverPorts = [portsStr.Replace('-', ':')];
-                }
-                else if (int.TryParse(portsStr, out int singlePort))
-                {
-                    serverPort = singlePort;
-                }
-            }
-            else
-            {
-                serverPort = node.GetInt("port");
-            }
-
-            if (serverPort == null && serverPorts == null)
-                throw new NodeParseException("未找到有效端口 (需配置 port 或 ports)");
+            var (serverPort, serverPorts) = ParsePorts(node);
 
             // 组装混淆配置 (可选)
             OutboundObfs? obfsConfig = null;
@@ -71,5 +42,74 @@ public class Hysteria2Converter : IProxyConverter
         {
             return NodeConversionResult.Fail($"Hysteria2 节点 '{name}' 解析失败 -> {ex.Message}");
         }
+    }
+
+    private static (int? ServerPort, List<string>? ServerPorts) ParsePorts(
+        ClashProxyNode node)
+    {
+        string? portsValue = node.GetString("ports");
+        if (portsValue == null)
+        {
+            return (node.GetRequiredInt("port"), null);
+        }
+
+        string[] entries = portsValue.Split(
+            ',',
+            StringSplitOptions.TrimEntries);
+        if (entries.Length == 0 || entries.Any(string.IsNullOrWhiteSpace))
+        {
+            throw new NodeParseException("ports 包含空端口项");
+        }
+
+        var normalizedEntries = entries
+            .Select(NormalizePortEntry)
+            .ToList();
+
+        if (normalizedEntries.Count == 1
+            && !normalizedEntries[0].Contains(':'))
+        {
+            return (ParsePort(normalizedEntries[0], "ports"), null);
+        }
+
+        return (null, normalizedEntries);
+    }
+
+    private static string NormalizePortEntry(string entry)
+    {
+        string[] range = entry.Split(
+            '-',
+            StringSplitOptions.TrimEntries);
+        if (range.Length == 1)
+        {
+            return ParsePort(range[0], "ports").ToString();
+        }
+
+        if (range.Length != 2
+            || string.IsNullOrWhiteSpace(range[0])
+            || string.IsNullOrWhiteSpace(range[1]))
+        {
+            throw new NodeParseException($"ports 中的端口范围格式无效: {entry}");
+        }
+
+        int start = ParsePort(range[0], "ports");
+        int end = ParsePort(range[1], "ports");
+        if (start > end)
+        {
+            throw new NodeParseException($"ports 中的端口范围起点不能大于终点: {entry}");
+        }
+
+        return $"{start}:{end}";
+    }
+
+    private static int ParsePort(string value, string fieldName)
+    {
+        if (int.TryParse(value, out int port)
+            && port is > 0 and <= 65535)
+        {
+            return port;
+        }
+
+        throw new NodeParseException(
+            $"{fieldName} 包含无效端口 '{value}'，端口必须为 1-65535 的整数");
     }
 }
