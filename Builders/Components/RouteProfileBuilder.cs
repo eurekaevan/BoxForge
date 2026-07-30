@@ -1,8 +1,8 @@
-using SubConvert.Configuration;
-using SubConvert.Models.Singbox;
+using BoxForge.Configuration;
+using BoxForge.Models.Singbox;
 using Microsoft.Extensions.Options;
 
-namespace SubConvert.Builders.Components;
+namespace BoxForge.Builders.Components;
 
 public class RouteProfileBuilder(
     IOptions<SingboxOptions> singboxOptions,

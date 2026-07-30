@@ -1,4 +1,4 @@
-namespace SubConvert.Models;
+namespace BoxForge.Models;
 
 public sealed record ConfigSourceItem(
     string DisplayName,

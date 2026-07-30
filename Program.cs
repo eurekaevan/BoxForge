@@ -3,18 +3,18 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Console;
-using SubConvert.App;
-using SubConvert.Builders;
-using SubConvert.Builders.Components;
-using SubConvert.Cli;
-using SubConvert.Configuration;
-using SubConvert.Converters;
-using SubConvert.Infrastructure.FileSystem;
-using SubConvert.Infrastructure.GitHub;
-using SubConvert.Parsers;
-using SubConvert.Services;
-using SubConvert.Ui;
-using SubConvert.Workflows;
+using BoxForge.App;
+using BoxForge.Builders;
+using BoxForge.Builders.Components;
+using BoxForge.Cli;
+using BoxForge.Configuration;
+using BoxForge.Converters;
+using BoxForge.Infrastructure.FileSystem;
+using BoxForge.Infrastructure.GitHub;
+using BoxForge.Parsers;
+using BoxForge.Services;
+using BoxForge.Ui;
+using BoxForge.Workflows;
 
 bool generateMode = GenerateCommandParser.IsGenerateCommand(args);
 string[] hostArguments = generateMode ? [] : args;
@@ -22,7 +22,7 @@ string[] hostArguments = generateMode ? [] : args;
 using var host = Host.CreateDefaultBuilder(hostArguments)
     .ConfigureAppConfiguration((context, config) =>
     {
-        config.AddEnvironmentVariables(prefix: "SUBCONVERT_");
+        config.AddEnvironmentVariables(prefix: "BOXFORGE_");
     })
     .ConfigureLogging(logging =>
     {
@@ -38,7 +38,7 @@ using var host = Host.CreateDefaultBuilder(hostArguments)
     })
     .ConfigureServices((context, services) =>
     {
-        services.AddSubConvertOptions(context.Configuration);
+        services.AddBoxForgeOptions(context.Configuration);
         services.AddTransient<IUserInterface, ConsoleUi>();
 
         services.AddSingleton<IClashParser, ClashParser>();

@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="BoxForge.csproj" />
+  <Project Path="BoxForge.Tests/BoxForge.Tests.csproj" />
+</Solution>

@@ -1,8 +1,8 @@
-using SubConvert.Exceptions;
-using SubConvert.Models;
-using SubConvert.Models.Singbox;
+using BoxForge.Exceptions;
+using BoxForge.Models;
+using BoxForge.Models.Singbox;
 
-namespace SubConvert.Services;
+namespace BoxForge.Services;
 
 public interface ISingboxConfigValidator
 {

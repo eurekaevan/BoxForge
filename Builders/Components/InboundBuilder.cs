@@ -1,7 +1,7 @@
-using SubConvert.Models;
-using SubConvert.Models.Singbox;
+using BoxForge.Models;
+using BoxForge.Models.Singbox;
 
-namespace SubConvert.Builders.Components;
+namespace BoxForge.Builders.Components;
 
 public class InboundBuilder
 {

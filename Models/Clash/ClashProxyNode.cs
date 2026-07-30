@@ -1,7 +1,7 @@
 using System.Collections;
-using SubConvert.Exceptions;
+using BoxForge.Exceptions;
 
-namespace SubConvert.Models.Clash;
+namespace BoxForge.Models.Clash;
 
 public class ClashObject
 {

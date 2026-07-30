@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace SubConvert.Models.Singbox;
+namespace BoxForge.Models.Singbox;
 
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
 [JsonDerivedType(typeof(SelectorOutbound), typeDiscriminator: "selector")]

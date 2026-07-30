@@ -1,7 +1,7 @@
 using System.Text.RegularExpressions;
-using SubConvert.Models;
+using BoxForge.Models;
 
-namespace SubConvert.Configuration;
+namespace BoxForge.Configuration;
 
 public static class ProfileDefinitions
 {

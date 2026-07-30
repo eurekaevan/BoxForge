@@ -1,9 +1,9 @@
-using SubConvert.Models;
-using SubConvert.Models.Clash;
-using SubConvert.Models.Singbox;
-using SubConvert.Exceptions;
+using BoxForge.Models;
+using BoxForge.Models.Clash;
+using BoxForge.Models.Singbox;
+using BoxForge.Exceptions;
 
-namespace SubConvert.Converters;
+namespace BoxForge.Converters;
 
 public class ShadowsocksConverter : IProxyConverter
 {

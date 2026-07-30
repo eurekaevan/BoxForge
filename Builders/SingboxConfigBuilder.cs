@@ -1,8 +1,8 @@
-using SubConvert.Builders.Components;
-using SubConvert.Models;
-using SubConvert.Models.Singbox;
+using BoxForge.Builders.Components;
+using BoxForge.Models;
+using BoxForge.Models.Singbox;
 
-namespace SubConvert.Builders;
+namespace BoxForge.Builders;
 
 public interface ISingboxConfigBuilder
 {

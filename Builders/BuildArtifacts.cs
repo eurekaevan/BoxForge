@@ -1,8 +1,8 @@
-using SubConvert.Models;
-using SubConvert.Models.Clash;
-using SubConvert.Models.Singbox;
+using BoxForge.Models;
+using BoxForge.Models.Clash;
+using BoxForge.Models.Singbox;
 
-namespace SubConvert.Builders;
+namespace BoxForge.Builders;
 
 public sealed record SingboxBuildRequest(
     ClashConfig ClashConfig,

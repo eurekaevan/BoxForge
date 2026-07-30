@@ -1,6 +1,6 @@
-using SubConvert.Models.Singbox;
+using BoxForge.Models.Singbox;
 
-namespace SubConvert.Models;
+namespace BoxForge.Models;
 
 public abstract record NodeConversionResult
 {

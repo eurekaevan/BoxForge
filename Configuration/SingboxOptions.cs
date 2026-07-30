@@ -1,4 +1,4 @@
-namespace SubConvert.Configuration;
+namespace BoxForge.Configuration;
 
 public sealed class SingboxOptions
 {

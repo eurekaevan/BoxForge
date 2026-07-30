@@ -1,6 +1,6 @@
 using Microsoft.Extensions.Options;
 
-namespace SubConvert.Configuration;
+namespace BoxForge.Configuration;
 
 public sealed class GitHubOptionsValidator : IValidateOptions<GitHubOptions>
 {

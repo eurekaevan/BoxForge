@@ -1,6 +1,6 @@
-using SubConvert.Models;
+using BoxForge.Models;
 
-namespace SubConvert.Cli;
+namespace BoxForge.Cli;
 
 public sealed record GenerateCommandOptions(
     string InputDirectory,

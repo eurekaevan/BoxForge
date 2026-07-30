@@ -1,6 +1,6 @@
-using SubConvert.Models;
+using BoxForge.Models;
 
-namespace SubConvert.Services;
+namespace BoxForge.Services;
 
 public interface IConfigSource
 {

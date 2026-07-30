@@ -1,4 +1,4 @@
-namespace SubConvert.Models.Clash;
+namespace BoxForge.Models.Clash;
 
 public record ClashConfig
 {

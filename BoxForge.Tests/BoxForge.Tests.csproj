@@ -18,7 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\SubConvert.csproj" />
+    <ProjectReference Include="..\BoxForge.csproj" />
   </ItemGroup>
 
 </Project>

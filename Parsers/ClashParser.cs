@@ -1,8 +1,8 @@
-using SubConvert.Models.Clash;
+using BoxForge.Models.Clash;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
-namespace SubConvert.Parsers;
+namespace BoxForge.Parsers;
 
 public interface IClashParser
 {

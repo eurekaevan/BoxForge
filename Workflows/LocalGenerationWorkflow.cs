@@ -1,8 +1,8 @@
 using Microsoft.Extensions.Logging;
-using SubConvert.Cli;
-using SubConvert.Services;
+using BoxForge.Cli;
+using BoxForge.Services;
 
-namespace SubConvert.Workflows;
+namespace BoxForge.Workflows;
 
 public sealed record LocalGenerationSummary(
     int Succeeded,
@@ -78,7 +78,7 @@ public sealed class LocalGenerationWorkflow(
         Directory.CreateDirectory(outputParent);
         string stagingDirectory = Path.Combine(
             outputParent,
-            $".{Path.GetFileName(outputDirectory)}.subconvert-{Guid.NewGuid():N}");
+            $".{Path.GetFileName(outputDirectory)}.boxforge-{Guid.NewGuid():N}");
         Directory.CreateDirectory(stagingDirectory);
 
         int succeeded = 0;

@@ -2,11 +2,11 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
-using SubConvert.Models;
-using SubConvert.Models.GitHub;
-using SubConvert.Services;
+using BoxForge.Models;
+using BoxForge.Models.GitHub;
+using BoxForge.Services;
 
-namespace SubConvert.Infrastructure.GitHub;
+namespace BoxForge.Infrastructure.GitHub;
 
 public sealed class GitHubConfigRepository(
     string token,
@@ -19,7 +19,7 @@ public sealed class GitHubConfigRepository(
     {
         var req = new HttpRequestMessage(method, uri);
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        req.Headers.UserAgent.ParseAdd("SubConvert/1.0");
+        req.Headers.UserAgent.ParseAdd("BoxForge/1.0");
         req.Headers.Accept.ParseAdd("application/vnd.github+json");
         req.Headers.Add("X-GitHub-Api-Version", "2022-11-28");
         return req;

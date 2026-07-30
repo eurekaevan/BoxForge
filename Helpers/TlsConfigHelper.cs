@@ -1,7 +1,7 @@
-using SubConvert.Models.Singbox;
-using SubConvert.Models.Clash;
+using BoxForge.Models.Singbox;
+using BoxForge.Models.Clash;
 
-namespace SubConvert.Helpers;
+namespace BoxForge.Helpers;
 
 public static class TlsConfigHelper
 {

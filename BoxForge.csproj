@@ -8,7 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Remove="SubConvert.Tests/**/*.cs" />
+    <Compile Remove="BoxForge.Tests/**/*.cs" />
   </ItemGroup>
 
   <ItemGroup>

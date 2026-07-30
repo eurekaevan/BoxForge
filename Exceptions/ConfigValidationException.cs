@@ -1,6 +1,6 @@
-using SubConvert.Models;
+using BoxForge.Models;
 
-namespace SubConvert.Exceptions;
+namespace BoxForge.Exceptions;
 
 public sealed class ConfigValidationException(
     IReadOnlyList<ConfigDiagnostic> diagnostics)

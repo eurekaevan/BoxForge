@@ -1,7 +1,7 @@
-using SubConvert.Models;
-using SubConvert.Models.Clash;
+using BoxForge.Models;
+using BoxForge.Models.Clash;
 
-namespace SubConvert.Converters;
+namespace BoxForge.Converters;
 
 public interface IProxyConverter
 {

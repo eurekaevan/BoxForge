@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace SubConvert.Models.Singbox;
+namespace BoxForge.Models.Singbox;
 
 public record LogConfig
 {

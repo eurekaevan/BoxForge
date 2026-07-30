@@ -1,8 +1,8 @@
 using System.Text;
 using Microsoft.Extensions.Logging;
-using SubConvert.Models;
+using BoxForge.Models;
 
-namespace SubConvert.Ui;
+namespace BoxForge.Ui;
 
 public interface IUserInterface
 {
@@ -21,7 +21,7 @@ public class ConsoleUi(ILogger<ConsoleUi> logger) : IUserInterface
         WriteLine();
         WriteLine("╭────────────────────────────────────────────╮", ConsoleColor.DarkCyan);
         Write("│  ", ConsoleColor.DarkCyan);
-        Write("SubConvert", ConsoleColor.Cyan);
+        Write("BoxForge", ConsoleColor.Cyan);
         WriteLine("                                │", ConsoleColor.DarkCyan);
         Write("│  ", ConsoleColor.DarkCyan);
         Write("Clash YAML", ConsoleColor.Gray);

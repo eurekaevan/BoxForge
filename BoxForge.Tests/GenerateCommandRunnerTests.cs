@@ -1,9 +1,9 @@
 using Microsoft.Extensions.Logging.Abstractions;
-using SubConvert.App;
-using SubConvert.Cli;
-using SubConvert.Workflows;
+using BoxForge.App;
+using BoxForge.Cli;
+using BoxForge.Workflows;
 
-namespace SubConvert.Tests;
+namespace BoxForge.Tests;
 
 public sealed class GenerateCommandRunnerTests
 {

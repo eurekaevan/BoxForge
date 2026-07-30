@@ -1,12 +1,12 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using SubConvert.Configuration;
-using SubConvert.Models;
-using SubConvert.Services;
-using SubConvert.Ui;
-using SubConvert.Workflows;
+using BoxForge.Configuration;
+using BoxForge.Models;
+using BoxForge.Services;
+using BoxForge.Ui;
+using BoxForge.Workflows;
 
-namespace SubConvert.App;
+namespace BoxForge.App;
 
 public class ConversionOrchestrator(
     IOptions<GitHubOptions> options,
@@ -24,11 +24,11 @@ public class ConversionOrchestrator(
 
         string owner = !string.IsNullOrWhiteSpace(githubOptions.Owner)
             ? githubOptions.Owner
-            : ui.RequireInput("SUBCONVERT_GITHUB_OWNER", "请输入 GitHub 用户名 (仓库所有者): ");
+            : ui.RequireInput("BOXFORGE_GITHUB_OWNER", "请输入 GitHub 用户名 (仓库所有者): ");
 
         string token = !string.IsNullOrWhiteSpace(githubOptions.Token)
             ? githubOptions.Token
-            : ui.RequireInput("SUBCONVERT_GITHUB_TOKEN", "请输入 GitHub Personal Access Token: ", secret: true);
+            : ui.RequireInput("BOXFORGE_GITHUB_TOKEN", "请输入 GitHub Personal Access Token: ", secret: true);
 
         if (string.IsNullOrWhiteSpace(owner) || string.IsNullOrWhiteSpace(token))
         {

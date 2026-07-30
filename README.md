@@ -1,6 +1,6 @@
-# SubConvert
+# BoxForge
 
-SubConvert 是一个将 Clash YAML 配置转换为 sing-box `config.json` 的命令行工具。它会从 GitHub 仓库读取机场配置，按平台生成 sing-box 配置，并支持单文件本地输出或批量回写到仓库。
+BoxForge 是一个将 Clash YAML 配置转换为 sing-box `config.json` 的命令行工具。它会从 GitHub 仓库读取机场配置，按平台生成 sing-box 配置，并支持单文件本地输出或批量回写到仓库。
 
 ## 特性
 
@@ -87,8 +87,8 @@ dotnet run -- generate \
 开发时可使用以下命令执行完整构建和测试：
 
 ```bash
-dotnet build SubConvert.slnx
-dotnet test SubConvert.slnx --no-build
+dotnet build BoxForge.slnx
+dotnet test BoxForge.slnx --no-build
 ```
 
 ## 交互流程
@@ -138,15 +138,15 @@ dotnet test SubConvert.slnx --no-build
 dotnet run -- --Tailscale:Enabled=true --Tailscale:Hostname=my-phone
 ```
 
-环境变量会使用 `SUBCONVERT_` 前缀，例如：
+环境变量会使用 `BOXFORGE_` 前缀，例如：
 
-- `SUBCONVERT_GitHubOwner`
-- `SUBCONVERT_GitHubToken`
-- `SUBCONVERT_RepoName`
-- `SUBCONVERT_TailscaleEnabled=true`
+- `BOXFORGE_GitHubOwner`
+- `BOXFORGE_GitHubToken`
+- `BOXFORGE_RepoName`
+- `BOXFORGE_TailscaleEnabled=true`
 
 分组配置对应的环境变量使用双下划线，例如
-`SUBCONVERT_Tailscale__Enabled=true`。新旧形式同时存在时，分组形式优先。
+`BOXFORGE_Tailscale__Enabled=true`。新旧形式同时存在时，分组形式优先。
 
 ## 在手机上使用 Tailscale
 
@@ -168,7 +168,8 @@ MagicDNS 和 tailnet 节点/子网路由会自动进入 Tailscale；其他流量
 规则。如果需要 Headscale，可设置 `TailscaleControlUrl`。如需使用出口节点，
 将 `TailscaleExitNode` 设置为节点名称或 Tailscale IP。
 
-如果未设置这些变量，程序会继续提示输入 `GITHUB_OWNER` 和 `GITHUB_TOKEN`。
+如果未设置这些变量，程序会继续提示输入 `BOXFORGE_GITHUB_OWNER` 和
+`BOXFORGE_GITHUB_TOKEN`。
 
 ## 说明
 

@@ -1,7 +1,7 @@
-using SubConvert.Cli;
-using SubConvert.Models;
+using BoxForge.Cli;
+using BoxForge.Models;
 
-namespace SubConvert.Tests;
+namespace BoxForge.Tests;
 
 public sealed class GenerateCommandParserTests
 {

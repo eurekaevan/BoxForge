@@ -240,7 +240,7 @@ ClientBin/
 *.publishsettings
 orleans.codegen.cs
 
-# SubConvert generated configs and local secrets
+# BoxForge generated configs and local secrets
 /config.json
 /singboxConfigs/
 /cache.db

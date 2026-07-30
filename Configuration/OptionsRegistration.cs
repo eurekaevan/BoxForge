@@ -2,11 +2,11 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
-namespace SubConvert.Configuration;
+namespace BoxForge.Configuration;
 
 public static class OptionsRegistration
 {
-    public static IServiceCollection AddSubConvertOptions(
+    public static IServiceCollection AddBoxForgeOptions(
         this IServiceCollection services,
         IConfiguration configuration)
     {

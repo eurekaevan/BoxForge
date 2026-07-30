@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace SubConvert.Models.GitHub;
+namespace BoxForge.Models.GitHub;
 
 public record GitHubContentItem
 {

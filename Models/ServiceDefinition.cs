@@ -1,4 +1,4 @@
-namespace SubConvert.Models;
+namespace BoxForge.Models;
 
 public record ServiceDefinition(
     string Name,              // 服务名称 (如 "🎵 Spotify")

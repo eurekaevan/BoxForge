@@ -1,8 +1,8 @@
 using Microsoft.Extensions.Logging;
-using SubConvert.Cli;
-using SubConvert.Workflows;
+using BoxForge.Cli;
+using BoxForge.Workflows;
 
-namespace SubConvert.App;
+namespace BoxForge.App;
 
 public sealed class GenerateCommandRunner(
     ILocalGenerationWorkflow workflow,

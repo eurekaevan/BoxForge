@@ -1,8 +1,8 @@
 using Microsoft.Extensions.Options;
-using SubConvert.Configuration;
-using SubConvert.Models.Singbox;
+using BoxForge.Configuration;
+using BoxForge.Models.Singbox;
 
-namespace SubConvert.Builders.Components;
+namespace BoxForge.Builders.Components;
 
 public class TailscaleEndpointBuilder(IOptions<TailscaleOptions> options)
 {
