@@ -1,3 +1,4 @@
 <Solution>
   <Project Path="SubConvert.csproj" />
+  <Project Path="SubConvert.Tests/SubConvert.Tests.csproj" />
 </Solution>

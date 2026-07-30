@@ -7,7 +7,8 @@ namespace SubConvert.Builders;
 public sealed record SingboxBuildRequest(
     ClashConfig ClashConfig,
     TargetPlatform Platform,
-    string CacheId
+    string CacheId,
+    bool StrictNodeValidation = false
 );
 
 public sealed record NodeCatalog(

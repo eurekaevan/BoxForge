@@ -20,7 +20,9 @@ public class SingboxConfigBuilder(
 {
     public SingboxConfig Build(SingboxBuildRequest request)
     {
-        var nodes = nodeCatalogBuilder.Build(request.ClashConfig);
+        var nodes = nodeCatalogBuilder.Build(
+            request.ClashConfig,
+            request.StrictNodeValidation);
         var profiles = profilePlanner.Plan(nodes);
         var endpoints = tailscaleEndpointBuilder.Build();
 

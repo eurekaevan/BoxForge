@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging.Console;
 using SubConvert.App;
 using SubConvert.Builders;
 using SubConvert.Builders.Components;
+using SubConvert.Cli;
 using SubConvert.Configuration;
 using SubConvert.Converters;
 using SubConvert.Infrastructure.FileSystem;
@@ -15,7 +16,10 @@ using SubConvert.Services;
 using SubConvert.Ui;
 using SubConvert.Workflows;
 
-var host = Host.CreateDefaultBuilder(args)
+bool generateMode = GenerateCommandParser.IsGenerateCommand(args);
+string[] hostArguments = generateMode ? [] : args;
+
+using var host = Host.CreateDefaultBuilder(hostArguments)
     .ConfigureAppConfiguration((context, config) =>
     {
         config.AddEnvironmentVariables(prefix: "SUBCONVERT_");
@@ -60,10 +64,36 @@ var host = Host.CreateDefaultBuilder(args)
         services.AddTransient<ISingboxConfigBuilder, SingboxConfigBuilder>();
         services.AddTransient<ConversionService>();
         services.AddTransient<ConversionWorkflow>();
+        services.AddTransient<ILocalGenerationWorkflow, LocalGenerationWorkflow>();
 
         services.AddTransient<ConversionOrchestrator>();
+        services.AddTransient<GenerateCommandRunner>();
     })
     .Build();
 
-var app = host.Services.GetRequiredService<ConversionOrchestrator>();
-await app.RunAsync();
+if (generateMode)
+{
+    using var cancellationSource = new CancellationTokenSource();
+    ConsoleCancelEventHandler cancelHandler = (_, eventArgs) =>
+    {
+        eventArgs.Cancel = true;
+        cancellationSource.Cancel();
+    };
+    Console.CancelKeyPress += cancelHandler;
+    try
+    {
+        var command = host.Services.GetRequiredService<GenerateCommandRunner>();
+        Environment.ExitCode = await command.RunAsync(
+            args,
+            cancellationSource.Token);
+    }
+    finally
+    {
+        Console.CancelKeyPress -= cancelHandler;
+    }
+}
+else
+{
+    var app = host.Services.GetRequiredService<ConversionOrchestrator>();
+    await app.RunAsync();
+}

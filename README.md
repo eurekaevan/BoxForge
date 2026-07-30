@@ -31,7 +31,69 @@ dotnet run -- --GitHubOwner=your-name --GitHubToken=your-token
 
 程序启动后会先读取环境变量和命令行参数；如果仍缺少 `GitHubOwner` 或 `GitHubToken`，会在终端中交互式提示输入。
 
+## 非交互式本地批量生成
+
+`generate` 子命令用于本地目录批量转换，适合 GitHub Actions、其他 CI
+环境或脚本调用。它不会读取 GitHub 仓库，也不要求 `GitHubOwner` 或
+`GitHubToken`：
+
+```bash
+dotnet run -- generate \
+  --input-dir clashConfigs \
+  --output-dir singboxConfigs \
+  --platform all
+```
+
+`--platform` 支持 `Android`、`Linux`、`Windows` 和 `all`，不区分大小写。
+三个参数都有默认值，因此以下命令等价于上面的完整命令：
+
+```bash
+dotnet run -- generate
+```
+
+本地模式读取输入目录顶层的全部 `.yaml` 和 `.yml` 文件。使用 `all` 时，
+每个输入会生成三个平台的配置：
+
+```text
+singboxConfigs/
+└── {配置名}/
+    ├── Android/config.json
+    ├── Linux/config.json
+    └── Windows/config.json
+```
+
+输入文件和平台均按固定顺序处理，生成内容保持确定性。程序会输出成功、跳过和
+失败数量；“跳过”表示生成内容与现有目标文件完全相同。
+
+生成过程先在输出目录的同级临时目录内完成。全部配置成功后才替换输出目录，
+同时删除已经不再生成的旧文件；任意转换或配置校验失败时，原输出目录保持不变。
+
+退出码适合直接用于 CI 判断：
+
+- `0`：全部生成成功，或未变化而跳过
+- `1`：存在转换、校验、读取或写入失败
+- `2`：命令行参数无效
+- `130`：任务被取消
+
+例如，只生成 Linux 配置：
+
+```bash
+dotnet run -- generate \
+  --input-dir ./clashConfigs \
+  --output-dir ./artifacts/singboxConfigs \
+  --platform Linux
+```
+
+开发时可使用以下命令执行完整构建和测试：
+
+```bash
+dotnet build SubConvert.slnx
+dotnet test SubConvert.slnx --no-build
+```
+
 ## 交互流程
+
+不带 `generate` 子命令时，程序继续使用原有的交互式 GitHub 流程。
 
 启动后依次选择：
 
