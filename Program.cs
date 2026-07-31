@@ -6,20 +6,13 @@ using Microsoft.Extensions.Logging.Console;
 using BoxForge.App;
 using BoxForge.Builders;
 using BoxForge.Builders.Components;
-using BoxForge.Cli;
 using BoxForge.Configuration;
 using BoxForge.Converters;
-using BoxForge.Infrastructure.FileSystem;
-using BoxForge.Infrastructure.GitHub;
 using BoxForge.Parsers;
 using BoxForge.Services;
-using BoxForge.Ui;
 using BoxForge.Workflows;
 
-bool generateMode = GenerateCommandParser.IsGenerateCommand(args);
-string[] hostArguments = generateMode ? [] : args;
-
-using var host = Host.CreateDefaultBuilder(hostArguments)
+using var host = Host.CreateDefaultBuilder([])
     .ConfigureAppConfiguration((context, config) =>
     {
         config.AddEnvironmentVariables(prefix: "BOXFORGE_");
@@ -39,13 +32,10 @@ using var host = Host.CreateDefaultBuilder(hostArguments)
     .ConfigureServices((context, services) =>
     {
         services.AddBoxForgeOptions(context.Configuration);
-        services.AddTransient<IUserInterface, ConsoleUi>();
 
         services.AddSingleton<IClashParser, ClashParser>();
         services.AddSingleton<IConfigSerializer, ConfigSerializer>();
         services.AddSingleton<ISingboxConfigValidator, SingboxConfigValidator>();
-        services.AddSingleton<IGitHubConfigRepositoryFactory, GitHubConfigRepositoryFactory>();
-        services.AddSingleton<ILocalConfigDestination, LocalFileDestination>();
 
         services.AddTransient<IProxyConverter, TrojanConverter>();
         services.AddTransient<IProxyConverter, VlessConverter>();
@@ -63,37 +53,27 @@ using var host = Host.CreateDefaultBuilder(hostArguments)
 
         services.AddTransient<ISingboxConfigBuilder, SingboxConfigBuilder>();
         services.AddTransient<ConversionService>();
-        services.AddTransient<ConversionWorkflow>();
         services.AddTransient<ILocalGenerationWorkflow, LocalGenerationWorkflow>();
 
-        services.AddTransient<ConversionOrchestrator>();
         services.AddTransient<GenerateCommandRunner>();
     })
     .Build();
 
-if (generateMode)
+using var cancellationSource = new CancellationTokenSource();
+ConsoleCancelEventHandler cancelHandler = (_, eventArgs) =>
 {
-    using var cancellationSource = new CancellationTokenSource();
-    ConsoleCancelEventHandler cancelHandler = (_, eventArgs) =>
-    {
-        eventArgs.Cancel = true;
-        cancellationSource.Cancel();
-    };
-    Console.CancelKeyPress += cancelHandler;
-    try
-    {
-        var command = host.Services.GetRequiredService<GenerateCommandRunner>();
-        Environment.ExitCode = await command.RunAsync(
-            args,
-            cancellationSource.Token);
-    }
-    finally
-    {
-        Console.CancelKeyPress -= cancelHandler;
-    }
+    eventArgs.Cancel = true;
+    cancellationSource.Cancel();
+};
+Console.CancelKeyPress += cancelHandler;
+try
+{
+    var command = host.Services.GetRequiredService<GenerateCommandRunner>();
+    Environment.ExitCode = await command.RunAsync(
+        args,
+        cancellationSource.Token);
 }
-else
+finally
 {
-    var app = host.Services.GetRequiredService<ConversionOrchestrator>();
-    await app.RunAsync();
+    Console.CancelKeyPress -= cancelHandler;
 }

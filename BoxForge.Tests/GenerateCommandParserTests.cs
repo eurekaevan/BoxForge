@@ -55,6 +55,8 @@ public sealed class GenerateCommandParserTests
     }
 
     [Theory]
+    [InlineData()]
+    [InlineData("--GitHubOwner=owner")]
     [InlineData("generate", "--platform", "ios")]
     [InlineData("generate", "--unknown", "value")]
     [InlineData("generate", "--input-dir")]

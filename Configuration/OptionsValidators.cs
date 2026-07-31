@@ -2,36 +2,6 @@ using Microsoft.Extensions.Options;
 
 namespace BoxForge.Configuration;
 
-public sealed class GitHubOptionsValidator : IValidateOptions<GitHubOptions>
-{
-    public ValidateOptionsResult Validate(string? name, GitHubOptions options)
-    {
-        if (string.IsNullOrWhiteSpace(options.Repository))
-        {
-            return ValidateOptionsResult.Fail("GitHub 仓库名称不能为空。");
-        }
-
-        return string.IsNullOrWhiteSpace(options.SourceFolder)
-            ? ValidateOptionsResult.Fail("GitHub 配置源目录不能为空。")
-            : ValidateOptionsResult.Success;
-    }
-}
-
-public sealed class OutputOptionsValidator : IValidateOptions<OutputOptions>
-{
-    public ValidateOptionsResult Validate(string? name, OutputOptions options)
-    {
-        if (string.IsNullOrWhiteSpace(options.BaseFolder))
-        {
-            return ValidateOptionsResult.Fail("批量输出目录不能为空。");
-        }
-
-        return string.IsNullOrWhiteSpace(options.LocalFile)
-            ? ValidateOptionsResult.Fail("本地输出文件不能为空。")
-            : ValidateOptionsResult.Success;
-    }
-}
-
 public sealed class SingboxOptionsValidator : IValidateOptions<SingboxOptions>
 {
     public ValidateOptionsResult Validate(string? name, SingboxOptions options)

@@ -10,36 +10,6 @@ public static class OptionsRegistration
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        services.Configure<GitHubOptions>(options =>
-        {
-            options.Owner = Read(configuration, "GitHub:Owner", "GitHubOwner", "");
-            options.Token = Read(configuration, "GitHub:Token", "GitHubToken", "");
-            options.Repository = Read(
-                configuration,
-                "GitHub:Repository",
-                "RepoName",
-                "BoxVault");
-            options.SourceFolder = Read(
-                configuration,
-                "GitHub:SourceFolder",
-                "SubconfigsFolder",
-                "clashConfigs");
-        });
-
-        services.Configure<OutputOptions>(options =>
-        {
-            options.BaseFolder = Read(
-                configuration,
-                "Output:BaseFolder",
-                "OutputBaseFolder",
-                "singboxConfigs");
-            options.LocalFile = Read(
-                configuration,
-                "Output:LocalFile",
-                "LocalOutputFile",
-                "config.json");
-        });
-
         services.Configure<SingboxOptions>(options =>
         {
             options.MainProxyGroup = Read(
@@ -103,8 +73,6 @@ public static class OptionsRegistration
                 false);
         });
 
-        services.AddSingleton<IValidateOptions<GitHubOptions>, GitHubOptionsValidator>();
-        services.AddSingleton<IValidateOptions<OutputOptions>, OutputOptionsValidator>();
         services.AddSingleton<IValidateOptions<SingboxOptions>, SingboxOptionsValidator>();
         services.AddSingleton<IValidateOptions<TailscaleOptions>, TailscaleOptionsValidator>();
 

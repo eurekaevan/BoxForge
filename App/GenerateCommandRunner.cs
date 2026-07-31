@@ -28,7 +28,10 @@ public sealed class GenerateCommandRunner(
         try
         {
             var summary = await workflow.GenerateAsync(
-                parseResult.Options!,
+                new LocalGenerationRequest(
+                    parseResult.Options!.InputDirectory,
+                    parseResult.Options.OutputDirectory,
+                    parseResult.Options.Platforms),
                 cancellationToken);
             logger.LogInformation(
                 "■ 本地批量生成完成：✓ {Succeeded} 成功，↷ {Skipped} 跳过，✗ {Failed} 失败，共 {Total} 个。",

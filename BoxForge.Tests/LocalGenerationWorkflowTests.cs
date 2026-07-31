@@ -2,7 +2,6 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using BoxForge.Builders;
 using BoxForge.Builders.Components;
-using BoxForge.Cli;
 using BoxForge.Configuration;
 using BoxForge.Converters;
 using BoxForge.Models;
@@ -56,7 +55,7 @@ public sealed class LocalGenerationWorkflowTests
             ValidShadowsocksYaml);
 
         var workflow = CreateWorkflow();
-        var options = new GenerateCommandOptions(
+        var request = new LocalGenerationRequest(
             input,
             output,
             [
@@ -65,12 +64,12 @@ public sealed class LocalGenerationWorkflowTests
                 TargetPlatform.Windows
             ]);
 
-        var firstRun = await workflow.GenerateAsync(options);
+        var firstRun = await workflow.GenerateAsync(request);
 
         Assert.Equal(new LocalGenerationSummary(6, 0, 0), firstRun);
         foreach (string configName in new[] { "alpha", "beta" })
         {
-            foreach (TargetPlatform platform in options.Platforms)
+            foreach (TargetPlatform platform in request.Platforms)
             {
                 Assert.True(File.Exists(Path.Combine(
                     output,
@@ -87,7 +86,7 @@ public sealed class LocalGenerationWorkflowTests
                 File.ReadAllText,
                 StringComparer.Ordinal);
 
-        var secondRun = await workflow.GenerateAsync(options);
+        var secondRun = await workflow.GenerateAsync(request);
 
         Assert.Equal(new LocalGenerationSummary(0, 6, 0), secondRun);
         var contentsAfter = Directory
@@ -115,7 +114,7 @@ public sealed class LocalGenerationWorkflowTests
             InvalidHysteriaYaml);
 
         var summary = await CreateWorkflow().GenerateAsync(
-            new GenerateCommandOptions(
+            new LocalGenerationRequest(
                 input,
                 output,
                 [TargetPlatform.Android]));
@@ -137,7 +136,7 @@ public sealed class LocalGenerationWorkflowTests
             UnsupportedNodeYaml);
 
         var summary = await CreateWorkflow().GenerateAsync(
-            new GenerateCommandOptions(
+            new LocalGenerationRequest(
                 input,
                 output,
                 [TargetPlatform.Windows]));
@@ -160,7 +159,7 @@ public sealed class LocalGenerationWorkflowTests
             ValidShadowsocksYaml);
 
         var summary = await CreateWorkflow().GenerateAsync(
-            new GenerateCommandOptions(
+            new LocalGenerationRequest(
                 input,
                 output,
                 [TargetPlatform.Linux]));
@@ -185,7 +184,7 @@ public sealed class LocalGenerationWorkflowTests
         await File.WriteAllTextAsync(inputFile, ValidShadowsocksYaml);
 
         var summary = await CreateWorkflow().GenerateAsync(
-            new GenerateCommandOptions(
+            new LocalGenerationRequest(
                 input,
                 output,
                 [TargetPlatform.Android]));

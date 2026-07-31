@@ -1,8 +1,13 @@
 using Microsoft.Extensions.Logging;
-using BoxForge.Cli;
+using BoxForge.Models;
 using BoxForge.Services;
 
 namespace BoxForge.Workflows;
+
+public sealed record LocalGenerationRequest(
+    string InputDirectory,
+    string OutputDirectory,
+    IReadOnlyList<TargetPlatform> Platforms);
 
 public sealed record LocalGenerationSummary(
     int Succeeded,
@@ -15,7 +20,7 @@ public sealed record LocalGenerationSummary(
 public interface ILocalGenerationWorkflow
 {
     Task<LocalGenerationSummary> GenerateAsync(
-        GenerateCommandOptions options,
+        LocalGenerationRequest request,
         CancellationToken cancellationToken = default);
 }
 
@@ -26,11 +31,11 @@ public sealed class LocalGenerationWorkflow(
     private static readonly string[] SupportedExtensions = [".yaml", ".yml"];
 
     public async Task<LocalGenerationSummary> GenerateAsync(
-        GenerateCommandOptions options,
+        LocalGenerationRequest request,
         CancellationToken cancellationToken = default)
     {
-        string inputDirectory = Path.GetFullPath(options.InputDirectory);
-        string outputDirectory = Path.GetFullPath(options.OutputDirectory);
+        string inputDirectory = Path.GetFullPath(request.InputDirectory);
+        string outputDirectory = Path.GetFullPath(request.OutputDirectory);
         if (!Directory.Exists(inputDirectory))
         {
             logger.LogError("输入目录不存在：{InputDirectory}", inputDirectory);
@@ -103,7 +108,7 @@ public sealed class LocalGenerationWorkflow(
                     logger.LogError(
                         "配置文件名不能仅由扩展名组成：{InputFile}",
                         inputFile);
-                    failed += options.Platforms.Count;
+                    failed += request.Platforms.Count;
                     continue;
                 }
 
@@ -112,7 +117,7 @@ public sealed class LocalGenerationWorkflow(
                     logger.LogError(
                         "配置名重复，无法确定输出目录：{ConfigName}",
                         configName);
-                    failed += options.Platforms.Count;
+                    failed += request.Platforms.Count;
                     continue;
                 }
 
@@ -129,11 +134,11 @@ public sealed class LocalGenerationWorkflow(
                         ex,
                         "读取配置失败：{InputFile}",
                         inputFile);
-                    failed += options.Platforms.Count;
+                    failed += request.Platforms.Count;
                     continue;
                 }
 
-                foreach (var platform in options.Platforms)
+                foreach (var platform in request.Platforms)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     string relativePath = Path.Combine(
