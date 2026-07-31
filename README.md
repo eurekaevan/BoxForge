@@ -104,12 +104,12 @@ dotnet test BoxForge.slnx --no-build
 
 ## 输入与输出
 
-- 输入仓库：默认 `SubConfigHub`
+- 输入仓库：默认 `BoxVault`
 - 输入目录：默认 `clashConfigs`
 - 批量输出目录：默认 `singboxConfigs/{机场名}/{平台}/config.json`
 - 单机场本地输出：默认 `config.json`
 
-默认输入仓库路径示例：`{owner}/SubConfigHub/clashConfigs/*.yaml`
+默认输入仓库路径示例：`{owner}/BoxVault/clashConfigs/*.yaml`
 
 ## 配置项
 

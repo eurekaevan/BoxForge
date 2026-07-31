@@ -18,7 +18,7 @@ public static class OptionsRegistration
                 configuration,
                 "GitHub:Repository",
                 "RepoName",
-                "SubConfigHub");
+                "BoxVault");
             options.SourceFolder = Read(
                 configuration,
                 "GitHub:SourceFolder",
