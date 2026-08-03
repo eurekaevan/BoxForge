@@ -14,6 +14,7 @@ public class InboundBuilder
                 Type = "tun",
                 Tag = "tun-in",
                 Address = ["172.19.0.1/30", "fd00::1/126"],
+                DnsMode = "hijack",
                 AutoRoute = true,
                 AutoRedirect = platform == TargetPlatform.Linux ? true : null,
                 StrictRoute = true,

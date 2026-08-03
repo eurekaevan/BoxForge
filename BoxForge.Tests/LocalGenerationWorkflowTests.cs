@@ -32,6 +32,7 @@ public sealed class LocalGenerationWorkflowTests
             ports: 20000-30000
             password: secret
             sni: example.com
+            client-fingerprint: chrome
         """;
 
     private const string InvalidHysteriaYaml = """
@@ -219,6 +220,43 @@ public sealed class LocalGenerationWorkflowTests
         Assert.Equal(
             "12h",
             dns.GetProperty("optimistic").GetProperty("timeout").GetString());
+        JsonElement tencent = Assert.Single(
+            dns.GetProperty("servers").EnumerateArray(),
+            server => server.GetProperty("tag").GetString() == "local-tencent");
+        Assert.Equal("119.29.29.29", tencent.GetProperty("server").GetString());
+        Assert.Equal(
+            "doh.pub",
+            tencent.GetProperty("tls").GetProperty("server_name").GetString());
+        JsonElement google = Assert.Single(
+            dns.GetProperty("servers").EnumerateArray(),
+            server => server.GetProperty("tag").GetString() == "remote-google");
+        Assert.Equal("8.8.8.8", google.GetProperty("server").GetString());
+        Assert.Equal("🚀 PROXIES", google.GetProperty("detour").GetString());
+        Assert.Equal(
+            "dns.google",
+            google.GetProperty("tls").GetProperty("server_name").GetString());
+        JsonElement[] raceRules = dns
+            .GetProperty("rules")
+            .EnumerateArray()
+            .Where(rule => rule.TryGetProperty("race", out _))
+            .ToArray();
+        Assert.Equal(4, raceRules.Length);
+        Assert.All(raceRules, rule =>
+        {
+            Assert.True(rule.GetProperty("race").GetBoolean());
+            Assert.Equal("respond", rule.GetProperty("action").GetString());
+            Assert.Equal("NOERROR", rule.GetProperty("response_rcode").GetString());
+            Assert.True(rule.TryGetProperty("match_response", out _));
+        });
+        Assert.Equal(
+            2,
+            dns.GetProperty("rules")
+                .EnumerateArray()
+                .Count(rule => rule.TryGetProperty("speculative", out _)));
+        JsonElement tunInbound = Assert.Single(
+            root.GetProperty("inbounds").EnumerateArray(),
+            inbound => inbound.GetProperty("type").GetString() == "tun");
+        Assert.Equal("hijack", tunInbound.GetProperty("dns_mode").GetString());
         Assert.True(root
             .GetProperty("experimental")
             .GetProperty("cache_file")
@@ -246,6 +284,9 @@ public sealed class LocalGenerationWorkflowTests
                 .GetString());
         Assert.Equal("route", tailscaleDnsRule.GetProperty("action").GetString());
         Assert.Equal("tailscale-dns", tailscaleDnsRule.GetProperty("server").GetString());
+        Assert.True(tailscaleDnsRule
+            .GetProperty("disable_optimistic_cache")
+            .GetBoolean());
         Assert.Equal(
             "bootstrap",
             Assert.Single(root.GetProperty("endpoints").EnumerateArray())
@@ -289,6 +330,17 @@ public sealed class LocalGenerationWorkflowTests
             outbound => outbound.GetProperty("type").GetString() == "hysteria2");
         Assert.Equal("30s", hysteria2.GetProperty("hop_interval").GetString());
         Assert.Equal("60s", hysteria2.GetProperty("hop_interval_max").GetString());
+        Assert.Equal("standard", hysteria2.GetProperty("bbr_profile").GetString());
+        JsonElement tls = hysteria2.GetProperty("tls");
+        Assert.False(tls.TryGetProperty("alpn", out _));
+        Assert.False(tls.TryGetProperty("min_version", out _));
+        Assert.False(tls.TryGetProperty("utls", out _));
+        JsonElement nodeDnsRule = Assert.Single(
+            root.GetProperty("dns").GetProperty("rules").EnumerateArray(),
+            rule => rule.TryGetProperty("domain", out _));
+        Assert.True(nodeDnsRule
+            .GetProperty("disable_optimistic_cache")
+            .GetBoolean());
 
         JsonElement api = Assert.Single(root.GetProperty("services").EnumerateArray());
         Assert.Equal("api", api.GetProperty("type").GetString());

@@ -35,7 +35,12 @@ public class Hysteria2Converter : IProxyConverter
                 ServerPorts = serverPorts,
                 Obfs = obfsConfig,
                 Password = node.GetRequiredString("password"),
-                Tls = TlsConfigHelper.Extract(node, server, forceTls: true)
+                // Hysteria2 使用 QUIC，而 sing-box 的 QUIC 自定义 TLS 不支持 uTLS。
+                Tls = TlsConfigHelper.Extract(
+                    node,
+                    server,
+                    forceTls: true,
+                    supportsUtls: false)
             });
         }
         catch (NodeParseException ex)

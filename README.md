@@ -119,7 +119,12 @@ dotnet test BoxForge.slnx --no-build
 
 - Linux 和 Windows 使用顶层 `services` 中的官方 sing-box API 服务，监听
   `127.0.0.1:9090`，并启用 dashboard；Android 不额外创建 API 监听服务。
-- Hysteria2 出站使用 `hop_interval: 30s` 和 `hop_interval_max: 60s`。
+- TUN 显式使用 `dns_mode: hijack`；代理节点域名和 Tailscale DNS 不返回
+  optimistic 过期缓存，避免地址变化后继续使用旧记录。
+- 国内域名通过腾讯 DNSPod 与阿里公共 DNS 竞态解析；其他域名通过主代理在
+  Google Public DNS 与 Cloudflare 之间竞态解析，仅接受最先返回的成功响应。
+- Hysteria2 出站使用 `hop_interval: 30s`、`hop_interval_max: 60s` 和
+  `bbr_profile: standard`。
 - 生成配置包含官方 `$schema`，DNS 缓存容量为 `4096`，启用
   `optimistic` 缓存（`12h`）并通过 `store_dns` 持久化。
 - 远程 rule-set 通过显式的 `http_clients` 使用直连出站下载。

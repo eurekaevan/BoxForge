@@ -55,6 +55,7 @@ public record Hysteria2Outbound : ProxyOutbound
     [JsonPropertyName("server_ports")] public List<string>? ServerPorts { get; init; }
     [JsonPropertyName("hop_interval")] public string HopInterval { get; init; } = "30s";
     [JsonPropertyName("hop_interval_max")] public string HopIntervalMax { get; init; } = "60s";
+    [JsonPropertyName("bbr_profile")] public string BbrProfile { get; init; } = "standard";
     [JsonPropertyName("password")] public required string Password { get; init; }
     [JsonPropertyName("obfs")] public OutboundObfs? Obfs { get; init; }
     [JsonPropertyName("tls")] public OutboundTls? Tls { get; init; }

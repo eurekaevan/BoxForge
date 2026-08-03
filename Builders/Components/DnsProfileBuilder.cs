@@ -17,9 +17,19 @@ public class DnsProfileBuilder(
 
         dns.Servers.AddRange([
             new LocalDnsServer { Tag = "bootstrap" },
-            new HttpsDnsServer { Tag = "node-resolver", ServerAddress = "223.5.5.5" },
-            new HttpsDnsServer { Tag = "remote", ServerAddress = "1.1.1.1", DetourTag = singbox.MainProxyGroup },
-            new HttpsDnsServer { Tag = "local", ServerAddress = "223.5.5.5" }
+            CreateHttpsServer("node-resolver", "223.5.5.5", "dns.alidns.com"),
+            CreateHttpsServer("local-tencent", "119.29.29.29", "doh.pub"),
+            CreateHttpsServer("local", "223.5.5.5", "dns.alidns.com"),
+            CreateHttpsServer(
+                "remote-google",
+                "8.8.8.8",
+                "dns.google",
+                singbox.MainProxyGroup),
+            CreateHttpsServer(
+                "remote",
+                "1.1.1.1",
+                "cloudflare-dns.com",
+                singbox.MainProxyGroup)
         ]);
 
         if (tailscale.Enabled)
@@ -36,7 +46,8 @@ public class DnsProfileBuilder(
             {
                 PreferredBy = [tailscale.DnsTag],
                 Action = "route",
-                Server = tailscale.DnsTag
+                Server = tailscale.DnsTag,
+                DisableOptimisticCache = true
             });
         }
 
@@ -45,10 +56,89 @@ public class DnsProfileBuilder(
 
         if (nodes.ServerDomains.Count > 0)
         {
-            dns.Rules.Add(new DnsRule { Domain = [.. nodes.ServerDomains], Action = "route", Server = "node-resolver" });
+            dns.Rules.Add(new DnsRule
+            {
+                Domain = [.. nodes.ServerDomains],
+                Action = "route",
+                Server = "node-resolver",
+                DisableOptimisticCache = true
+            });
         }
 
-        dns.Rules.Add(new DnsRule { RuleSet = ["geosite-cn", "geosite-category-pt"], Action = "route", Server = "local" });
+        AddRace(
+            dns.Rules,
+            ["geosite-cn", "geosite-category-pt"],
+            "local-tencent",
+            "local",
+            "cn");
+        dns.Rules.Add(new DnsRule
+        {
+            RuleSet = ["geosite-cn", "geosite-category-pt"],
+            Action = "route",
+            Server = "local"
+        });
+
+        AddRace(
+            dns.Rules,
+            null,
+            "remote-google",
+            "remote",
+            "global");
         return dns;
+    }
+
+    private static HttpsDnsServer CreateHttpsServer(
+        string tag,
+        string server,
+        string serverName,
+        string? detour = null) => new()
+        {
+            Tag = tag,
+            ServerAddress = server,
+            DetourTag = detour,
+            TlsConfig = new DnsTlsConfig { ServerName = serverName }
+        };
+
+    private static void AddRace(
+        List<DnsRule> rules,
+        List<string>? ruleSet,
+        string firstServer,
+        string secondServer,
+        string responseTagPrefix)
+    {
+        string firstResponseTag = $"{responseTagPrefix}-first";
+        string secondResponseTag = $"{responseTagPrefix}-second";
+
+        rules.Add(new DnsRule
+        {
+            RuleSet = ruleSet,
+            Action = "evaluate",
+            Server = firstServer,
+            Tag = firstResponseTag
+        });
+        rules.Add(new DnsRule
+        {
+            RuleSet = ruleSet,
+            MatchResponse = firstResponseTag,
+            ResponseRcode = "NOERROR",
+            Action = "respond",
+            Race = true
+        });
+        rules.Add(new DnsRule
+        {
+            RuleSet = ruleSet,
+            Action = "evaluate",
+            Server = secondServer,
+            Tag = secondResponseTag,
+            Speculative = true
+        });
+        rules.Add(new DnsRule
+        {
+            RuleSet = ruleSet,
+            MatchResponse = secondResponseTag,
+            ResponseRcode = "NOERROR",
+            Action = "respond",
+            Race = true
+        });
     }
 }

@@ -9,6 +9,7 @@ public record Inbound
     [JsonPropertyName("listen")] public string? Listen { get; init; }
     [JsonPropertyName("listen_port")] public int? ListenPort { get; init; }
     [JsonPropertyName("address")] public List<string>? Address { get; init; }
+    [JsonPropertyName("dns_mode")] public string? DnsMode { get; init; }
     [JsonPropertyName("auto_route")] public bool? AutoRoute { get; init; }
     [JsonPropertyName("strict_route")] public bool? StrictRoute { get; init; }
     [JsonPropertyName("stack")] public string? Stack { get; init; }

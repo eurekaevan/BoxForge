@@ -5,7 +5,11 @@ namespace BoxForge.Helpers;
 
 public static class TlsConfigHelper
 {
-    public static OutboundTls? Extract(ClashProxyNode node, string server, bool forceTls = false)
+    public static OutboundTls? Extract(
+        ClashProxyNode node,
+        string server,
+        bool forceTls = false,
+        bool supportsUtls = true)
     {
         bool isTls = node.GetBool("tls");
         var realityOptions = node.GetObject("reality-opts");
@@ -24,7 +28,9 @@ public static class TlsConfigHelper
             };
         }
 
-        string? fingerprint = node.GetString("client-fingerprint");
+        string? fingerprint = supportsUtls
+            ? node.GetString("client-fingerprint")
+            : null;
 
         return new OutboundTls
         {
@@ -38,8 +44,9 @@ public static class TlsConfigHelper
                     Enabled = true,
                     Fingerprint = fingerprint
                 },
-            Alpn = node.GetStringList("alpn") ?? ["h2", "http/1.1"],
-            MinVersion = "1.3",
+            Alpn = node.GetStringList("alpn"),
+            MinVersion = node.GetString("min-version")
+                ?? node.GetString("min_version"),
             Reality = realityConfig
         };
     }
