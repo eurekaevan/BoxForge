@@ -45,8 +45,6 @@ public static class TlsConfigHelper
                     Fingerprint = fingerprint
                 },
             Alpn = node.GetStringList("alpn"),
-            MinVersion = node.GetString("min-version")
-                ?? node.GetString("min_version"),
             Reality = realityConfig
         };
     }

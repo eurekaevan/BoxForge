@@ -33,6 +33,7 @@ public sealed class LocalGenerationWorkflowTests
             password: secret
             sni: example.com
             client-fingerprint: chrome
+            min-version: "1.3"
         """;
 
     private const string InvalidHysteriaYaml = """

@@ -90,7 +90,6 @@ public record OutboundTls
     [JsonPropertyName("insecure")] public bool? Insecure { get; init; }
     [JsonPropertyName("utls")] public Utls? Utls { get; init; }
     [JsonPropertyName("alpn")] public List<string>? Alpn { get; init; }
-    [JsonPropertyName("min_version")] public string? MinVersion { get; init; }
     [JsonPropertyName("reality")] public OutboundReality? Reality { get; init; }
 }
 

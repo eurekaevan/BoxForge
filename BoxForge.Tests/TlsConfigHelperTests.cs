@@ -1,3 +1,4 @@
+using System.Text.Json;
 using BoxForge.Helpers;
 using BoxForge.Models.Clash;
 using BoxForge.Models.Singbox;
@@ -7,7 +8,7 @@ namespace BoxForge.Tests;
 public class TlsConfigHelperTests
 {
     [Fact]
-    public void Extract_OmitsUnspecifiedAlpnAndMinimumVersion()
+    public void Extract_OmitsUnspecifiedAlpn()
     {
         var node = CreateNode(new Dictionary<string, object>
         {
@@ -18,11 +19,10 @@ public class TlsConfigHelperTests
             TlsConfigHelper.Extract(node, "example.com"));
 
         Assert.Null(tls.Alpn);
-        Assert.Null(tls.MinVersion);
     }
 
     [Fact]
-    public void Extract_PreservesExplicitAlpnAndMinimumVersion()
+    public void Extract_IgnoresMinimumVersionAndPreservesExplicitAlpn()
     {
         var node = CreateNode(new Dictionary<string, object>
         {
@@ -35,7 +35,7 @@ public class TlsConfigHelperTests
             TlsConfigHelper.Extract(node, "example.com"));
 
         Assert.Equal(["h2", "http/1.1"], tls.Alpn);
-        Assert.Equal("1.2", tls.MinVersion);
+        Assert.DoesNotContain("min_version", JsonSerializer.Serialize(tls));
     }
 
     [Fact]
