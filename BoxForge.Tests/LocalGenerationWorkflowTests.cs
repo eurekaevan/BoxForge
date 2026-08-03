@@ -33,6 +33,7 @@ public sealed class LocalGenerationWorkflowTests
             password: secret
             sni: example.com
             client-fingerprint: chrome
+            alpn: [h2, http/1.1]
             min-version: "1.3"
         """;
 

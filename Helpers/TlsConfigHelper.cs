@@ -44,7 +44,6 @@ public static class TlsConfigHelper
                     Enabled = true,
                     Fingerprint = fingerprint
                 },
-            Alpn = node.GetStringList("alpn"),
             Reality = realityConfig
         };
     }

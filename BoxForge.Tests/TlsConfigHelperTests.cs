@@ -8,21 +8,7 @@ namespace BoxForge.Tests;
 public class TlsConfigHelperTests
 {
     [Fact]
-    public void Extract_OmitsUnspecifiedAlpn()
-    {
-        var node = CreateNode(new Dictionary<string, object>
-        {
-            ["tls"] = true
-        });
-
-        var tls = Assert.IsType<OutboundTls>(
-            TlsConfigHelper.Extract(node, "example.com"));
-
-        Assert.Null(tls.Alpn);
-    }
-
-    [Fact]
-    public void Extract_IgnoresMinimumVersionAndPreservesExplicitAlpn()
+    public void Extract_IgnoresAlpnAndMinimumVersion()
     {
         var node = CreateNode(new Dictionary<string, object>
         {
@@ -34,8 +20,9 @@ public class TlsConfigHelperTests
         var tls = Assert.IsType<OutboundTls>(
             TlsConfigHelper.Extract(node, "example.com"));
 
-        Assert.Equal(["h2", "http/1.1"], tls.Alpn);
-        Assert.DoesNotContain("min_version", JsonSerializer.Serialize(tls));
+        string json = JsonSerializer.Serialize(tls);
+        Assert.DoesNotContain("alpn", json);
+        Assert.DoesNotContain("min_version", json);
     }
 
     [Fact]

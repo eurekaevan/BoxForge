@@ -89,7 +89,6 @@ public record OutboundTls
     [JsonPropertyName("server_name")] public required string ServerName { get; init; }
     [JsonPropertyName("insecure")] public bool? Insecure { get; init; }
     [JsonPropertyName("utls")] public Utls? Utls { get; init; }
-    [JsonPropertyName("alpn")] public List<string>? Alpn { get; init; }
     [JsonPropertyName("reality")] public OutboundReality? Reality { get; init; }
 }
 
