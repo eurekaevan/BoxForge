@@ -24,6 +24,16 @@ public sealed class LocalGenerationWorkflowTests
             password: secret
         """;
 
+    private const string ValidHysteria2Yaml = """
+        proxies:
+          - name: test-hysteria2
+            type: hysteria2
+            server: example.com
+            ports: 20000-30000
+            password: secret
+            sni: example.com
+        """;
+
     private const string InvalidHysteriaYaml = """
         proxies:
           - name: invalid-node
@@ -200,6 +210,21 @@ public sealed class LocalGenerationWorkflowTests
         using var document = JsonDocument.Parse(content);
         JsonElement root = document.RootElement;
 
+        Assert.Equal(
+            "https://sing-box.sagernet.org/schema.json",
+            root.GetProperty("$schema").GetString());
+        JsonElement dns = root.GetProperty("dns");
+        Assert.Equal(4096, dns.GetProperty("cache_capacity").GetInt32());
+        Assert.True(dns.GetProperty("optimistic").GetProperty("enabled").GetBoolean());
+        Assert.Equal(
+            "12h",
+            dns.GetProperty("optimistic").GetProperty("timeout").GetString());
+        Assert.True(root
+            .GetProperty("experimental")
+            .GetProperty("cache_file")
+            .GetProperty("store_dns")
+            .GetBoolean());
+
         JsonElement httpClient = Assert.Single(
             root.GetProperty("http_clients").EnumerateArray());
         Assert.Equal("rule-set-download", httpClient.GetProperty("tag").GetString());
@@ -229,6 +254,56 @@ public sealed class LocalGenerationWorkflowTests
 
         Assert.DoesNotContain("\"ip_accept_any\"", content, StringComparison.Ordinal);
         Assert.DoesNotContain("\"download_detour\"", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"clash_api\"", content, StringComparison.Ordinal);
+        Assert.False(root.TryGetProperty("services", out _));
+    }
+
+    [Theory]
+    [InlineData(TargetPlatform.Linux, "/etc/sing-box/ui")]
+    [InlineData(TargetPlatform.Windows, "ui")]
+    public async Task GenerateAsync_UsesSingboxApiAndHysteria2HopIntervals(
+        TargetPlatform platform,
+        string dashboardPath)
+    {
+        using var temporary = new TemporaryDirectory();
+        string input = temporary.CreateDirectory("input");
+        string output = temporary.GetPath("output");
+        await File.WriteAllTextAsync(
+            Path.Combine(input, "hysteria2.yaml"),
+            ValidHysteria2Yaml);
+
+        var summary = await CreateWorkflow().GenerateAsync(
+            new LocalGenerationRequest(input, output, [platform]));
+
+        Assert.Equal(new LocalGenerationSummary(1, 0, 0), summary);
+        string content = await File.ReadAllTextAsync(Path.Combine(
+            output,
+            "hysteria2",
+            platform.ToString(),
+            "config.json"));
+        using var document = JsonDocument.Parse(content);
+        JsonElement root = document.RootElement;
+
+        JsonElement hysteria2 = Assert.Single(
+            root.GetProperty("outbounds").EnumerateArray(),
+            outbound => outbound.GetProperty("type").GetString() == "hysteria2");
+        Assert.Equal("30s", hysteria2.GetProperty("hop_interval").GetString());
+        Assert.Equal("60s", hysteria2.GetProperty("hop_interval_max").GetString());
+
+        JsonElement api = Assert.Single(root.GetProperty("services").EnumerateArray());
+        Assert.Equal("api", api.GetProperty("type").GetString());
+        Assert.Equal("api", api.GetProperty("tag").GetString());
+        Assert.Equal("127.0.0.1", api.GetProperty("listen").GetString());
+        Assert.Equal(9090, api.GetProperty("listen_port").GetInt32());
+        Assert.Equal("127001", api.GetProperty("secret").GetString());
+        JsonElement dashboard = api.GetProperty("dashboard");
+        Assert.True(dashboard.GetProperty("enabled").GetBoolean());
+        Assert.Equal(dashboardPath, dashboard.GetProperty("path").GetString());
+        Assert.Equal(
+            "rule-set-download",
+            dashboard.GetProperty("http_client").GetString());
+
+        Assert.DoesNotContain("\"clash_api\"", content, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -275,6 +350,7 @@ public sealed class LocalGenerationWorkflowTests
             new TailscaleEndpointBuilder(tailscaleOptions),
             new DnsProfileBuilder(singboxOptions, tailscaleOptions),
             new RouteProfileBuilder(singboxOptions, tailscaleOptions),
+            new ServiceBuilder(),
             new ExperimentalBuilder());
         var serializer = new ConfigSerializer();
         var conversionService = new ConversionService(

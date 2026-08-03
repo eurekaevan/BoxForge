@@ -8,7 +8,15 @@ public record DnsConfig
     [JsonPropertyName("rules")] public List<DnsRule> Rules { get; init; } = [];
     [JsonPropertyName("final")] public string Final { get; init; } = "remote";
     [JsonPropertyName("strategy")] public string Strategy { get; init; } = "prefer_ipv4";
+    [JsonPropertyName("cache_capacity")] public uint CacheCapacity { get; init; } = 4096;
+    [JsonPropertyName("optimistic")] public DnsOptimisticConfig Optimistic { get; init; } = new();
     [JsonPropertyName("reverse_mapping")] public bool ReverseMapping { get; init; } = true;
+}
+
+public record DnsOptimisticConfig
+{
+    [JsonPropertyName("enabled")] public bool Enabled { get; init; } = true;
+    [JsonPropertyName("timeout")] public string Timeout { get; init; } = "12h";
 }
 
 public abstract record DnsServer

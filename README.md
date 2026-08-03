@@ -117,7 +117,11 @@ dotnet test BoxForge.slnx --no-build
 
 ## 说明
 
-- Android 平台不会写入 `experimental.clash_api`。
+- Linux 和 Windows 使用顶层 `services` 中的官方 sing-box API 服务，监听
+  `127.0.0.1:9090`，并启用 dashboard；Android 不额外创建 API 监听服务。
+- Hysteria2 出站使用 `hop_interval: 30s` 和 `hop_interval_max: 60s`。
+- 生成配置包含官方 `$schema`，DNS 缓存容量为 `4096`，启用
+  `optimistic` 缓存（`12h`）并通过 `store_dns` 持久化。
 - 远程 rule-set 通过显式的 `http_clients` 使用直连出站下载。
-- Windows 的 `external_ui` 为 `ui`。
-- Linux 的 `external_ui` 为 `/etc/sing-box/ui`。
+- Windows 的 dashboard 路径为 `ui`。
+- Linux 的 dashboard 路径为 `/etc/sing-box/ui`。

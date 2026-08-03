@@ -1,11 +1,10 @@
-using BoxForge.Models;
 using BoxForge.Models.Singbox;
 
 namespace BoxForge.Builders.Components;
 
 public class ExperimentalBuilder
 {
-    public ExperimentalConfig Build(TargetPlatform platform, string cacheId)
+    public ExperimentalConfig Build(string cacheId)
     {
         return new ExperimentalConfig
         {
@@ -13,18 +12,9 @@ public class ExperimentalBuilder
             {
                 Enabled = true,
                 Path = "cache.db",
+                StoreDns = true,
                 CacheId = cacheId
-            },
-            ClashApi = platform != TargetPlatform.Android
-                ? new ClashApiConfig
-                {
-                    ExternalController = "127.0.0.1:9090",
-                    ExternalUi = platform == TargetPlatform.Windows
-                        ? "ui"
-                        : "/etc/sing-box/ui",
-                    Secret = "127001"
-                }
-                : null
+            }
         };
     }
 }

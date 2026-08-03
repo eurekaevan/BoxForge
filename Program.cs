@@ -49,6 +49,7 @@ using var host = Host.CreateDefaultBuilder([])
         services.AddTransient<TailscaleEndpointBuilder>();
         services.AddTransient<DnsProfileBuilder>();
         services.AddTransient<RouteProfileBuilder>();
+        services.AddTransient<ServiceBuilder>();
         services.AddTransient<ExperimentalBuilder>();
 
         services.AddTransient<ISingboxConfigBuilder, SingboxConfigBuilder>();
