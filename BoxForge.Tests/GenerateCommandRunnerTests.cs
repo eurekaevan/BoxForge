@@ -48,6 +48,16 @@ public sealed class GenerateCommandRunnerTests
     }
 
     [Fact]
+    public async Task RunAsync_ReturnsFailureWhenStagedItemsWereDiscarded()
+    {
+        var runner = CreateRunner(new LocalGenerationSummary(0, 0, 0, 1));
+
+        int exitCode = await runner.RunAsync(["generate"]);
+
+        Assert.Equal(GenerateCommandRunner.FailureExitCode, exitCode);
+    }
+
+    [Fact]
     public async Task RunAsync_ReturnsSuccessWithoutFailures()
     {
         var runner = CreateRunner(new LocalGenerationSummary(2, 1, 0));

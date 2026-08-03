@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore BoxForge.slnx
+
+      - name: Verify formatting
+        run: dotnet format BoxForge.slnx --verify-no-changes --no-restore
+
+      - name: Test
+        run: dotnet test BoxForge.slnx -c Release --no-restore
+
+      - name: Generate fixture configurations
+        run: >-
+          dotnet run --project BoxForge.csproj -c Release --no-restore --
+          generate
+          --input-dir BoxForge.Tests/Fixtures
+          --output-dir "${{ runner.temp }}/singbox-configs"
+          --platform all
+
+      - name: Check generated configurations with sing-box
+        env:
+          SING_BOX_VERSION: 1.14.0-beta.4
+        run: |
+          archive="${RUNNER_TEMP}/sing-box.tar.gz"
+          curl -fsSL "https://github.com/SagerNet/sing-box/releases/download/v${SING_BOX_VERSION}/sing-box-${SING_BOX_VERSION}-linux-amd64.tar.gz" -o "${archive}"
+          tar -xzf "${archive}" -C "${RUNNER_TEMP}"
+          binary="${RUNNER_TEMP}/sing-box-${SING_BOX_VERSION}-linux-amd64/sing-box"
+          while IFS= read -r -d '' config; do
+            "${binary}" check -c "${config}"
+          done < <(find "${RUNNER_TEMP}/singbox-configs" -name config.json -print0)
+          ! rg '"download_detour"|"clash_api"' "${RUNNER_TEMP}/singbox-configs"
