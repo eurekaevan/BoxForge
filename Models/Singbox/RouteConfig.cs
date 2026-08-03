@@ -8,6 +8,7 @@ public record RouteConfig
     [JsonPropertyName("rules")] public List<RouteRule> Rules { get; init; } = [];
     [JsonPropertyName("final")] public string? Final { get; init; }
     [JsonPropertyName("auto_detect_interface")] public bool AutoDetectInterface { get; init; } = true;
+    [JsonPropertyName("default_http_client")] public string? DefaultHttpClient { get; init; }
 }
 
 public record SingboxRuleSet
@@ -16,7 +17,6 @@ public record SingboxRuleSet
     [JsonPropertyName("tag")] public string? Tag { get; init; }
     [JsonPropertyName("format")] public string? Format { get; init; }
     [JsonPropertyName("url")] public string? Url { get; init; }
-    [JsonPropertyName("download_detour")] public string? DownloadDetour { get; init; }
     [JsonPropertyName("update_interval")] public string? UpdateInterval { get; init; }
 }
 

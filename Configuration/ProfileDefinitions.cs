@@ -18,6 +18,6 @@ public static class ProfileDefinitions
         new(ServiceGroupNames.Spotify, RegionId.UnitedStates, ["geosite-spotify"]),
         new(ServiceGroupNames.Steam, RegionId.HongKong, ["geosite-steam"]),
         new(ServiceGroupNames.Ai, RegionId.UnitedStates, ["geosite-category-ai-!cn"]),
-        new(ServiceGroupNames.Microsoft, RegionId.HongKong, ["geosite-microsoft"]),
+        new(ServiceGroupNames.Microsoft, RegionId.UnitedStates, ["geosite-microsoft"]),
     ];
 }

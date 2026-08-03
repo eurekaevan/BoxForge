@@ -13,6 +13,7 @@ public abstract record Endpoint
 
 public record TailscaleEndpoint : Endpoint
 {
+    [JsonPropertyName("domain_resolver")] public required string DomainResolver { get; init; }
     [JsonPropertyName("state_directory")] public string? StateDirectory { get; init; }
     [JsonPropertyName("control_url")] public string? ControlUrl { get; init; }
     [JsonPropertyName("hostname")] public string? Hostname { get; init; }

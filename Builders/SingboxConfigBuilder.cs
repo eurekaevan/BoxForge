@@ -1,5 +1,5 @@
 using BoxForge.Builders.Components;
-using BoxForge.Models;
+using BoxForge.Configuration;
 using BoxForge.Models.Singbox;
 
 namespace BoxForge.Builders;
@@ -37,6 +37,14 @@ public class SingboxConfigBuilder(
         {
             Log = new LogConfig(),
             Dns = dnsProfileBuilder.Build(nodes),
+            HttpClients =
+            [
+                new HttpClientConfig
+                {
+                    Tag = SingboxOptions.RuleSetHttpClientTag,
+                    Detour = profiles.DirectOutbound.Tag
+                }
+            ],
             Inbounds = inboundBuilder.Build(request.Platform),
             Endpoints = endpoints.Count > 0 ? endpoints : null,
             Outbounds = orderedOutbounds,

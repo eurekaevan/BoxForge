@@ -39,6 +39,10 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
             config.Dns.Servers.Select(server => server.Tag),
             "dns.servers",
             diagnostics);
+        var httpClientTags = CollectUniqueTags(
+            config.HttpClients.Select(client => client.Tag),
+            "http_clients",
+            diagnostics);
         var ruleSetTags = CollectUniqueTags(
             config.Route.RuleSet.Select(ruleSet => ruleSet.Tag),
             "route.rule_set",
@@ -51,6 +55,40 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
             "route.final",
             "不存在对应的 outbound 或 endpoint。",
             diagnostics);
+        ValidateReference(
+            config.Route.DefaultHttpClient,
+            httpClientTags,
+            "SB014",
+            "route.default_http_client",
+            "引用了不存在的 HTTP client。",
+            diagnostics);
+
+        for (var index = 0; index < (config.Endpoints?.Count ?? 0); index++)
+        {
+            if (config.Endpoints![index] is not TailscaleEndpoint tailscaleEndpoint)
+            {
+                continue;
+            }
+
+            ValidateReference(
+                tailscaleEndpoint.DomainResolver,
+                dnsTags,
+                "SB016",
+                $"endpoints[{index}].domain_resolver",
+                "引用了不存在的 DNS server。",
+                diagnostics);
+        }
+
+        for (var index = 0; index < config.HttpClients.Count; index++)
+        {
+            ValidateReference(
+                config.HttpClients[index].Detour,
+                routeTargets,
+                "SB015",
+                $"http_clients[{index}].detour",
+                "引用了不存在的 outbound 或 endpoint。",
+                diagnostics);
+        }
 
         for (var index = 0; index < config.Outbounds.Count; index++)
         {

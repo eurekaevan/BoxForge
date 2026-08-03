@@ -52,8 +52,8 @@ public record DnsRule
     [JsonPropertyName("domain")] public List<string>? Domain { get; init; }
     [JsonPropertyName("domain_suffix")] public List<string>? DomainSuffix { get; init; }
     [JsonPropertyName("query_type")] public List<string>? QueryType { get; init; }
+    [JsonPropertyName("preferred_by")] public List<string>? PreferredBy { get; init; }
     [JsonPropertyName("action")] public string? Action { get; init; }
     [JsonPropertyName("server")] public string? Server { get; init; }
     [JsonPropertyName("rcode")] public string? Rcode { get; init; }
-    [JsonPropertyName("ip_accept_any")] public bool? IpAcceptAny { get; init; }
 }

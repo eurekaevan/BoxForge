@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using BoxForge.Builders;
@@ -174,6 +175,63 @@ public sealed class LocalGenerationWorkflowTests
     }
 
     [Fact]
+    public async Task GenerateAsync_UsesSingbox114ConfigurationFields()
+    {
+        using var temporary = new TemporaryDirectory();
+        string input = temporary.CreateDirectory("input");
+        string output = temporary.GetPath("output");
+        await File.WriteAllTextAsync(
+            Path.Combine(input, "alpha.yaml"),
+            ValidShadowsocksYaml);
+
+        var summary = await CreateWorkflow(new TailscaleOptions { Enabled = true })
+            .GenerateAsync(new LocalGenerationRequest(
+                input,
+                output,
+                [TargetPlatform.Android]));
+
+        Assert.Equal(new LocalGenerationSummary(1, 0, 0), summary);
+        string configPath = Path.Combine(
+            output,
+            "alpha",
+            "Android",
+            "config.json");
+        string content = await File.ReadAllTextAsync(configPath);
+        using var document = JsonDocument.Parse(content);
+        JsonElement root = document.RootElement;
+
+        JsonElement httpClient = Assert.Single(
+            root.GetProperty("http_clients").EnumerateArray());
+        Assert.Equal("rule-set-download", httpClient.GetProperty("tag").GetString());
+        Assert.Equal("DIRECT", httpClient.GetProperty("detour").GetString());
+        Assert.Equal(
+            "rule-set-download",
+            root.GetProperty("route").GetProperty("default_http_client").GetString());
+
+        JsonElement tailscaleDnsRule = Assert.Single(
+            root.GetProperty("dns")
+                .GetProperty("rules")
+                .EnumerateArray(),
+            rule => rule.TryGetProperty("preferred_by", out _));
+        Assert.Equal(
+            "tailscale-dns",
+            Assert.Single(tailscaleDnsRule
+                .GetProperty("preferred_by")
+                .EnumerateArray())
+                .GetString());
+        Assert.Equal("route", tailscaleDnsRule.GetProperty("action").GetString());
+        Assert.Equal("tailscale-dns", tailscaleDnsRule.GetProperty("server").GetString());
+        Assert.Equal(
+            "bootstrap",
+            Assert.Single(root.GetProperty("endpoints").EnumerateArray())
+                .GetProperty("domain_resolver")
+                .GetString());
+
+        Assert.DoesNotContain("\"ip_accept_any\"", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"download_detour\"", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task GenerateAsync_RejectsOutputDirectoryContainingInput()
     {
         using var temporary = new TemporaryDirectory();
@@ -193,10 +251,12 @@ public sealed class LocalGenerationWorkflowTests
         Assert.True(File.Exists(inputFile));
     }
 
-    private static LocalGenerationWorkflow CreateWorkflow()
+    private static LocalGenerationWorkflow CreateWorkflow(
+        TailscaleOptions? tailscaleOptionsValue = null)
     {
         var singboxOptions = Options.Create(new SingboxOptions());
-        var tailscaleOptions = Options.Create(new TailscaleOptions());
+        var tailscaleOptions = Options.Create(
+            tailscaleOptionsValue ?? new TailscaleOptions());
         IProxyConverter[] converters =
         [
             new TrojanConverter(),

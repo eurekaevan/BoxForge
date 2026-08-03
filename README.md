@@ -1,7 +1,7 @@
 # BoxForge
 
 BoxForge 是一个 Action-first、无交互的命令行工具，用于将 Clash YAML
-配置批量转换为 sing-box `config.json`。核心转换与命令行入口保持分离：
+配置批量转换为 sing-box 1.14 `config.json`。核心转换与命令行入口保持分离：
 CLI 负责解析参数、调用本地生成服务并返回退出码，转换与文件替换逻辑保留在
 应用内部，不写入 GitHub Actions workflow。
 
@@ -19,6 +19,7 @@ CLI 负责解析参数、调用本地生成服务并返回退出码，转换与�
 ## 运行环境
 
 - .NET SDK 10.0
+- sing-box 1.14 或更高版本
 - NuGet 依赖：YamlDotNet、Microsoft.Extensions.Configuration 相关包
 
 ## 非交互式生成
@@ -100,7 +101,7 @@ dotnet run -- generate --platform Android
 新旧形式同时存在时，分组形式优先。
 
 启用 Tailscale 后，输出包含一个 `tailscale` endpoint。它复用 sing-box 已有的
-系统 VPN/TUN，不创建第二个系统 VPN 接口。Android 上需要 sing-box 1.13 或更高
+系统 VPN/TUN，不创建第二个系统 VPN 接口。Android 上需要 sing-box 1.14 或更高
 版本，并在客户端的“工具 > Endpoints”中完成登录。登录状态保存在
 `TailscaleStateDirectory`，不会写入 `config.json`。
 
@@ -117,5 +118,6 @@ dotnet test BoxForge.slnx --no-build
 ## 说明
 
 - Android 平台不会写入 `experimental.clash_api`。
+- 远程 rule-set 通过显式的 `http_clients` 使用直连出站下载。
 - Windows 的 `external_ui` 为 `ui`。
 - Linux 的 `external_ui` 为 `/etc/sing-box/ui`。

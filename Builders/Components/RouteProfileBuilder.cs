@@ -13,7 +13,11 @@ public class RouteProfileBuilder(
 
     public RouteConfig Build()
     {
-        var route = new RouteConfig { Final = singbox.MainProxyGroup };
+        var route = new RouteConfig
+        {
+            Final = singbox.MainProxyGroup,
+            DefaultHttpClient = SingboxOptions.RuleSetHttpClientTag
+        };
 
         route.RuleSet.AddRange([
             CreateRemoteRuleSet("geosite-category-ads-all", "geosite", "geosite-category-ads-all"),
@@ -97,7 +101,6 @@ public class RouteProfileBuilder(
         Type = "remote",
         Format = "binary",
         Url = $"https://fastly.jsdelivr.net/gh/SagerNet/sing-{repoType}@rule-set/{fileName}.srs",
-        DownloadDetour = singbox.Direct,
         UpdateInterval = "1d"
     };
 }

@@ -20,6 +20,7 @@ public class TailscaleEndpointBuilder(IOptions<TailscaleOptions> options)
             new TailscaleEndpoint
             {
                 Tag = tailscaleOptions.Tag,
+                DomainResolver = "bootstrap",
                 StateDirectory = NullIfWhiteSpace(tailscaleOptions.StateDirectory),
                 ControlUrl = NullIfWhiteSpace(tailscaleOptions.ControlUrl),
                 Hostname = NullIfWhiteSpace(tailscaleOptions.Hostname),

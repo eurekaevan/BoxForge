@@ -31,10 +31,11 @@ public class DnsProfileBuilder(
                 AcceptDefaultResolversValue = false
             });
 
-            // sing-box 1.13 的 MagicDNS-only 写法；1.14 起可改用 preferred_by。
+            // sing-box 1.14 直接根据 Tailscale 的 MagicDNS 域名与分流后缀匹配。
             dns.Rules.Add(new DnsRule
             {
-                IpAcceptAny = true,
+                PreferredBy = [tailscale.DnsTag],
+                Action = "route",
                 Server = tailscale.DnsTag
             });
         }
