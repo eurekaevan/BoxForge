@@ -71,12 +71,6 @@ public class DnsProfileBuilder(
             "local-tencent",
             "local",
             "cn");
-        dns.Rules.Add(new DnsRule
-        {
-            RuleSet = ["geosite-cn", "geosite-category-pt"],
-            Action = "route",
-            Server = "local"
-        });
 
         AddRace(
             dns.Rules,
@@ -120,7 +114,7 @@ public class DnsProfileBuilder(
         {
             RuleSet = ruleSet,
             MatchResponse = firstResponseTag,
-            ResponseRcode = "NOERROR",
+            IpAcceptAny = true,
             Action = "respond",
             Race = true
         });
@@ -136,9 +130,35 @@ public class DnsProfileBuilder(
         {
             RuleSet = ruleSet,
             MatchResponse = secondResponseTag,
-            ResponseRcode = "NOERROR",
+            IpAcceptAny = true,
             Action = "respond",
             Race = true
+        });
+        rules.Add(new DnsRule
+        {
+            RuleSet = ruleSet,
+            MatchResponse = firstResponseTag,
+            ResponseRcode = "NXDOMAIN",
+            Action = "respond"
+        });
+        rules.Add(new DnsRule
+        {
+            RuleSet = ruleSet,
+            MatchResponse = secondResponseTag,
+            ResponseRcode = "NXDOMAIN",
+            Action = "respond"
+        });
+        rules.Add(new DnsRule
+        {
+            RuleSet = ruleSet,
+            MatchResponse = secondResponseTag,
+            Action = "respond"
+        });
+        rules.Add(new DnsRule
+        {
+            RuleSet = ruleSet,
+            Action = "route",
+            Server = secondServer
         });
     }
 }

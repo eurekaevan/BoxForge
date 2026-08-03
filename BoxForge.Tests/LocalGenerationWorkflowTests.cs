@@ -276,24 +276,38 @@ public sealed class LocalGenerationWorkflowTests
         Assert.Equal(
             "dns.google",
             google.GetProperty("tls").GetProperty("server_name").GetString());
-        JsonElement[] raceRules = dns
+        JsonElement[] dnsRules = dns
             .GetProperty("rules")
             .EnumerateArray()
+            .ToArray();
+        JsonElement[] raceRules = dnsRules
             .Where(rule => rule.TryGetProperty("race", out _))
             .ToArray();
         Assert.Equal(4, raceRules.Length);
+        Assert.Equal(
+            4,
+            dnsRules.Count(rule => rule.TryGetProperty("ip_accept_any", out _)));
         Assert.All(raceRules, rule =>
         {
             Assert.True(rule.GetProperty("race").GetBoolean());
             Assert.Equal("respond", rule.GetProperty("action").GetString());
-            Assert.Equal("NOERROR", rule.GetProperty("response_rcode").GetString());
+            Assert.True(rule.GetProperty("ip_accept_any").GetBoolean());
+            Assert.False(rule.TryGetProperty("response_rcode", out _));
             Assert.True(rule.TryGetProperty("match_response", out _));
         });
         Assert.Equal(
             2,
-            dns.GetProperty("rules")
-                .EnumerateArray()
-                .Count(rule => rule.TryGetProperty("speculative", out _)));
+            dnsRules.Count(rule => rule.TryGetProperty("speculative", out _)));
+        AssertDnsRaceRules(
+            dnsRules,
+            "cn",
+            "local-tencent",
+            "local");
+        AssertDnsRaceRules(
+            dnsRules,
+            "global",
+            "remote-google",
+            "remote");
         JsonElement tunInbound = Assert.Single(
             root.GetProperty("inbounds").EnumerateArray(),
             inbound => inbound.GetProperty("type").GetString() == "tun");
@@ -334,10 +348,108 @@ public sealed class LocalGenerationWorkflowTests
                 .GetProperty("domain_resolver")
                 .GetString());
 
-        Assert.DoesNotContain("\"ip_accept_any\"", content, StringComparison.Ordinal);
         Assert.DoesNotContain("\"download_detour\"", content, StringComparison.Ordinal);
         Assert.DoesNotContain("\"clash_api\"", content, StringComparison.Ordinal);
         Assert.False(root.TryGetProperty("services", out _));
+    }
+
+    private static void AssertDnsRaceRules(
+        JsonElement[] rules,
+        string responseTagPrefix,
+        string firstServer,
+        string secondServer)
+    {
+        string firstResponseTag = $"{responseTagPrefix}-first";
+        string secondResponseTag = $"{responseTagPrefix}-second";
+        int start = Array.FindIndex(
+            rules,
+            rule => rule.TryGetProperty("tag", out JsonElement tag)
+                && tag.GetString() == firstResponseTag);
+        Assert.True(start >= 0);
+
+        JsonElement[] race = rules.Skip(start).Take(8).ToArray();
+        Assert.Equal(8, race.Length);
+
+        AssertRule(race[0], "evaluate", server: firstServer, tag: firstResponseTag);
+        AssertRule(
+            race[1],
+            "respond",
+            matchResponse: firstResponseTag,
+            ipAcceptAny: true,
+            isRace: true);
+        AssertRule(
+            race[2],
+            "evaluate",
+            server: secondServer,
+            tag: secondResponseTag,
+            speculative: true);
+        AssertRule(
+            race[3],
+            "respond",
+            matchResponse: secondResponseTag,
+            ipAcceptAny: true,
+            isRace: true);
+        AssertRule(
+            race[4],
+            "respond",
+            matchResponse: firstResponseTag,
+            responseRcode: "NXDOMAIN");
+        AssertRule(
+            race[5],
+            "respond",
+            matchResponse: secondResponseTag,
+            responseRcode: "NXDOMAIN");
+        AssertRule(race[6], "respond", matchResponse: secondResponseTag);
+        AssertRule(race[7], "route", server: secondServer);
+    }
+
+    private static void AssertRule(
+        JsonElement rule,
+        string action,
+        string? server = null,
+        string? tag = null,
+        string? matchResponse = null,
+        string? responseRcode = null,
+        bool? ipAcceptAny = null,
+        bool? isRace = null,
+        bool? speculative = null)
+    {
+        Assert.Equal(action, rule.GetProperty("action").GetString());
+        AssertOptionalString(rule, "server", server);
+        AssertOptionalString(rule, "tag", tag);
+        AssertOptionalString(rule, "match_response", matchResponse);
+        AssertOptionalString(rule, "response_rcode", responseRcode);
+        AssertOptionalBoolean(rule, "ip_accept_any", ipAcceptAny);
+        AssertOptionalBoolean(rule, "race", isRace);
+        AssertOptionalBoolean(rule, "speculative", speculative);
+    }
+
+    private static void AssertOptionalString(
+        JsonElement element,
+        string propertyName,
+        string? expected)
+    {
+        Assert.Equal(
+            expected is not null,
+            element.TryGetProperty(propertyName, out JsonElement property));
+        if (expected is not null)
+        {
+            Assert.Equal(expected, property.GetString());
+        }
+    }
+
+    private static void AssertOptionalBoolean(
+        JsonElement element,
+        string propertyName,
+        bool? expected)
+    {
+        Assert.Equal(
+            expected.HasValue,
+            element.TryGetProperty(propertyName, out JsonElement property));
+        if (expected.HasValue)
+        {
+            Assert.Equal(expected.Value, property.GetBoolean());
+        }
     }
 
     [Theory]
