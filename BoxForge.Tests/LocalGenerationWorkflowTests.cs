@@ -112,6 +112,45 @@ public sealed class LocalGenerationWorkflowTests
         Assert.Equal(contentsBefore, contentsAfter);
     }
 
+    [Theory]
+    [InlineData(TargetPlatform.Android, 1400)]
+    [InlineData(TargetPlatform.Linux, null)]
+    [InlineData(TargetPlatform.Windows, null)]
+    public async Task GenerateAsync_SetsTunMtuByPlatform(
+        TargetPlatform platform,
+        int? expectedMtu)
+    {
+        using var temporary = new TemporaryDirectory();
+        string input = temporary.CreateDirectory("input");
+        string output = temporary.GetPath("output");
+        await File.WriteAllTextAsync(
+            Path.Combine(input, "alpha.yaml"),
+            ValidShadowsocksYaml);
+
+        var summary = await CreateWorkflow().GenerateAsync(
+            new LocalGenerationRequest(input, output, [platform]));
+
+        Assert.Equal(new LocalGenerationSummary(1, 0, 0), summary);
+        string content = await File.ReadAllTextAsync(Path.Combine(
+            output,
+            "alpha",
+            platform.ToString(),
+            "config.json"));
+        using var document = JsonDocument.Parse(content);
+        JsonElement tun = Assert.Single(
+            document.RootElement.GetProperty("inbounds").EnumerateArray(),
+            inbound => inbound.GetProperty("type").GetString() == "tun");
+
+        if (expectedMtu is int mtu)
+        {
+            Assert.Equal(mtu, tun.GetProperty("mtu").GetInt32());
+        }
+        else
+        {
+            Assert.False(tun.TryGetProperty("mtu", out _));
+        }
+    }
+
     [Fact]
     public async Task GenerateAsync_PreservesExistingOutputWhenConversionFails()
     {

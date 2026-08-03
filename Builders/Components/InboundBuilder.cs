@@ -25,7 +25,7 @@ public class InboundBuilder
                     TargetPlatform.Android => "system",
                     _ => "system"
                 },
-                Mtu = 1408
+                Mtu = platform == TargetPlatform.Android ? 1400 : null
             },
             new Inbound
             {

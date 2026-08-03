@@ -7,7 +7,7 @@ public record DnsConfig
     [JsonPropertyName("servers")] public List<DnsServer> Servers { get; init; } = [];
     [JsonPropertyName("rules")] public List<DnsRule> Rules { get; init; } = [];
     [JsonPropertyName("final")] public string Final { get; init; } = "remote";
-    [JsonPropertyName("strategy")] public string Strategy { get; init; } = "prefer_ipv4";
+    [JsonPropertyName("strategy")] public string Strategy { get; init; } = "ipv4_only";
     [JsonPropertyName("cache_capacity")] public uint CacheCapacity { get; init; } = 4096;
     [JsonPropertyName("optimistic")] public DnsOptimisticConfig Optimistic { get; init; } = new();
     [JsonPropertyName("reverse_mapping")] public bool ReverseMapping { get; init; } = true;
