@@ -35,6 +35,8 @@ public abstract record ProxyOutbound : Outbound
     [JsonPropertyName("server_port")] public int? ServerPort { get; init; }
     [JsonPropertyName("domain_resolver")] public string DomainResolver { get; init; } = SingboxTags.NodeResolverDns;
     [JsonPropertyName("connect_timeout")] public string ConnectTimeout { get; init; } = "5s";
+    [JsonPropertyName("tcp_keep_alive")] public string? TcpKeepAlive { get; init; }
+    [JsonPropertyName("tcp_keep_alive_interval")] public string? TcpKeepAliveInterval { get; init; }
 }
 
 public record VlessOutbound : ProxyOutbound

@@ -6,13 +6,14 @@ namespace BoxForge.Tests;
 public sealed class GeneratedConfigTests
 {
     [Theory]
-    [InlineData(TargetPlatform.Android, 1400, false)]
-    [InlineData(TargetPlatform.Linux, null, true)]
-    [InlineData(TargetPlatform.Windows, null, true)]
-    public void Convert_UsesPlatformSpecificInboundAndService(
+    [InlineData(TargetPlatform.Android, 1400, false, false)]
+    [InlineData(TargetPlatform.Linux, null, true, true)]
+    [InlineData(TargetPlatform.Windows, null, true, true)]
+    public void Convert_UsesPlatformSpecificSettings(
         TargetPlatform platform,
         int? expectedMtu,
-        bool expectsApiService)
+        bool expectsApiService,
+        bool expectsTcpKeepAlive)
     {
         using JsonDocument document = JsonDocument.Parse(
             TestInfrastructure.Convert(
@@ -30,6 +31,23 @@ public sealed class GeneratedConfigTests
         }
 
         Assert.Equal(expectsApiService, root.TryGetProperty("services", out _));
+
+        JsonElement node = Assert.Single(
+            root.GetProperty("outbounds").EnumerateArray(),
+            outbound => outbound.GetProperty("tag").GetString() == "test-node");
+        Assert.Equal(
+            expectsTcpKeepAlive,
+            node.TryGetProperty("tcp_keep_alive", out JsonElement tcpKeepAlive));
+        Assert.Equal(
+            expectsTcpKeepAlive,
+            node.TryGetProperty(
+                "tcp_keep_alive_interval",
+                out JsonElement tcpKeepAliveInterval));
+        if (expectsTcpKeepAlive)
+        {
+            Assert.Equal("1m", tcpKeepAlive.GetString());
+            Assert.Equal("30s", tcpKeepAliveInterval.GetString());
+        }
     }
 
     [Fact]

@@ -1,5 +1,6 @@
 using BoxForge.Builders.Components;
 using BoxForge.Configuration;
+using BoxForge.Models;
 using BoxForge.Models.Singbox;
 
 namespace BoxForge.Builders;
@@ -25,7 +26,8 @@ public class SingboxConfigBuilder(
         orderedOutbounds.Add(profiles.MainOutbound);
         orderedOutbounds.AddRange(profiles.RegionOutbounds);
         orderedOutbounds.AddRange(profiles.ServiceOutbounds);
-        orderedOutbounds.AddRange(request.Nodes.Outbounds);
+        orderedOutbounds.AddRange(request.Nodes.Outbounds.Select(
+            outbound => AddPlatformDialFields(outbound, request.Platform)));
         orderedOutbounds.Add(profiles.DirectOutbound);
 
         return new SingboxConfig
@@ -52,4 +54,15 @@ public class SingboxConfigBuilder(
             Experimental = ExperimentalBuilder.Build(request.CacheId)
         };
     }
+
+    private static ProxyOutbound AddPlatformDialFields(
+        ProxyOutbound outbound,
+        TargetPlatform platform) =>
+        platform == TargetPlatform.Android
+            ? outbound
+            : outbound with
+            {
+                TcpKeepAlive = "1m",
+                TcpKeepAliveInterval = "30s"
+            };
 }
