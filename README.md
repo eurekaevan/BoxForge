@@ -1,9 +1,9 @@
 # BoxForge
 
-BoxForge 是一个 Action-first、无交互的命令行工具，用于将 Clash YAML
+BoxForge 是一个无交互的命令行工具，用于将 Clash YAML
 配置批量转换为 sing-box 1.14 `config.json`。核心转换与命令行入口保持分离：
 CLI 负责解析参数、调用本地生成服务并返回退出码，转换与文件替换逻辑保留在
-应用内部，不写入 GitHub Actions workflow。
+应用内部。
 
 ## 特性
 
@@ -15,7 +15,7 @@ CLI 负责解析参数、调用本地生成服务并返回退出码，转换与�
 - 输入与平台按固定顺序处理，输出具有确定性
 - 全部转换成功后才原子替换输出目录；失败时保留原输出
 - 每个 YAML 只解析和转换节点一次，再用于所有目标平台
-- 提供稳定退出码，适合 GitHub Actions、其他 CI 和脚本调用
+- 提供稳定退出码，适合自动化脚本调用
 
 ## 运行环境
 
@@ -116,12 +116,8 @@ Linux 和 Windows 的 API secret 默认从输入内容与目标平台稳定派�
 
 ```bash
 dotnet format BoxForge.slnx --verify-no-changes
-dotnet test BoxForge.slnx -c Release
+dotnet build BoxForge.slnx -c Release
 ```
-
-仓库中的 CI 同时执行格式检查、Release 测试，并用公开的
-`dotnet run -- generate ...` 命令生成测试配置后调用固定版本的
-`sing-box check`。CI 不复制核心转换逻辑。
 
 ## 说明
 
