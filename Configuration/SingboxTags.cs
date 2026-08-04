@@ -10,5 +10,4 @@ public static class SingboxTags
     public const string RemoteDns = "remote";
     public const string TunInbound = "tun-in";
     public const string MixedInbound = "mixed-in";
-    public const string ApiService = "api";
 }

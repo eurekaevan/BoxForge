@@ -83,7 +83,6 @@ dotnet run -- generate \
 
 - `BOXFORGE_MainProxyGroup`
 - `BOXFORGE_Direct`
-- `BOXFORGE_ApiSecret`
 - `BOXFORGE_TailscaleEnabled`
 - `BOXFORGE_TailscaleTag`
 - `BOXFORGE_TailscaleDnsTag`
@@ -103,10 +102,6 @@ dotnet run -- generate --platform Android
 
 新旧形式同时存在时，分组形式优先。
 
-Linux 和 Windows 的 API secret 默认从输入内容与目标平台稳定派生，
-不再使用仓库内固定密钥。生产环境建议通过
-`BOXFORGE_Singbox__ApiSecret` 显式注入独立高强度密钥，且不要将其写入日志。
-
 启用 Tailscale 后，输出包含一个 `tailscale` endpoint。它复用 sing-box 已有的
 系统 VPN/TUN，不创建第二个系统 VPN 接口。Android 上需要 sing-box 1.14 或更高
 版本，并在客户端的“工具 > Endpoints”中完成登录。登录状态保存在
@@ -121,8 +116,8 @@ dotnet build BoxForge.slnx -c Release
 
 ## 说明
 
-- Linux 和 Windows 使用顶层 `services` 中的官方 sing-box API 服务，监听
-  `127.0.0.1:9090`，并启用 dashboard；Android 不额外创建 API 监听服务。
+- 内置校验只补充 `sing-box check` 未覆盖的生成器约束；JSON 结构、类型和
+  sing-box 能识别的引用错误由后续 `sing-box check` 负责。
 - TUN 显式使用 `dns_mode: hijack`；代理节点域名和 Tailscale DNS 不返回
   optimistic 过期缓存，避免地址变化后继续使用旧记录。
 - 两台 DNS 并发 `evaluate`；最快出现的有效 A 地址立即胜出。若都没有有效
@@ -134,5 +129,3 @@ dotnet build BoxForge.slnx -c Release
   `optimistic` 缓存（`24h`）并通过 `store_dns` 持久化。
 - `cache_id` 是有效生成配置的完整 SHA-256，配置选项变更也会刷新缓存身份。
 - 远程 rule-set 通过显式的 `http_clients` 使用直连出站下载。
-- Windows 的 dashboard 路径为 `ui`。
-- Linux 的 dashboard 路径为 `/etc/sing-box/ui`。

@@ -23,22 +23,18 @@ public class ConversionService(
         NodeCatalog nodes = nodeCatalogBuilder.Build(
             clashConfig,
             strictNodeValidation);
-        return new PreparedConversion(yamlContent, nodes);
+        return new PreparedConversion(nodes);
     }
 
     public string Convert(
         PreparedConversion prepared,
         TargetPlatform platform)
     {
-        string generatedApiSecret = configSerializer
-            .GetContentHash($"api-secret\0{prepared.SourceContent}\0{platform}")
-            [..32];
         SingboxConfig config = configBuilder.Build(
             new SingboxBuildRequest(
                 prepared.Nodes,
                 platform,
-                CacheId: null,
-                GeneratedApiSecret: generatedApiSecret));
+                CacheId: null));
 
         string identityJson = configSerializer.Serialize(config);
         string cacheId = configSerializer.GetContentHash(identityJson);
@@ -59,6 +55,4 @@ public class ConversionService(
     }
 }
 
-public sealed record PreparedConversion(
-    string SourceContent,
-    NodeCatalog Nodes);
+public sealed record PreparedConversion(NodeCatalog Nodes);

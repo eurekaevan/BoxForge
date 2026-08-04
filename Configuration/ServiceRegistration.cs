@@ -33,7 +33,6 @@ public static class ServiceRegistration
         services.AddTransient<TailscaleEndpointBuilder>();
         services.AddTransient<DnsProfileBuilder>();
         services.AddTransient<RouteProfileBuilder>();
-        services.AddTransient<ServiceBuilder>();
 
         services.AddTransient<ISingboxConfigBuilder, SingboxConfigBuilder>();
         services.AddTransient<ConversionService>();

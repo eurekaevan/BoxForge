@@ -14,8 +14,7 @@ public class SingboxConfigBuilder(
     ProfilePlanner profilePlanner,
     TailscaleEndpointBuilder tailscaleEndpointBuilder,
     DnsProfileBuilder dnsProfileBuilder,
-    RouteProfileBuilder routeProfileBuilder,
-    ServiceBuilder serviceBuilder) : ISingboxConfigBuilder
+    RouteProfileBuilder routeProfileBuilder) : ISingboxConfigBuilder
 {
     public SingboxConfig Build(SingboxBuildRequest request)
     {
@@ -46,11 +45,6 @@ public class SingboxConfigBuilder(
             Endpoints = endpoints.Count > 0 ? endpoints : null,
             Outbounds = orderedOutbounds,
             Route = routeProfileBuilder.Build(),
-            Services = serviceBuilder.Build(
-                request.Platform,
-                request.GeneratedApiSecret) is { Count: > 0 } services
-                ? services
-                : null,
             Experimental = ExperimentalBuilder.Build(request.CacheId)
         };
     }

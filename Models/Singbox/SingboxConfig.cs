@@ -15,6 +15,5 @@ public record SingboxConfig
     [JsonPropertyName("endpoints")] public List<Endpoint>? Endpoints { get; init; }
     [JsonPropertyName("outbounds")] public List<Outbound> Outbounds { get; init; } = [];
     [JsonPropertyName("route")] public RouteConfig Route { get; init; } = new();
-    [JsonPropertyName("services")] public List<SingboxService>? Services { get; init; }
     [JsonPropertyName("experimental")] public ExperimentalConfig? Experimental { get; init; }
 }

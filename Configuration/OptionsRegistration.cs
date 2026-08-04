@@ -22,11 +22,6 @@ public static class OptionsRegistration
                 "Singbox:Direct",
                 "Direct",
                 "DIRECT");
-            options.ApiSecret = Read(
-                configuration,
-                "Singbox:ApiSecret",
-                "ApiSecret",
-                "");
         });
 
         services.Configure<TailscaleOptions>(options =>

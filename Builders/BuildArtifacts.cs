@@ -6,8 +6,7 @@ namespace BoxForge.Builders;
 public sealed record SingboxBuildRequest(
     NodeCatalog Nodes,
     TargetPlatform Platform,
-    string? CacheId,
-    string GeneratedApiSecret
+    string? CacheId
 );
 
 public sealed record NodeCatalog(
