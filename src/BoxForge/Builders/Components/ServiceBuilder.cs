@@ -13,7 +13,7 @@ public class ServiceBuilder(IOptions<SingboxOptions> options)
         TargetPlatform platform,
         string generatedSecret)
     {
-        if (platform == TargetPlatform.Android)
+        if (platform != TargetPlatform.Linux)
         {
             return [];
         }
@@ -31,9 +31,7 @@ public class ServiceBuilder(IOptions<SingboxOptions> options)
                 Dashboard = new SingboxApiDashboard
                 {
                     Enabled = true,
-                    Path = platform == TargetPlatform.Windows
-                        ? "ui"
-                        : "/etc/sing-box/ui",
+                    Path = "/etc/sing-box/dashboard",
                     HttpClient = SingboxOptions.RuleSetHttpClientTag
                 }
             }
