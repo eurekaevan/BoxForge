@@ -10,6 +10,7 @@ namespace BoxForge.Services;
 public class ConversionService(
     IClashParser clashParser,
     NodeCatalogBuilder nodeCatalogBuilder,
+    IProxyCacheIdGenerator proxyCacheIdGenerator,
     ISingboxConfigBuilder configBuilder,
     ISingboxConfigValidator configValidator,
     IConfigSerializer configSerializer)
@@ -23,7 +24,8 @@ public class ConversionService(
         NodeCatalog nodes = nodeCatalogBuilder.Build(
             clashConfig,
             strictNodeValidation);
-        return new PreparedConversion(nodes);
+        string cacheId = proxyCacheIdGenerator.Generate(clashConfig.Proxies);
+        return new PreparedConversion(nodes, cacheId);
     }
 
     public string Convert(
@@ -34,25 +36,11 @@ public class ConversionService(
             new SingboxBuildRequest(
                 prepared.Nodes,
                 platform,
-                CacheId: null));
-
-        string identityJson = configSerializer.Serialize(config);
-        string cacheId = configSerializer.GetContentHash(identityJson);
-        config = config with
-        {
-            Experimental = config.Experimental is null
-                ? null
-                : config.Experimental with
-                {
-                    CacheFile = config.Experimental.CacheFile is null
-                        ? null
-                        : config.Experimental.CacheFile with { CacheId = cacheId }
-                }
-        };
+                prepared.CacheId));
 
         configValidator.Validate(config);
         return configSerializer.Serialize(config);
     }
 }
 
-public sealed record PreparedConversion(NodeCatalog Nodes);
+public sealed record PreparedConversion(NodeCatalog Nodes, string CacheId);

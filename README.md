@@ -127,5 +127,6 @@ dotnet build BoxForge.slnx -c Release
   `bbr_profile: standard`。
 - 生成配置包含官方 `$schema`，DNS 缓存容量为 `4096`，启用
   `optimistic` 缓存（`24h`）并通过 `store_dns` 持久化。
-- `cache_id` 是有效生成配置的完整 SHA-256，配置选项变更也会刷新缓存身份。
+- `cache_id` 是 YAML `proxies` 列表的规范化 SHA-256；只要核心代理列表相同，
+  不同平台或其他配置项就会复用同一缓存身份。
 - 远程 rule-set 通过显式的 `http_clients` 使用直连出站下载。
