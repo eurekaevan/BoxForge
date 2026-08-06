@@ -8,10 +8,10 @@ public static partial class ProfileDefinitions
 {
     public static ImmutableArray<RegionDefinition> Regions { get; } =
     [
+        new(RegionId.UnitedStates, "🇺🇸 美国", UnitedStatesPattern()),
+        new(RegionId.Japan, "🇯🇵 日本", JapanPattern()),
         new(RegionId.HongKong, "🇭🇰 香港", HongKongPattern()),
         new(RegionId.Singapore, "🇸🇬 狮城", SingaporePattern()),
-        new(RegionId.Japan, "🇯🇵 日本", JapanPattern()),
-        new(RegionId.UnitedStates, "🇺🇸 美国", UnitedStatesPattern())
     ];
 
     public static ImmutableArray<ServiceDefinition> Services { get; } =
