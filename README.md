@@ -116,7 +116,7 @@ dotnet run -- generate
 否则从 `DatabaseUrl` 下载 gzip 数据库。默认下载地址为：
 
 ```text
-https://cdn.jsdelivr.net/npm/geolite2-city/GeoLite2-City.mmdb.gz
+https://cdn.jsdelivr.net/npm/dbip-city-lite/dbip-city-lite.mmdb.gz
 ```
 
 下载内容通过 `GZipStream` 解压到系统临时目录。一次 `generate` 运行只下载、
