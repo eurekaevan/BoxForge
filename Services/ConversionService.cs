@@ -18,14 +18,20 @@ public class ConversionService(
 {
     public PreparedConversion Prepare(
         string yamlContent,
-        bool strictNodeValidation = false)
+        bool strictNodeValidation = false) =>
+        PrepareAsync(yamlContent, strictNodeValidation).GetAwaiter().GetResult();
+
+    public async Task<PreparedConversion> PrepareAsync(
+        string yamlContent,
+        bool strictNodeValidation = false,
+        CancellationToken cancellationToken = default)
     {
         ClashConfig clashConfig = clashParser.Parse(yamlContent)
             ?? throw new InvalidOperationException("YAML 解析失败，请检查文件内容。");
         NodeCatalog nodes = nodeCatalogBuilder.Build(
             clashConfig,
             strictNodeValidation);
-        nodes = nodeCityTagEnricher.Enrich(nodes);
+        nodes = await nodeCityTagEnricher.EnrichAsync(nodes, cancellationToken);
         string cacheId = proxyCacheIdGenerator.Generate(clashConfig.Proxies);
         return new PreparedConversion(nodes, cacheId);
     }

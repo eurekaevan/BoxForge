@@ -23,21 +23,38 @@ internal sealed class ThrowingAddressResolver : IHostAddressResolver
         throw new InvalidOperationException("DNS failure");
 }
 
-internal sealed class StubCityDatabase(
-    IReadOnlyDictionary<IPAddress, string?> cities) : ICityDatabase
+internal sealed class StubDbIpCityDatabase(
+    IReadOnlyDictionary<IPAddress, string?> cities) : IDbIpCityDatabase
 {
     public string? FindEnglishCity(IPAddress address) => cities[address];
 }
 
-internal sealed class ThrowingCityDatabase : ICityDatabase
+internal sealed class ThrowingDbIpCityDatabase : IDbIpCityDatabase
 {
     public string? FindEnglishCity(IPAddress address) =>
-        throw new InvalidOperationException("database failure");
+        throw new InvalidOperationException("DB-IP failure");
+}
+
+internal sealed class StubIp2LocationCityClient(
+    IReadOnlyDictionary<IPAddress, string?> cities) : IIp2LocationCityClient
+{
+    public Task<string?> FindCityAsync(
+        IPAddress address,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult(cities[address]);
+}
+
+internal sealed class ThrowingIp2LocationCityClient : IIp2LocationCityClient
+{
+    public Task<string?> FindCityAsync(
+        IPAddress address,
+        CancellationToken cancellationToken = default) =>
+        throw new InvalidOperationException("IP2Location failure");
 }
 
 internal sealed class StubHttpHandler(
-    byte[] responseContent,
-    HttpStatusCode statusCode = HttpStatusCode.OK) : HttpMessageHandler
+    Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> handler) :
+    HttpMessageHandler
 {
     public int CallCount { get; private set; }
 
@@ -46,23 +63,12 @@ internal sealed class StubHttpHandler(
         CancellationToken cancellationToken)
     {
         CallCount++;
-        return Task.FromResult(new HttpResponseMessage(statusCode)
-        {
-            Content = new ByteArrayContent(responseContent)
-        });
+        return handler(request, cancellationToken);
     }
 }
 
-internal sealed class ThrowingHttpHandler : HttpMessageHandler
-{
-    protected override Task<HttpResponseMessage> SendAsync(
-        HttpRequestMessage request,
-        CancellationToken cancellationToken) =>
-        throw new InvalidOperationException("HTTP should not be used");
-}
-
-internal sealed class StubDatabaseSource(
-    string databasePath) : INodeEnrichmentDatabaseSource
+internal sealed class StubDbIpDatabaseSource(
+    string databasePath) : IDbIpDatabaseSource
 {
     public int CallCount { get; private set; }
 
@@ -73,20 +79,19 @@ internal sealed class StubDatabaseSource(
     }
 }
 
-internal sealed class StubReaderFactory(string city) : IGeoLite2CityReaderFactory
+internal sealed class StubDbIpReaderFactory(string city) : IDbIpCityReaderFactory
 {
-    public StubGeoLite2CityReader Reader { get; } = new(city);
+    public StubDbIpCityReader Reader { get; } = new(city);
     public int OpenCount { get; private set; }
 
-    public IGeoLite2CityReader Open(string databasePath)
+    public IDbIpCityReader Open(string databasePath)
     {
         OpenCount++;
         return Reader;
     }
 }
 
-internal sealed class StubGeoLite2CityReader(
-    string city) : IGeoLite2CityReader
+internal sealed class StubDbIpCityReader(string city) : IDbIpCityReader
 {
     public int LookupCount { get; private set; }
 
@@ -104,6 +109,8 @@ internal sealed class StubGeoLite2CityReader(
 internal sealed class RecordingLogger<T> : ILogger<T>
 {
     public List<LogLevel> Levels { get; } = [];
+    public List<string> Messages { get; } = [];
+    public List<Exception> Exceptions { get; } = [];
 
     public IDisposable? BeginScope<TState>(TState state)
         where TState : notnull => null;
@@ -115,6 +122,13 @@ internal sealed class RecordingLogger<T> : ILogger<T>
         EventId eventId,
         TState state,
         Exception? exception,
-        Func<TState, Exception?, string> formatter) =>
+        Func<TState, Exception?, string> formatter)
+    {
         Levels.Add(logLevel);
+        Messages.Add(formatter(state, exception));
+        if (exception != null)
+        {
+            Exceptions.Add(exception);
+        }
+    }
 }

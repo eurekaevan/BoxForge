@@ -23,9 +23,10 @@ public static class ServiceRegistration
         services.AddSingleton<IProxyCacheIdGenerator, ProxyCacheIdGenerator>();
         services.AddSingleton<ISingboxConfigValidator, SingboxConfigValidator>();
         services.AddSingleton<HttpClient>();
-        services.AddSingleton<INodeEnrichmentDatabaseSource, NodeEnrichmentDatabaseSource>();
-        services.AddSingleton<IGeoLite2CityReaderFactory, MaxMindGeoLite2CityReaderFactory>();
-        services.AddSingleton<ICityDatabase, GeoLite2CityDatabase>();
+        services.AddSingleton<IDbIpDatabaseSource, DbIpDatabaseSource>();
+        services.AddSingleton<IDbIpCityReaderFactory, MaxMindDbIpCityReaderFactory>();
+        services.AddSingleton<IDbIpCityDatabase, DbIpCityDatabase>();
+        services.AddSingleton<IIp2LocationCityClient, Ip2LocationCityClient>();
         services.AddSingleton<IHostAddressResolver, HostAddressResolver>();
 
         services.AddTransient<IProxyConverter, TrojanConverter>();

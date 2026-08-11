@@ -1,43 +1,97 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Text.RegularExpressions;
+using BoxForge.Configuration;
 using BoxForge.Models.Singbox;
 using BoxForge.Services;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace BoxForge.Builders.Components;
 
 public interface IHostAddressResolver
 {
     IReadOnlyList<IPAddress> Resolve(string hostName);
+
+    Task<IReadOnlyList<IPAddress>> ResolveAsync(
+        string hostName,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(Resolve(hostName));
+    }
 }
 
 public sealed class HostAddressResolver : IHostAddressResolver
 {
     public IReadOnlyList<IPAddress> Resolve(string hostName) =>
-        Dns.GetHostAddresses(hostName)
-            .Where(address => address.AddressFamily is
-                AddressFamily.InterNetwork or AddressFamily.InterNetworkV6)
+        [.. Dns.GetHostAddresses(hostName)
+            .Where(IsInternetAddress)
             .Distinct()
             .OrderBy(address => address.AddressFamily)
-            .ThenBy(address => address.ToString(), StringComparer.Ordinal)
-            .ToArray();
+            .ThenBy(address => address.ToString(), StringComparer.Ordinal)];
+
+    public async Task<IReadOnlyList<IPAddress>> ResolveAsync(
+        string hostName,
+        CancellationToken cancellationToken = default) =>
+        [.. (await Dns.GetHostAddressesAsync(hostName, cancellationToken))
+            .Where(IsInternetAddress)
+            .Distinct()
+            .OrderBy(address => address.AddressFamily)
+            .ThenBy(address => address.ToString(), StringComparer.Ordinal)];
+
+    private static bool IsInternetAddress(IPAddress address) =>
+        address.AddressFamily is
+            AddressFamily.InterNetwork or AddressFamily.InterNetworkV6;
 }
 
 public sealed partial class NodeCityTagEnricher(
+    IOptions<NodeEnrichmentOptions> options,
     IHostAddressResolver addressResolver,
-    ICityDatabase cityDatabase,
+    IDbIpCityDatabase dbIpCityDatabase,
+    IIp2LocationCityClient ip2LocationCityClient,
     ILogger<NodeCityTagEnricher> logger)
 {
-    public NodeCatalog Enrich(NodeCatalog nodes)
+    private readonly NodeEnrichmentOptions enrichmentOptions = options.Value;
+
+    public NodeCatalog Enrich(NodeCatalog nodes) =>
+        EnrichAsync(nodes).GetAwaiter().GetResult();
+
+    public async Task<NodeCatalog> EnrichAsync(
+        NodeCatalog nodes,
+        CancellationToken cancellationToken = default)
     {
+        if (!enrichmentOptions.Enabled)
+        {
+            return nodes;
+        }
+
+        var addressesByServer = await ResolveServersAsync(
+            nodes.Outbounds,
+            cancellationToken);
+        IPAddress[] uniqueAddresses = [.. addressesByServer.Values
+            .SelectMany(addresses => addresses)
+            .Distinct()
+            .OrderBy(address => address.AddressFamily)
+            .ThenBy(address => address.ToString(), StringComparer.Ordinal)];
+
+        Task<Dictionary<IPAddress, string?>> ip2LocationLookup =
+            LookupIp2LocationCitiesAsync(
+                uniqueAddresses,
+                cancellationToken);
+        var dbIpCities = LookupDbIpCities(uniqueAddresses);
+        var ip2LocationCities = await ip2LocationLookup;
+
         var outbounds = new List<ProxyOutbound>(nodes.Outbounds.Count);
         var names = new List<string>(nodes.Names.Count);
-
         foreach (var outbound in nodes.Outbounds)
         {
-            string tag = string.IsNullOrEmpty(outbound.Tag)
-                ? outbound.Tag
-                : TryBuildAnnotatedTag(outbound.Tag, outbound.Server);
+            string tag = BuildEnrichedTag(
+                outbound.Tag,
+                outbound.Server,
+                addressesByServer,
+                dbIpCities,
+                ip2LocationCities);
             outbounds.Add(outbound with { Tag = tag });
             if (!string.IsNullOrEmpty(tag))
             {
@@ -52,59 +106,198 @@ public sealed partial class NodeCityTagEnricher(
         };
     }
 
-    private string TryBuildAnnotatedTag(string originalTag, string server)
+    private async Task<Dictionary<string, IReadOnlyList<IPAddress>>>
+        ResolveServersAsync(
+            IReadOnlyList<ProxyOutbound> outbounds,
+            CancellationToken cancellationToken)
     {
-        IReadOnlyList<IPAddress> addresses;
-        if (IPAddress.TryParse(server, out var serverAddress))
+        var result = new Dictionary<string, IReadOnlyList<IPAddress>>(
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var outbound in outbounds)
         {
-            addresses = [serverAddress];
-        }
-        else
-        {
+            string server = outbound.Server;
+            if (string.IsNullOrWhiteSpace(server) || result.ContainsKey(server))
+            {
+                continue;
+            }
+
+            if (IPAddress.TryParse(server, out var serverAddress))
+            {
+                result[server] = [serverAddress];
+                continue;
+            }
+
             try
             {
-                addresses = addressResolver.Resolve(server);
+                IReadOnlyList<IPAddress> addresses = await addressResolver.ResolveAsync(
+                    server,
+                    cancellationToken);
+                result[server] = [.. addresses
+                    .Where(address => address.AddressFamily is
+                        AddressFamily.InterNetwork or AddressFamily.InterNetworkV6)
+                    .Distinct()
+                    .OrderBy(address => address.AddressFamily)
+                    .ThenBy(address => address.ToString(), StringComparer.Ordinal)];
+                if (result[server].Count == 0)
+                {
+                    LogDnsNoAddresses(logger, outbound.Tag, server);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
-                LogDnsFailure(logger, ex, originalTag, server);
-                return originalTag;
-            }
-
-            if (addresses.Count == 0)
-            {
-                LogDnsNoAddresses(logger, originalTag, server);
-                return originalTag;
+                result[server] = [];
+                LogDnsFailure(logger, ex, outbound.Tag, server);
             }
         }
 
-        var cities = new SortedSet<string>(StringComparer.Ordinal);
-        foreach (var address in addresses)
-        {
-            string? city;
-            try
-            {
-                city = cityDatabase.FindEnglishCity(address);
-            }
-            catch (Exception ex)
-            {
-                LogDatabaseFailure(logger, ex, originalTag, server, address);
-                return originalTag;
-            }
-
-            if (string.IsNullOrWhiteSpace(city))
-            {
-                LogMissingCity(logger, originalTag, server, address);
-                return originalTag;
-            }
-
-            cities.Add(city.Trim());
-        }
-
-        return cities.Count == 0
-            ? originalTag
-            : $"{originalTag} | {string.Join('/', cities)}";
+        return result;
     }
+
+    private Dictionary<IPAddress, string?> LookupDbIpCities(
+        IReadOnlyList<IPAddress> addresses)
+    {
+        var result = new Dictionary<IPAddress, string?>();
+        foreach (IPAddress address in addresses)
+        {
+            try
+            {
+                result[address] = NormalizeDbIpCity(
+                    dbIpCityDatabase.FindEnglishCity(address));
+            }
+            catch (Exception ex)
+            {
+                result[address] = null;
+                LogDbIpFailure(logger, ex, address);
+            }
+        }
+
+        return result;
+    }
+
+    private async Task<Dictionary<IPAddress, string?>>
+        LookupIp2LocationCitiesAsync(
+            IReadOnlyList<IPAddress> addresses,
+            CancellationToken cancellationToken)
+    {
+        Task<(IPAddress Address, string? City)>[] tasks = [.. addresses.Select(
+            address => LookupIp2LocationCityAsync(address, cancellationToken))];
+        var result = await Task.WhenAll(tasks);
+        return result.ToDictionary(item => item.Address, item => item.City);
+    }
+
+    private async Task<(IPAddress Address, string? City)>
+        LookupIp2LocationCityAsync(
+            IPAddress address,
+            CancellationToken cancellationToken)
+    {
+        try
+        {
+            string? city = await ip2LocationCityClient.FindCityAsync(
+                address,
+                cancellationToken);
+            return (address, NormalizeCity(city));
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            LogIp2LocationFailure(logger, address);
+            return (address, null);
+        }
+    }
+
+    private static string BuildEnrichedTag(
+        string originalTag,
+        string server,
+        Dictionary<string, IReadOnlyList<IPAddress>> addressesByServer,
+        IReadOnlyDictionary<IPAddress, string?> dbIpCities,
+        IReadOnlyDictionary<IPAddress, string?> ip2LocationCities)
+    {
+        if (string.IsNullOrEmpty(originalTag)
+            || !addressesByServer.TryGetValue(server, out var addresses))
+        {
+            return originalTag;
+        }
+
+        string? dbIpCity = JoinDistinctCities(addresses, dbIpCities);
+        string? ip2LocationCity = JoinDistinctCities(
+            addresses,
+            ip2LocationCities);
+        string? citySuffix = MergeCities(dbIpCity, ip2LocationCity);
+        return citySuffix == null
+            ? originalTag
+            : $"{originalTag}>{citySuffix}";
+    }
+
+    private static string? JoinDistinctCities(
+        IReadOnlyList<IPAddress> addresses,
+        IReadOnlyDictionary<IPAddress, string?> cities)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var distinctCities = new List<string>();
+        foreach (IPAddress address in addresses)
+        {
+            if (cities.TryGetValue(address, out string? city)
+                && city != null
+                && seen.Add(city))
+            {
+                distinctCities.Add(city);
+            }
+        }
+
+        return distinctCities.Count == 0
+            ? null
+            : string.Join('/', distinctCities);
+    }
+
+    private static string? MergeCities(
+        string? dbIpCity,
+        string? ip2LocationCity)
+    {
+        if (dbIpCity == null)
+        {
+            return ip2LocationCity;
+        }
+
+        if (ip2LocationCity == null
+            || string.Equals(
+                dbIpCity,
+                ip2LocationCity,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return dbIpCity;
+        }
+
+        return $"{dbIpCity}\\{ip2LocationCity}";
+    }
+
+    private static string? NormalizeDbIpCity(string? city)
+    {
+        string? normalized = NormalizeCity(city);
+        if (normalized == null)
+        {
+            return null;
+        }
+
+        return NormalizeCity(TrailingParenthesesRegex().Replace(normalized, ""));
+    }
+
+    private static string? NormalizeCity(string? city)
+    {
+        string? normalized = city?.Trim();
+        return string.IsNullOrEmpty(normalized) || normalized == "-"
+            ? null
+            : normalized;
+    }
+
+    [GeneratedRegex(@"(?:\s*(?:\([^()]*\)|（[^（）]*）))+\s*$")]
+    private static partial Regex TrailingParenthesesRegex();
 
     [LoggerMessage(
         1,
@@ -128,21 +321,17 @@ public sealed partial class NodeCityTagEnricher(
     [LoggerMessage(
         3,
         LogLevel.Warning,
-        "节点城市标注数据库准备或查询失败，保留原 tag：{Tag}，server={Server}，address={Address}")]
-    private static partial void LogDatabaseFailure(
+        "DB-IP City Lite 城市查询失败，address={Address}")]
+    private static partial void LogDbIpFailure(
         ILogger logger,
         Exception exception,
-        string tag,
-        string server,
         IPAddress address);
 
     [LoggerMessage(
         4,
         LogLevel.Warning,
-        "节点城市标注缺少英文城市名，保留原 tag：{Tag}，server={Server}，address={Address}")]
-    private static partial void LogMissingCity(
+        "IP2Location.io 城市查询失败，address={Address}")]
+    private static partial void LogIp2LocationFailure(
         ILogger logger,
-        string tag,
-        string server,
         IPAddress address);
 }

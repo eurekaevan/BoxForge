@@ -9,7 +9,7 @@ namespace BoxForge.Tests;
 public sealed class NodeEnrichmentOptionsTests
 {
     [Test]
-    public void Defaults_UseJsDelivrDatabaseUrl()
+    public void DefaultsEnableBothSourcesAndUseDbIpCityLiteUrl()
     {
         using ServiceProvider provider = BuildProvider([]);
 
@@ -19,20 +19,23 @@ public sealed class NodeEnrichmentOptionsTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(options.DatabasePath, Is.Empty);
+            Assert.That(options.Enabled, Is.True);
+            Assert.That(options.Ip2LocationApiKey, Is.Empty);
             Assert.That(
-                options.DatabaseUrl,
-                Is.EqualTo(NodeEnrichmentOptions.DefaultDatabaseUrl));
+                options.DbIpDatabaseUrl,
+                Is.EqualTo(NodeEnrichmentOptions.DefaultDbIpDatabaseUrl));
         });
     }
 
     [Test]
-    public void NestedConfiguration_BindsAllNodeEnrichmentSettings()
+    public void NestedConfigurationBindsAllNodeEnrichmentSettings()
     {
         var values = new Dictionary<string, string?>
         {
-            ["NodeEnrichment:DatabasePath"] = "/data/city.mmdb",
-            ["NodeEnrichment:DatabaseUrl"] = "https://example.test/city.mmdb.gz"
+            ["NodeEnrichment:Enabled"] = "false",
+            ["NodeEnrichment:Ip2LocationApiKey"] = "api-secret",
+            ["NodeEnrichment:DbIpDatabaseUrl"] =
+                "https://example.test/dbip.mmdb.gz"
         };
         using ServiceProvider provider = BuildProvider(values);
 
@@ -42,10 +45,11 @@ public sealed class NodeEnrichmentOptionsTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(options.DatabasePath, Is.EqualTo("/data/city.mmdb"));
+            Assert.That(options.Enabled, Is.False);
+            Assert.That(options.Ip2LocationApiKey, Is.EqualTo("api-secret"));
             Assert.That(
-                options.DatabaseUrl,
-                Is.EqualTo("https://example.test/city.mmdb.gz"));
+                options.DbIpDatabaseUrl,
+                Is.EqualTo("https://example.test/dbip.mmdb.gz"));
         });
     }
 

@@ -12,7 +12,7 @@ CLI 负责解析参数、调用本地生成服务并返回退出码，转换与�
 - 自动生成地区分组、服务分组、DNS、路由规则和远程 rule-set
 - 支持 Windows、Android 和 Linux 平台差异配置
 - 可选 sing-box 内置 Tailscale endpoint，复用已有系统 VPN/TUN
-- 可选使用 GeoLite2 City 为节点 tag 追加英文城市名
+- 使用 DB-IP City Lite 与 IP2Location.io 双来源为节点 tag 追加英文城市名
 - 输入与平台按固定顺序处理，输出具有确定性
 - 全部转换成功后才原子替换输出目录；失败时保留原输出
 - 每个 YAML 只解析和转换节点一次，再用于所有目标平台
@@ -22,8 +22,8 @@ CLI 负责解析参数、调用本地生成服务并返回退出码，转换与�
 
 - .NET SDK 10.0
 - sing-box 1.14 或更高版本
-- NuGet 依赖：YamlDotNet、MaxMind.GeoIP2、Microsoft.Extensions.Configuration
-  相关包
+- NuGet 依赖：YamlDotNet、用于读取 DB-IP MMDB 的 MaxMind.GeoIP2、
+  Microsoft.Extensions.Configuration 相关包
 
 ## 非交互式生成
 
@@ -94,8 +94,9 @@ dotnet run -- generate \
 - `BOXFORGE_TailscaleAcceptRoutes`
 - `BOXFORGE_TailscaleExitNode`
 - `BOXFORGE_TailscaleExitNodeAllowLanAccess`
-- `BOXFORGE_NodeEnrichment__DatabasePath`（可选）
-- `BOXFORGE_NodeEnrichment__DatabaseUrl`（可选）
+- `BOXFORGE_NodeEnrichment__Enabled`（默认 `true`）
+- `BOXFORGE_NodeEnrichment__Ip2LocationApiKey`（可选）
+- `BOXFORGE_NodeEnrichment__DbIpDatabaseUrl`（可选）
 
 也支持分组形式；嵌套键使用双下划线，例如：
 
@@ -106,14 +107,13 @@ dotnet run -- generate --platform Android
 
 新旧形式同时存在时，分组形式优先。
 
-节点城市标注始终启用；不提供配置时直接使用默认下载地址：
+节点城市标注默认启用；可显式关闭：
 
 ```bash
-dotnet run -- generate
+BOXFORGE_NodeEnrichment__Enabled=false dotnet run -- generate
 ```
 
-如提供的 `DatabasePath` 指向现有文件，则优先复用本地 GeoLite2 City MMDB；
-否则从 `DatabaseUrl` 下载 gzip 数据库。默认下载地址为：
+启用时，BoxForge 从以下默认地址下载 DB-IP City Lite MMDB：
 
 ```text
 https://cdn.jsdelivr.net/npm/dbip-city-lite/dbip-city-lite.mmdb.gz
@@ -121,18 +121,32 @@ https://cdn.jsdelivr.net/npm/dbip-city-lite/dbip-city-lite.mmdb.gz
 
 下载内容通过 `GZipStream` 解压到系统临时目录。一次 `generate` 运行只下载、
 解压并打开数据库一次，所有输入与平台复用同一个 `DatabaseReader`；进程结束时
-释放 Reader 并清理临时目录。也可以覆盖本地路径或下载地址：
+释放 Reader 并清理临时目录。可覆盖下载地址：
 
 ```bash
-BOXFORGE_NodeEnrichment__DatabasePath=/data/GeoLite2-City.mmdb \
-BOXFORGE_NodeEnrichment__DatabaseUrl=https://example.com/GeoLite2-City.mmdb.gz \
+BOXFORGE_NodeEnrichment__DbIpDatabaseUrl=https://example.com/dbip-city-lite.mmdb.gz \
 dotnet run -- generate
 ```
 
-IP 类型的 `server` 直接查询数据库；域名会先解析全部 A/AAAA 地址。查询到的
-英文城市名去重并按稳定顺序以 `/` 连接，tag 形如 `原始tag | Singapore/Tokyo`。
-节点的 `server` 不会改变。下载、解压、DNS、数据库查询失败或城市名缺失时，
-该节点保留原 tag 并输出 warning，不会使生成失败。
+同一批节点的 `server` 会解析为 A/AAAA 地址并全局去重，然后同时查询 DB-IP
+City Lite 和 IP2Location.io：
+
+```text
+https://api.ip2location.io/?key={ApiKey}&ip={IP}
+```
+
+`Ip2LocationApiKey` 为空时省略 `key` 参数，使用 IP2Location.io 每日 1000 次的
+无 Key 接口。相同 IP 在一次 `generate` 中只请求一次，最多同时发出 4 个请求；
+API Key 不会写入日志或异常，也不会输出完整请求 URL。
+
+两个来源均取英文城市名并 `Trim`；DB-IP 城市名还会移除末尾括号内容。每个来源
+内部按 `OrdinalIgnoreCase` 去重，多 IP 的不同城市以 `/` 连接。两个来源结果相同
+时 tag 为 `原tag>City`；不同时固定为 `原tag>DbIpCity\Ip2LocationCity`；只有一个
+来源有结果时使用该结果，两者都没有时保留原 tag。节点 `server` 不会改变，最终
+tag 会同步用于 outbound、selector 和服务分组。DNS、下载、解压、数据库或 API
+任一来源失败只输出 warning，不会阻断另一来源或导致配置生成失败。
+
+免费 IP2Location.io 查询的署名：IP geolocation by IP2Location.io
 
 启用 Tailscale 后，输出包含一个 `tailscale` endpoint。它复用 sing-box 已有的
 系统 VPN/TUN，不创建第二个系统 VPN 接口。Android 上需要 sing-box 1.14 或更高

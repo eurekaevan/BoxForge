@@ -3,30 +3,29 @@ using MaxMind.GeoIP2;
 
 namespace BoxForge.Services;
 
-public interface ICityDatabase
+public interface IDbIpCityDatabase
 {
     string? FindEnglishCity(IPAddress address);
 }
 
-public interface IGeoLite2CityReader : IDisposable
+public interface IDbIpCityReader : IDisposable
 {
     string? FindEnglishCity(IPAddress address);
 }
 
-public interface IGeoLite2CityReaderFactory
+public interface IDbIpCityReaderFactory
 {
-    IGeoLite2CityReader Open(string databasePath);
+    IDbIpCityReader Open(string databasePath);
 }
 
-public sealed class MaxMindGeoLite2CityReaderFactory :
-    IGeoLite2CityReaderFactory
+public sealed class MaxMindDbIpCityReaderFactory : IDbIpCityReaderFactory
 {
-    public IGeoLite2CityReader Open(string databasePath) =>
-        new MaxMindGeoLite2CityReader(new DatabaseReader(databasePath));
+    public IDbIpCityReader Open(string databasePath) =>
+        new MaxMindDbIpCityReader(new DatabaseReader(databasePath));
 }
 
-public sealed class MaxMindGeoLite2CityReader(
-    DatabaseReader reader) : IGeoLite2CityReader
+public sealed class MaxMindDbIpCityReader(
+    DatabaseReader reader) : IDbIpCityReader
 {
     public string? FindEnglishCity(IPAddress address)
     {
@@ -39,15 +38,15 @@ public sealed class MaxMindGeoLite2CityReader(
     public void Dispose() => reader.Dispose();
 }
 
-public sealed class GeoLite2CityDatabase : ICityDatabase, IDisposable
+public sealed class DbIpCityDatabase : IDbIpCityDatabase, IDisposable
 {
-    private readonly Lazy<IGeoLite2CityReader> reader;
+    private readonly Lazy<IDbIpCityReader> reader;
 
-    public GeoLite2CityDatabase(
-        INodeEnrichmentDatabaseSource databaseSource,
-        IGeoLite2CityReaderFactory readerFactory)
+    public DbIpCityDatabase(
+        IDbIpDatabaseSource databaseSource,
+        IDbIpCityReaderFactory readerFactory)
     {
-        reader = new Lazy<IGeoLite2CityReader>(
+        reader = new Lazy<IDbIpCityReader>(
             () => readerFactory.Open(databaseSource.GetDatabasePath()),
             LazyThreadSafetyMode.ExecutionAndPublication);
     }

@@ -5,31 +5,29 @@ using Microsoft.Extensions.Options;
 
 namespace BoxForge.Services;
 
-public interface INodeEnrichmentDatabaseSource
+public interface IDbIpDatabaseSource
 {
     string GetDatabasePath();
 }
 
-public sealed partial class NodeEnrichmentDatabaseSource :
-    INodeEnrichmentDatabaseSource,
-    IDisposable
+public sealed partial class DbIpDatabaseSource : IDbIpDatabaseSource, IDisposable
 {
     private readonly NodeEnrichmentOptions options;
     private readonly HttpClient httpClient;
-    private readonly ILogger<NodeEnrichmentDatabaseSource> logger;
+    private readonly ILogger<DbIpDatabaseSource> logger;
     private readonly Lazy<string> resolvedDatabasePath;
     private string? temporaryDirectory;
 
-    public NodeEnrichmentDatabaseSource(
+    public DbIpDatabaseSource(
         IOptions<NodeEnrichmentOptions> options,
         HttpClient httpClient,
-        ILogger<NodeEnrichmentDatabaseSource> logger)
+        ILogger<DbIpDatabaseSource> logger)
     {
         this.options = options.Value;
         this.httpClient = httpClient;
         this.logger = logger;
         resolvedDatabasePath = new Lazy<string>(
-            ResolveDatabasePath,
+            DownloadAndExtract,
             LazyThreadSafetyMode.ExecutionAndPublication);
     }
 
@@ -37,35 +35,23 @@ public sealed partial class NodeEnrichmentDatabaseSource :
 
     public void Dispose() => DeleteTemporaryDirectory();
 
-    private string ResolveDatabasePath()
+    private string DownloadAndExtract()
     {
-        string configuredPath = options.DatabasePath.Trim();
-        if (!string.IsNullOrEmpty(configuredPath))
-        {
-            string fullPath = Path.GetFullPath(configuredPath);
-            if (File.Exists(fullPath))
-            {
-                return fullPath;
-            }
-
-            LogMissingLocalDatabase(logger, fullPath);
-        }
-
-        string configuredUrl = options.DatabaseUrl.Trim();
+        string configuredUrl = options.DbIpDatabaseUrl.Trim();
         if (!Uri.TryCreate(configuredUrl, UriKind.Absolute, out var databaseUri)
             || databaseUri.Scheme is not ("http" or "https"))
         {
             throw new InvalidOperationException(
-                "节点城市数据库下载地址必须是 HTTP(S) URL。");
+                "DB-IP City Lite 数据库下载地址必须是 HTTP(S) URL。");
         }
 
         temporaryDirectory = Path.Combine(
             Path.GetTempPath(),
-            $"boxforge-node-enrichment-{Guid.NewGuid():N}");
+            $"boxforge-dbip-{Guid.NewGuid():N}");
         Directory.CreateDirectory(temporaryDirectory);
         string databasePath = Path.Combine(
             temporaryDirectory,
-            "GeoLite2-City.mmdb");
+            "dbip-city-lite.mmdb");
 
         try
         {
@@ -93,7 +79,7 @@ public sealed partial class NodeEnrichmentDatabaseSource :
         {
             DeleteTemporaryDirectory();
             throw new InvalidOperationException(
-                $"下载或解压节点城市数据库失败：{databaseUri}",
+                "下载或解压 DB-IP City Lite 数据库失败。",
                 ex);
         }
     }
@@ -121,17 +107,9 @@ public sealed partial class NodeEnrichmentDatabaseSource :
     [LoggerMessage(
         1,
         LogLevel.Warning,
-        "节点城市数据库本地路径不存在，将改用下载地址：{DatabasePath}")]
-    private static partial void LogMissingLocalDatabase(
-        ILogger logger,
-        string databasePath);
-
-    [LoggerMessage(
-        2,
-        LogLevel.Warning,
-        "节点城市数据库临时目录清理失败：{TemporaryDirectory}")]
+        "清理 DB-IP City Lite 临时目录失败：{Directory}")]
     private static partial void LogTemporaryCleanupFailure(
         ILogger logger,
         Exception exception,
-        string temporaryDirectory);
+        string directory);
 }

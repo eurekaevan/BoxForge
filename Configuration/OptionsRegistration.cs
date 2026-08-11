@@ -75,16 +75,21 @@ public static class OptionsRegistration
 
         services.Configure<NodeEnrichmentOptions>(options =>
         {
-            options.DatabasePath = Read(
+            options.Enabled = ReadBool(
                 configuration,
-                "NodeEnrichment:DatabasePath",
-                "NodeEnrichmentDatabasePath",
+                "NodeEnrichment:Enabled",
+                "NodeEnrichmentEnabled",
+                true);
+            options.Ip2LocationApiKey = Read(
+                configuration,
+                "NodeEnrichment:Ip2LocationApiKey",
+                "NodeEnrichmentIp2LocationApiKey",
                 "");
-            options.DatabaseUrl = Read(
+            options.DbIpDatabaseUrl = Read(
                 configuration,
-                "NodeEnrichment:DatabaseUrl",
-                "NodeEnrichmentDatabaseUrl",
-                NodeEnrichmentOptions.DefaultDatabaseUrl);
+                "NodeEnrichment:DbIpDatabaseUrl",
+                "NodeEnrichmentDbIpDatabaseUrl",
+                NodeEnrichmentOptions.DefaultDbIpDatabaseUrl);
         });
 
         services.AddSingleton<IValidateOptions<SingboxOptions>, SingboxOptionsValidator>();

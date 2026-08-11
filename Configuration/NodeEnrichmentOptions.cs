@@ -2,9 +2,10 @@ namespace BoxForge.Configuration;
 
 public sealed class NodeEnrichmentOptions
 {
-    public const string DefaultDatabaseUrl =
+    public const string DefaultDbIpDatabaseUrl =
         "https://cdn.jsdelivr.net/npm/dbip-city-lite/dbip-city-lite.mmdb.gz";
 
-    public string DatabasePath { get; set; } = "";
-    public string DatabaseUrl { get; set; } = DefaultDatabaseUrl;
+    public bool Enabled { get; set; } = true;
+    public string Ip2LocationApiKey { get; set; } = "";
+    public string DbIpDatabaseUrl { get; set; } = DefaultDbIpDatabaseUrl;
 }
