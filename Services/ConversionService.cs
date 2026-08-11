@@ -10,6 +10,7 @@ namespace BoxForge.Services;
 public class ConversionService(
     IClashParser clashParser,
     NodeCatalogBuilder nodeCatalogBuilder,
+    NodeCityTagEnricher nodeCityTagEnricher,
     IProxyCacheIdGenerator proxyCacheIdGenerator,
     ISingboxConfigBuilder configBuilder,
     ISingboxConfigValidator configValidator,
@@ -24,6 +25,7 @@ public class ConversionService(
         NodeCatalog nodes = nodeCatalogBuilder.Build(
             clashConfig,
             strictNodeValidation);
+        nodes = nodeCityTagEnricher.Enrich(nodes);
         string cacheId = proxyCacheIdGenerator.Generate(clashConfig.Proxies);
         return new PreparedConversion(nodes, cacheId);
     }

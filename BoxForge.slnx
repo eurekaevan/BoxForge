@@ -1,3 +1,8 @@
 <Solution>
-  <Project Path="BoxForge.csproj" />
+  <Configurations>
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="Tests/BoxForge.Tests/BoxForge.Tests.csproj" />
 </Solution>

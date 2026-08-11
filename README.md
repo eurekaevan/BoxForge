@@ -12,6 +12,7 @@ CLI 负责解析参数、调用本地生成服务并返回退出码，转换与�
 - 自动生成地区分组、服务分组、DNS、路由规则和远程 rule-set
 - 支持 Windows、Android 和 Linux 平台差异配置
 - 可选 sing-box 内置 Tailscale endpoint，复用已有系统 VPN/TUN
+- 可选使用 GeoLite2 City 为节点 tag 追加英文城市名
 - 输入与平台按固定顺序处理，输出具有确定性
 - 全部转换成功后才原子替换输出目录；失败时保留原输出
 - 每个 YAML 只解析和转换节点一次，再用于所有目标平台
@@ -21,7 +22,8 @@ CLI 负责解析参数、调用本地生成服务并返回退出码，转换与�
 
 - .NET SDK 10.0
 - sing-box 1.14 或更高版本
-- NuGet 依赖：YamlDotNet、Microsoft.Extensions.Configuration 相关包
+- NuGet 依赖：YamlDotNet、MaxMind.GeoIP2、Microsoft.Extensions.Configuration
+  相关包
 
 ## 非交互式生成
 
@@ -92,6 +94,9 @@ dotnet run -- generate \
 - `BOXFORGE_TailscaleAcceptRoutes`
 - `BOXFORGE_TailscaleExitNode`
 - `BOXFORGE_TailscaleExitNodeAllowLanAccess`
+- `BOXFORGE_NodeEnrichment__Enabled`（默认 `false`）
+- `BOXFORGE_NodeEnrichment__DatabasePath`（可选）
+- `BOXFORGE_NodeEnrichment__DatabaseUrl`（可选）
 
 也支持分组形式；嵌套键使用双下划线，例如：
 
@@ -102,6 +107,37 @@ dotnet run -- generate --platform Android
 
 新旧形式同时存在时，分组形式优先。
 
+节点城市标注默认关闭。启用时可直接使用默认下载地址：
+
+```bash
+BOXFORGE_NodeEnrichment__Enabled=true \
+dotnet run -- generate
+```
+
+如提供的 `DatabasePath` 指向现有文件，则优先复用本地 GeoLite2 City MMDB；
+否则从 `DatabaseUrl` 下载 gzip 数据库。默认下载地址为：
+
+```text
+https://cdn.jsdelivr.net/npm/geolite2-city/GeoLite2-City.mmdb.gz
+```
+
+下载内容通过 `GZipStream` 解压到系统临时目录。一次 `generate` 运行只下载、
+解压并打开数据库一次，所有输入与平台复用同一个 `DatabaseReader`；进程结束时
+释放 Reader 并清理临时目录。也可以覆盖本地路径或下载地址：
+
+```bash
+BOXFORGE_NodeEnrichment__Enabled=true \
+BOXFORGE_NodeEnrichment__DatabasePath=/data/GeoLite2-City.mmdb \
+BOXFORGE_NodeEnrichment__DatabaseUrl=https://example.com/GeoLite2-City.mmdb.gz \
+dotnet run -- generate
+```
+
+IP 类型的 `server` 直接查询数据库；域名会先解析全部 A/AAAA 地址。查询到的
+英文城市名去重并按稳定顺序以 `/` 连接，tag 形如 `原始tag | Singapore/Tokyo`。
+节点的 `server` 不会改变。下载、解压、DNS、数据库查询失败或城市名缺失时，
+该节点保留原 tag 并输出 warning，不会使生成失败。关闭功能时不会下载数据库，
+也不会解析节点域名。
+
 启用 Tailscale 后，输出包含一个 `tailscale` endpoint。它复用 sing-box 已有的
 系统 VPN/TUN，不创建第二个系统 VPN 接口。Android 上需要 sing-box 1.14 或更高
 版本，并在客户端的“工具 > Endpoints”中完成登录。登录状态保存在
@@ -111,7 +147,8 @@ dotnet run -- generate --platform Android
 
 ```bash
 dotnet format BoxForge.slnx --verify-no-changes
-dotnet build BoxForge.slnx -c Release
+dotnet build BoxForge.slnx --warnaserror
+dotnet test BoxForge.slnx --no-build
 ```
 
 ## 说明
@@ -126,7 +163,7 @@ dotnet build BoxForge.slnx -c Release
 - Hysteria2 出站使用 `hop_interval: 30s`、`hop_interval_max: 60s` 和
   `bbr_profile: standard`。
 - 生成配置包含官方 `$schema`，DNS 缓存容量为 `4096`，启用
-  `optimistic` 缓存（`24h`）并通过 `store_dns` 持久化。
+  `optimistic` 缓存（`3d`）并通过 `store_dns` 持久化。
 - `cache_id` 是 YAML `proxies` 列表的规范化 SHA-256；只要核心代理列表相同，
   不同平台或其他配置项就会复用同一缓存身份。
 - 远程 rule-set 通过显式的 `http_clients` 使用直连出站下载。

@@ -17,7 +17,7 @@ public record DnsConfig
 public record DnsOptimisticConfig
 {
     [JsonPropertyName("enabled")] public bool Enabled { get; init; } = true;
-    [JsonPropertyName("timeout")] public string Timeout { get; init; } = "24h";
+    [JsonPropertyName("timeout")] public string Timeout { get; init; } = "3d";
 }
 
 public abstract record DnsServer

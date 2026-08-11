@@ -22,6 +22,11 @@ public static class ServiceRegistration
         services.AddSingleton<IConfigSerializer, ConfigSerializer>();
         services.AddSingleton<IProxyCacheIdGenerator, ProxyCacheIdGenerator>();
         services.AddSingleton<ISingboxConfigValidator, SingboxConfigValidator>();
+        services.AddSingleton<HttpClient>();
+        services.AddSingleton<INodeEnrichmentDatabaseSource, NodeEnrichmentDatabaseSource>();
+        services.AddSingleton<IGeoLite2CityReaderFactory, MaxMindGeoLite2CityReaderFactory>();
+        services.AddSingleton<ICityDatabase, GeoLite2CityDatabase>();
+        services.AddSingleton<IHostAddressResolver, HostAddressResolver>();
 
         services.AddTransient<IProxyConverter, TrojanConverter>();
         services.AddTransient<IProxyConverter, VlessConverter>();
@@ -30,6 +35,7 @@ public static class ServiceRegistration
         services.AddTransient<IProxyConverter, AnyTlsConverter>();
 
         services.AddTransient<NodeCatalogBuilder>();
+        services.AddTransient<NodeCityTagEnricher>();
         services.AddTransient<ProfilePlanner>();
         services.AddTransient<TailscaleEndpointBuilder>();
         services.AddTransient<DnsProfileBuilder>();

@@ -73,6 +73,25 @@ public static class OptionsRegistration
                 false);
         });
 
+        services.Configure<NodeEnrichmentOptions>(options =>
+        {
+            options.Enabled = ReadBool(
+                configuration,
+                "NodeEnrichment:Enabled",
+                "NodeEnrichmentEnabled",
+                false);
+            options.DatabasePath = Read(
+                configuration,
+                "NodeEnrichment:DatabasePath",
+                "NodeEnrichmentDatabasePath",
+                "");
+            options.DatabaseUrl = Read(
+                configuration,
+                "NodeEnrichment:DatabaseUrl",
+                "NodeEnrichmentDatabaseUrl",
+                NodeEnrichmentOptions.DefaultDatabaseUrl);
+        });
+
         services.AddSingleton<IValidateOptions<SingboxOptions>, SingboxOptionsValidator>();
         services.AddSingleton<IValidateOptions<TailscaleOptions>, TailscaleOptionsValidator>();
 
