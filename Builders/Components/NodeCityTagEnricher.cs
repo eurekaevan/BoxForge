@@ -1,10 +1,8 @@
 using System.Net;
 using System.Net.Sockets;
-using BoxForge.Configuration;
 using BoxForge.Models.Singbox;
 using BoxForge.Services;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace BoxForge.Builders.Components;
 
@@ -26,20 +24,12 @@ public sealed class HostAddressResolver : IHostAddressResolver
 }
 
 public sealed partial class NodeCityTagEnricher(
-    IOptions<NodeEnrichmentOptions> options,
     IHostAddressResolver addressResolver,
     ICityDatabase cityDatabase,
     ILogger<NodeCityTagEnricher> logger)
 {
-    private readonly NodeEnrichmentOptions enrichmentOptions = options.Value;
-
     public NodeCatalog Enrich(NodeCatalog nodes)
     {
-        if (!enrichmentOptions.Enabled)
-        {
-            return nodes;
-        }
-
         var outbounds = new List<ProxyOutbound>(nodes.Outbounds.Count);
         var names = new List<string>(nodes.Names.Count);
 

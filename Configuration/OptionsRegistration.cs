@@ -75,11 +75,6 @@ public static class OptionsRegistration
 
         services.Configure<NodeEnrichmentOptions>(options =>
         {
-            options.Enabled = ReadBool(
-                configuration,
-                "NodeEnrichment:Enabled",
-                "NodeEnrichmentEnabled",
-                false);
             options.DatabasePath = Read(
                 configuration,
                 "NodeEnrichment:DatabasePath",

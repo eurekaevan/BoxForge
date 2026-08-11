@@ -9,7 +9,7 @@ namespace BoxForge.Tests;
 public sealed class NodeEnrichmentOptionsTests
 {
     [Test]
-    public void Defaults_AreDisabledWithJsDelivrDatabaseUrl()
+    public void Defaults_UseJsDelivrDatabaseUrl()
     {
         using ServiceProvider provider = BuildProvider([]);
 
@@ -19,7 +19,6 @@ public sealed class NodeEnrichmentOptionsTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(options.Enabled, Is.False);
             Assert.That(options.DatabasePath, Is.Empty);
             Assert.That(
                 options.DatabaseUrl,
@@ -32,7 +31,6 @@ public sealed class NodeEnrichmentOptionsTests
     {
         var values = new Dictionary<string, string?>
         {
-            ["NodeEnrichment:Enabled"] = "true",
             ["NodeEnrichment:DatabasePath"] = "/data/city.mmdb",
             ["NodeEnrichment:DatabaseUrl"] = "https://example.test/city.mmdb.gz"
         };
@@ -44,7 +42,6 @@ public sealed class NodeEnrichmentOptionsTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(options.Enabled, Is.True);
             Assert.That(options.DatabasePath, Is.EqualTo("/data/city.mmdb"));
             Assert.That(
                 options.DatabaseUrl,

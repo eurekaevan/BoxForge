@@ -94,7 +94,6 @@ dotnet run -- generate \
 - `BOXFORGE_TailscaleAcceptRoutes`
 - `BOXFORGE_TailscaleExitNode`
 - `BOXFORGE_TailscaleExitNodeAllowLanAccess`
-- `BOXFORGE_NodeEnrichment__Enabled`（默认 `false`）
 - `BOXFORGE_NodeEnrichment__DatabasePath`（可选）
 - `BOXFORGE_NodeEnrichment__DatabaseUrl`（可选）
 
@@ -107,10 +106,9 @@ dotnet run -- generate --platform Android
 
 新旧形式同时存在时，分组形式优先。
 
-节点城市标注默认关闭。启用时可直接使用默认下载地址：
+节点城市标注始终启用；不提供配置时直接使用默认下载地址：
 
 ```bash
-BOXFORGE_NodeEnrichment__Enabled=true \
 dotnet run -- generate
 ```
 
@@ -126,7 +124,6 @@ https://cdn.jsdelivr.net/npm/geolite2-city/GeoLite2-City.mmdb.gz
 释放 Reader 并清理临时目录。也可以覆盖本地路径或下载地址：
 
 ```bash
-BOXFORGE_NodeEnrichment__Enabled=true \
 BOXFORGE_NodeEnrichment__DatabasePath=/data/GeoLite2-City.mmdb \
 BOXFORGE_NodeEnrichment__DatabaseUrl=https://example.com/GeoLite2-City.mmdb.gz \
 dotnet run -- generate
@@ -135,8 +132,7 @@ dotnet run -- generate
 IP 类型的 `server` 直接查询数据库；域名会先解析全部 A/AAAA 地址。查询到的
 英文城市名去重并按稳定顺序以 `/` 连接，tag 形如 `原始tag | Singapore/Tokyo`。
 节点的 `server` 不会改变。下载、解压、DNS、数据库查询失败或城市名缺失时，
-该节点保留原 tag 并输出 warning，不会使生成失败。关闭功能时不会下载数据库，
-也不会解析节点域名。
+该节点保留原 tag 并输出 warning，不会使生成失败。
 
 启用 Tailscale 后，输出包含一个 `tailscale` endpoint。它复用 sing-box 已有的
 系统 VPN/TUN，不创建第二个系统 VPN 接口。Android 上需要 sing-box 1.14 或更高

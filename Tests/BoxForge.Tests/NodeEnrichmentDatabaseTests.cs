@@ -23,7 +23,6 @@ public sealed class NodeEnrichmentDatabaseTests
             using var source = CreateSource(
                 new NodeEnrichmentOptions
                 {
-                    Enabled = true,
                     DatabasePath = temporaryFile,
                     DatabaseUrl = "https://example.test/database.mmdb.gz"
                 },
@@ -48,7 +47,6 @@ public sealed class NodeEnrichmentDatabaseTests
         var source = CreateSource(
             new NodeEnrichmentOptions
             {
-                Enabled = true,
                 DatabaseUrl = "https://example.test/database.mmdb.gz"
             },
             httpClient);
@@ -77,7 +75,6 @@ public sealed class NodeEnrichmentDatabaseTests
         using var source = CreateSource(
             new NodeEnrichmentOptions
             {
-                Enabled = true,
                 DatabasePath = Path.Combine(
                     Path.GetTempPath(),
                     $"missing-{Guid.NewGuid():N}.mmdb"),
@@ -105,7 +102,6 @@ public sealed class NodeEnrichmentDatabaseTests
         using var source = CreateSource(
             new NodeEnrichmentOptions
             {
-                Enabled = true,
                 DatabaseUrl = "https://example.test/database.mmdb.gz"
             },
             httpClient);
@@ -114,7 +110,6 @@ public sealed class NodeEnrichmentDatabaseTests
             new MaxMindGeoLite2CityReaderFactory());
         var logger = new RecordingLogger<NodeCityTagEnricher>();
         var enricher = new NodeCityTagEnricher(
-            Options.Create(new NodeEnrichmentOptions { Enabled = true }),
             new ThrowingAddressResolver(),
             database,
             logger);

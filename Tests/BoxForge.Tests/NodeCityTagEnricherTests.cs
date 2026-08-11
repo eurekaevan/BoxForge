@@ -14,20 +14,6 @@ namespace BoxForge.Tests;
 public sealed class NodeCityTagEnricherTests
 {
     [Test]
-    public void Disabled_DoesNotResolveDnsOrAccessDatabase()
-    {
-        var catalog = CreateCatalog("node", "example.test");
-        var enricher = CreateEnricher(
-            enabled: false,
-            new ThrowingAddressResolver(),
-            new ThrowingCityDatabase());
-
-        NodeCatalog result = enricher.Enrich(catalog);
-
-        Assert.That(result, Is.SameAs(catalog));
-    }
-
-    [Test]
     public void DomainAddresses_ProduceStableDeduplicatedTagAndSelectorReferences()
     {
         var ipv4 = IPAddress.Parse("203.0.113.1");
@@ -39,24 +25,24 @@ public sealed class NodeCityTagEnricherTests
             [ipv6] = "Singapore"
         });
         var catalog = CreateCatalog("node", "example.test");
-        var enricher = CreateEnricher(true, resolver, database);
+        var enricher = CreateEnricher(resolver, database);
 
         NodeCatalog result = enricher.Enrich(catalog);
 
-        Assert.That(result.Outbounds[0].Tag, Is.EqualTo("node>Singapore/Tokyo"));
+        Assert.That(result.Outbounds[0].Tag, Is.EqualTo("node | Singapore/Tokyo"));
         Assert.That(result.Outbounds[0].Server, Is.EqualTo("example.test"));
-        Assert.That(result.Names, Is.EqualTo(new[] { "node>Singapore/Tokyo" }));
+        Assert.That(result.Names, Is.EqualTo(new[] { "node | Singapore/Tokyo" }));
         Assert.That(resolver.CallCount, Is.EqualTo(1));
 
         var plan = new ProfilePlanner(Options.Create(new SingboxOptions()))
             .Plan(result);
         Assert.That(
             plan.MainOutbound.Outbounds,
-            Does.Contain("node>Singapore/Tokyo"));
+            Does.Contain("node | Singapore/Tokyo"));
         Assert.That(plan.MainOutbound.Outbounds, Does.Not.Contain("node"));
         Assert.That(
             plan.ServiceOutbounds.SelectMany(outbound => outbound.Outbounds),
-            Does.Contain("node>Singapore/Tokyo"));
+            Does.Contain("node | Singapore/Tokyo"));
         Assert.That(
             plan.ServiceOutbounds.SelectMany(outbound => outbound.Outbounds),
             Does.Not.Contain("node"));
@@ -72,13 +58,12 @@ public sealed class NodeCityTagEnricherTests
         });
         var catalog = CreateCatalog("node", address.ToString());
         var enricher = CreateEnricher(
-            enabled: true,
             new ThrowingAddressResolver(),
             database);
 
         NodeCatalog result = enricher.Enrich(catalog);
 
-        Assert.That(result.Outbounds[0].Tag, Is.EqualTo("node>Tokyo"));
+        Assert.That(result.Outbounds[0].Tag, Is.EqualTo("node | Tokyo"));
         Assert.That(result.Outbounds[0].Server, Is.EqualTo(address.ToString()));
     }
 
@@ -101,7 +86,7 @@ public sealed class NodeCityTagEnricherTests
                 new Dictionary<IPAddress, string?> { [address] = "Tokyo" })
         };
         var logger = new RecordingLogger<NodeCityTagEnricher>();
-        var enricher = CreateEnricher(true, resolver, database, logger);
+        var enricher = CreateEnricher(resolver, database, logger);
 
         NodeCatalog result = enricher.Enrich(CreateCatalog("node", "example.test"));
 
@@ -126,12 +111,10 @@ public sealed class NodeCityTagEnricherTests
     }
 
     private static NodeCityTagEnricher CreateEnricher(
-        bool enabled,
         IHostAddressResolver resolver,
         ICityDatabase database,
         ILogger<NodeCityTagEnricher>? logger = null) =>
         new(
-            Options.Create(new NodeEnrichmentOptions { Enabled = enabled }),
             resolver,
             database,
             logger ?? NullLogger<NodeCityTagEnricher>.Instance);
