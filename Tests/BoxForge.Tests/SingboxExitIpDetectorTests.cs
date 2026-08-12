@@ -48,7 +48,7 @@ public sealed class SingboxExitIpDetectorTests
             Assert.That(outbound.GetProperty("tag").GetString(), Is.EqualTo("node"));
             Assert.That(
                 outbound.GetProperty("server").GetString(),
-                Is.EqualTo("198.51.100.20"));
+                Is.EqualTo("node.example"));
             Assert.That(outbound.TryGetProperty("domain_resolver", out _), Is.False);
             Assert.That(route.GetProperty("final").GetString(), Is.EqualTo("node"));
             Assert.That(launcher.Executable, Is.EqualTo("/opt/sing-box"));
@@ -159,7 +159,6 @@ public sealed class SingboxExitIpDetectorTests
                 Ip2LocationApiKey = apiKey
             }),
             executableValidator ?? new StubSingboxExecutableValidator(),
-            new StubProbeServerResolver("198.51.100.20"),
             launcher,
             fetcher,
             logger ?? new RecordingLogger<SingboxExitIpDetector>());

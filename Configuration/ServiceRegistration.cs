@@ -36,7 +36,6 @@ public static class ServiceRegistration
         services.AddSingleton<
             ISingboxExecutableValidator,
             SingboxExecutableValidator>();
-        services.AddSingleton<IProbeServerResolver, ProbeServerResolver>();
         services.AddSingleton<ISingboxProcessLauncher, SingboxProcessLauncher>();
         services.AddSingleton<IExitIpDetector, SingboxExitIpDetector>();
 

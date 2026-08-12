@@ -138,8 +138,8 @@ BOXFORGE_NodeEnrichment__Enabled=false dotnet run -- generate
 日志只记录 DNS、连接、TLS、代理隧道或 HTTP 状态等安全错误分类，不记录
 原始异常。单节点出口检测超时为 10 秒；
 每次检测结束都会停止 sing-box 并删除临时配置，失败或取消时也会执行
-同样的清理。为保持临时配置最小化，域名型节点 `server` 仅在连接节点时通过
-系统 DNS 解析为 IP；该 IP 不参与城市判断。
+同样的清理。临时 outbound 保留节点原始 `server`，域名解析和地址选择由
+sing-box 完成；仅 ipify 返回的出口 IP 参与城市判断。
 
 启用时，BoxForge 从以下默认地址下载 DB-IP City Lite MMDB：
 

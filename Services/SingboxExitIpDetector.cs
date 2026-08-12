@@ -35,13 +35,6 @@ public sealed class ExitIpFetchException(string reason) : Exception
     public string Reason { get; } = reason;
 }
 
-public interface IProbeServerResolver
-{
-    Task<string> ResolveAsync(
-        string server,
-        CancellationToken cancellationToken = default);
-}
-
 public interface ISingboxExecutableValidator
 {
     Task<SingboxExecutableValidationResult> ValidateAsync(string executable);
@@ -64,7 +57,6 @@ public interface ISingboxProcess : IAsyncDisposable
 public sealed partial class SingboxExitIpDetector(
     IOptions<NodeEnrichmentOptions> options,
     ISingboxExecutableValidator executableValidator,
-    IProbeServerResolver serverResolver,
     ISingboxProcessLauncher processLauncher,
     IExitIpFetcher exitIpFetcher,
     ILogger<SingboxExitIpDetector> logger) : IExitIpDetector
@@ -119,13 +111,9 @@ public sealed partial class SingboxExitIpDetector(
 
         string? temporaryDirectory = null;
         ISingboxProcess? process = null;
-        string stage = "resolve-server";
+        string stage = "create-config";
         try
         {
-            string probeServer = await serverResolver.ResolveAsync(
-                outbound.Server,
-                probeToken);
-            stage = "create-config";
             int socksPort = ReserveLoopbackPort();
             temporaryDirectory = Directory.CreateTempSubdirectory(
                 "boxforge-exit-").FullName;
@@ -134,7 +122,6 @@ public sealed partial class SingboxExitIpDetector(
                 configPath,
                 socksPort,
                 outbound,
-                probeServer,
                 probeToken);
 
             stage = "start-sing-box";
@@ -221,7 +208,6 @@ public sealed partial class SingboxExitIpDetector(
         string configPath,
         int socksPort,
         ProxyOutbound outbound,
-        string probeServer,
         CancellationToken cancellationToken)
     {
         var fileOptions = new FileStreamOptions
@@ -240,19 +226,17 @@ public sealed partial class SingboxExitIpDetector(
         await using var stream = new FileStream(configPath, fileOptions);
         await JsonSerializer.SerializeAsync(
             stream,
-            CreateProbeConfig(socksPort, outbound, probeServer),
+            CreateProbeConfig(socksPort, outbound),
             JsonOptions,
             cancellationToken);
     }
 
     private static ExitProbeConfig CreateProbeConfig(
         int socksPort,
-        ProxyOutbound outbound,
-        string probeServer)
+        ProxyOutbound outbound)
     {
         ProxyOutbound probeOutbound = outbound with
         {
-            Server = probeServer,
             DomainResolver = null!
         };
         return new ExitProbeConfig(
@@ -405,31 +389,6 @@ public sealed class SingboxExecutableValidator : ISingboxExecutableValidator
         {
             // The process has already exited or cannot be controlled.
         }
-    }
-}
-
-public sealed class ProbeServerResolver : IProbeServerResolver
-{
-    public async Task<string> ResolveAsync(
-        string server,
-        CancellationToken cancellationToken = default)
-    {
-        if (IPAddress.TryParse(server, out var literalAddress))
-        {
-            return literalAddress.ToString();
-        }
-
-        IPAddress? address = (await Dns.GetHostAddressesAsync(
-                server,
-                cancellationToken))
-            .Where(candidate => candidate.AddressFamily is
-                AddressFamily.InterNetwork or AddressFamily.InterNetworkV6)
-            .OrderBy(candidate => candidate.AddressFamily)
-            .ThenBy(candidate => candidate.ToString(), StringComparer.Ordinal)
-            .FirstOrDefault();
-        return address?.ToString()
-            ?? throw new InvalidOperationException(
-                "节点 server 未解析到 IPv4/IPv6 地址。");
     }
 }
 

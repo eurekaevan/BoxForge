@@ -153,22 +153,6 @@ internal sealed class StubExitIpFetcher(IPAddress? exitAddress) : IExitIpFetcher
     }
 }
 
-internal sealed class StubProbeServerResolver(string resolvedServer) :
-    IProbeServerResolver
-{
-    public int CallCount { get; private set; }
-    public string? OriginalServer { get; private set; }
-
-    public Task<string> ResolveAsync(
-        string server,
-        CancellationToken cancellationToken = default)
-    {
-        CallCount++;
-        OriginalServer = server;
-        return Task.FromResult(resolvedServer);
-    }
-}
-
 internal sealed class StubSingboxExecutableValidator(bool isValid = true) :
     ISingboxExecutableValidator
 {
