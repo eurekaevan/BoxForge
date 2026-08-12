@@ -115,9 +115,14 @@ dotnet run -- generate --platform Android
 BOXFORGE_NodeEnrichment__Enabled=true \
 BOXFORGE_NodeEnrichment__Mode=Exit \
 BOXFORGE_NodeEnrichment__Ip2LocationApiKey=... \
-BOXFORGE_NodeEnrichment__SingBoxPath=sing-box \
+BOXFORGE_NodeEnrichment__SingBoxPath=/path/to/sagernet-sing-box \
 dotnet run -- generate
 ```
+
+`SingBoxPath` 必须指向能执行 `sing-box version` 和 `sing-box run -c ...` 的
+SagerNet 命令行 core。某些桌面客户端也安装了名为 `sing-box` 的 Electron
+启动器，它不能用于出口检测。BoxForge 会在首个节点前验证可执行文件；
+路径错误时只输出一条 warning，并保留所有原 tag。
 
 如需关闭：
 

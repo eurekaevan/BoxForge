@@ -154,6 +154,21 @@ internal sealed class StubProbeServerResolver(string resolvedServer) :
     }
 }
 
+internal sealed class StubSingboxExecutableValidator(bool isValid = true) :
+    ISingboxExecutableValidator
+{
+    public int CallCount { get; private set; }
+
+    public Task<SingboxExecutableValidationResult> ValidateAsync(
+        string executable)
+    {
+        CallCount++;
+        return Task.FromResult(new SingboxExecutableValidationResult(
+            isValid,
+            isValid ? "ok" : "not-sagernet-cli"));
+    }
+}
+
 internal sealed class ThrowingExitIpFetcher : IExitIpFetcher
 {
     public Task<IPAddress?> FetchAsync(
@@ -169,12 +184,14 @@ internal sealed class StubSingboxProcessLauncher : ISingboxProcessLauncher
     public string? ConfigPath { get; private set; }
     public string? ConfigContent { get; private set; }
     public int SocksPort { get; private set; }
+    public int StartCount { get; private set; }
 
     public ISingboxProcess Start(
         string executable,
         string configPath,
         int socksPort)
     {
+        StartCount++;
         Executable = executable;
         ConfigPath = configPath;
         ConfigContent = File.ReadAllText(configPath);

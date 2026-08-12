@@ -32,6 +32,15 @@ public interface IProbeServerResolver
         CancellationToken cancellationToken = default);
 }
 
+public interface ISingboxExecutableValidator
+{
+    Task<SingboxExecutableValidationResult> ValidateAsync(string executable);
+}
+
+public sealed record SingboxExecutableValidationResult(
+    bool IsValid,
+    string Reason);
+
 public interface ISingboxProcessLauncher
 {
     ISingboxProcess Start(string executable, string configPath, int socksPort);
@@ -44,6 +53,7 @@ public interface ISingboxProcess : IAsyncDisposable
 
 public sealed partial class SingboxExitIpDetector(
     IOptions<NodeEnrichmentOptions> options,
+    ISingboxExecutableValidator executableValidator,
     IProbeServerResolver serverResolver,
     ISingboxProcessLauncher processLauncher,
     IExitIpFetcher exitIpFetcher,
@@ -58,11 +68,40 @@ public sealed partial class SingboxExitIpDetector(
     };
 
     private readonly NodeEnrichmentOptions enrichmentOptions = options.Value;
+    private readonly Lazy<Task<SingboxExecutableValidationResult>>
+        executableValidation = new(
+            () => executableValidator.ValidateAsync(
+                options.Value.SingBoxPath.Trim()),
+            LazyThreadSafetyMode.ExecutionAndPublication);
+    private int executableFailureLogged;
 
     public async Task<IPAddress?> DetectAsync(
         ProxyOutbound outbound,
         CancellationToken cancellationToken = default)
     {
+        SingboxExecutableValidationResult validation;
+        try
+        {
+            validation = await executableValidation.Value;
+        }
+        catch (Exception)
+        {
+            validation = new(false, "validation-failed");
+        }
+
+        if (!validation.IsValid)
+        {
+            if (Interlocked.Exchange(ref executableFailureLogged, 1) == 0)
+            {
+                LogInvalidExecutable(
+                    logger,
+                    enrichmentOptions.SingBoxPath.Trim(),
+                    validation.Reason);
+            }
+
+            return null;
+        }
+
         using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken);
         timeoutSource.CancelAfter(ProbeTimeout);
@@ -70,11 +109,13 @@ public sealed partial class SingboxExitIpDetector(
 
         string? temporaryDirectory = null;
         ISingboxProcess? process = null;
+        string stage = "resolve-server";
         try
         {
             string probeServer = await serverResolver.ResolveAsync(
                 outbound.Server,
                 probeToken);
+            stage = "create-config";
             int socksPort = ReserveLoopbackPort();
             temporaryDirectory = Directory.CreateTempSubdirectory(
                 "boxforge-exit-").FullName;
@@ -86,12 +127,23 @@ public sealed partial class SingboxExitIpDetector(
                 probeServer,
                 probeToken);
 
+            stage = "start-sing-box";
             process = processLauncher.Start(
                 enrichmentOptions.SingBoxPath.Trim(),
                 configPath,
                 socksPort);
+            stage = "wait-local-proxy";
             await process.WaitUntilReadyAsync(probeToken);
-            return await exitIpFetcher.FetchAsync(socksPort, probeToken);
+            stage = "fetch-ipify";
+            IPAddress? exitAddress = await exitIpFetcher.FetchAsync(
+                socksPort,
+                probeToken);
+            if (exitAddress == null)
+            {
+                LogIpifyRejected(logger, outbound.Tag);
+            }
+
+            return exitAddress;
         }
         catch (OperationCanceledException)
             when (!cancellationToken.IsCancellationRequested)
@@ -105,7 +157,7 @@ public sealed partial class SingboxExitIpDetector(
         }
         catch (Exception)
         {
-            LogProbeFailure(logger, outbound.Tag);
+            LogProbeFailure(logger, outbound.Tag, stage);
             return null;
         }
         finally
@@ -211,8 +263,11 @@ public sealed partial class SingboxExitIpDetector(
     [LoggerMessage(
         2,
         LogLevel.Warning,
-        "节点出口 IP 检测失败，保留原 tag：{Tag}")]
-    private static partial void LogProbeFailure(ILogger logger, string tag);
+        "节点出口 IP 检测失败，stage={Stage}，保留原 tag：{Tag}")]
+    private static partial void LogProbeFailure(
+        ILogger logger,
+        string tag,
+        string stage);
 
     [LoggerMessage(
         3,
@@ -228,6 +283,22 @@ public sealed partial class SingboxExitIpDetector(
         "sing-box 临时文件清理失败：{Tag}")]
     private static partial void LogFileCleanupFailure(ILogger logger, string tag);
 
+    [LoggerMessage(
+        5,
+        LogLevel.Warning,
+        "节点出口 IP 检测已跳过：{Path} 不是可用的 SagerNet sing-box CLI，"
+            + "reason={Reason}。请将 NodeEnrichment:SingBoxPath 指向官方 core 可执行文件。")]
+    private static partial void LogInvalidExecutable(
+        ILogger logger,
+        string path,
+        string reason);
+
+    [LoggerMessage(
+        6,
+        LogLevel.Warning,
+        "ipify 未返回有效出口 IP，保留原 tag：{Tag}")]
+    private static partial void LogIpifyRejected(ILogger logger, string tag);
+
     private sealed record ExitProbeConfig(
         [property: JsonPropertyName("inbounds")] List<Inbound> Inbounds,
         [property: JsonPropertyName("outbounds")] List<Outbound> Outbounds,
@@ -237,6 +308,80 @@ public sealed partial class SingboxExitIpDetector(
         [property: JsonPropertyName("final")] string Final,
         [property: JsonPropertyName("auto_detect_interface")]
         bool AutoDetectInterface);
+}
+
+public sealed class SingboxExecutableValidator : ISingboxExecutableValidator
+{
+    private static readonly TimeSpan ValidationTimeout = TimeSpan.FromSeconds(3);
+
+    public async Task<SingboxExecutableValidationResult> ValidateAsync(
+        string executable)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = executable,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+        startInfo.ArgumentList.Add("version");
+
+        using var process = new Process { StartInfo = startInfo };
+        try
+        {
+            if (!process.Start())
+            {
+                return new(false, "start-failed");
+            }
+
+            Task<string> standardOutput = process.StandardOutput.ReadToEndAsync();
+            Task<string> standardError = process.StandardError.ReadToEndAsync();
+            using var timeoutSource = new CancellationTokenSource(
+                ValidationTimeout);
+            try
+            {
+                await process.WaitForExitAsync(timeoutSource.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                TryKill(process);
+                await Task.WhenAll(standardOutput, standardError);
+                return new(false, "version-timeout");
+            }
+
+            string output = await standardOutput;
+            await standardError;
+            bool isCli = process.ExitCode == 0
+                && output.StartsWith(
+                    "sing-box version ",
+                    StringComparison.Ordinal);
+            return isCli
+                ? new(true, "ok")
+                : new(false, "not-sagernet-cli");
+        }
+        catch (Exception)
+        {
+            TryKill(process);
+            return new(false, "start-failed");
+        }
+    }
+
+    private static void TryKill(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                process.WaitForExit();
+            }
+        }
+        catch (Exception)
+        {
+            // The process has already exited or cannot be controlled.
+        }
+    }
 }
 
 public sealed class ProbeServerResolver : IProbeServerResolver

@@ -89,11 +89,43 @@ public sealed class SingboxExitIpDetectorTests
         });
     }
 
+    [Test]
+    public async Task InvalidExecutableIsLoggedOnceAndSkipsEveryNode()
+    {
+        var validator = new StubSingboxExecutableValidator(isValid: false);
+        var launcher = new StubSingboxProcessLauncher();
+        var fetcher = new StubExitIpFetcher(IPAddress.Parse("203.0.113.1"));
+        var logger = new RecordingLogger<SingboxExitIpDetector>();
+        var detector = CreateDetector(
+            launcher,
+            fetcher,
+            logger,
+            executableValidator: validator);
+
+        IPAddress? first = await detector.DetectAsync(CreateOutbound());
+        IPAddress? second = await detector.DetectAsync(CreateOutbound());
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(first, Is.Null);
+            Assert.That(second, Is.Null);
+            Assert.That(validator.CallCount, Is.EqualTo(1));
+            Assert.That(launcher.StartCount, Is.Zero);
+            Assert.That(fetcher.CallCount, Is.Zero);
+            Assert.That(
+                logger.Messages.Count(message => message.Contains(
+                    "不是可用的 SagerNet sing-box CLI",
+                    StringComparison.Ordinal)),
+                Is.EqualTo(1));
+        });
+    }
+
     private static SingboxExitIpDetector CreateDetector(
         ISingboxProcessLauncher launcher,
         IExitIpFetcher fetcher,
         RecordingLogger<SingboxExitIpDetector>? logger = null,
-        string apiKey = "") =>
+        string apiKey = "",
+        ISingboxExecutableValidator? executableValidator = null) =>
         new(
             Options.Create(new NodeEnrichmentOptions
             {
@@ -102,6 +134,7 @@ public sealed class SingboxExitIpDetectorTests
                 SingBoxPath = "/opt/sing-box",
                 Ip2LocationApiKey = apiKey
             }),
+            executableValidator ?? new StubSingboxExecutableValidator(),
             new StubProbeServerResolver("198.51.100.20"),
             launcher,
             fetcher,

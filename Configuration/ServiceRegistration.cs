@@ -32,6 +32,9 @@ public static class ServiceRegistration
         services.AddSingleton<IDbIpCityDatabase, DbIpCityDatabase>();
         services.AddSingleton<IIp2LocationCityClient, Ip2LocationCityClient>();
         services.AddSingleton<IExitIpFetcher, ExitIpFetcher>();
+        services.AddSingleton<
+            ISingboxExecutableValidator,
+            SingboxExecutableValidator>();
         services.AddSingleton<IProbeServerResolver, ProbeServerResolver>();
         services.AddSingleton<ISingboxProcessLauncher, SingboxProcessLauncher>();
         services.AddSingleton<IExitIpDetector, SingboxExitIpDetector>();
