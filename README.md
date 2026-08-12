@@ -167,6 +167,9 @@ dotnet test BoxForge.slnx --no-build
   sing-box 能识别的引用错误由后续 `sing-box check` 负责。
 - TUN 显式使用 `dns_mode: hijack`；代理节点域名和 Tailscale DNS 不返回
   optimistic 过期缓存，避免地址变化后继续使用旧记录。
+- 协议嗅探不限端口，但 TCP 仅启用 HTTP/TLS，UDP 仅启用 QUIC；固定
+  STUN 拒绝位于嗅探之前。命中国内直连规则的 UDP/443 会快速拒绝以促使
+  QUIC 回退 TCP；未命中的国外或最终代理流量继续使用 UDP/443。
 - 两台 DNS 并发 `evaluate`；最快出现的有效 A 地址立即胜出。若都没有有效
   地址，才接受任一 `NXDOMAIN`；再否则优先复用第二台已返回的错误响应，
   第二台尚无响应时最后重新 route 它一次。

@@ -35,5 +35,6 @@ public record RouteRule
     [JsonPropertyName("ip_is_private")] public bool? IpIsPrivate { get; init; }
     [JsonPropertyName("preferred_by")] public List<string>? PreferredBy { get; init; }
     [JsonPropertyName("outbound")] public string? Outbound { get; init; }
+    [JsonPropertyName("sniffer")] public List<string>? Sniffer { get; init; }
     [JsonPropertyName("timeout")] public string? Timeout { get; init; }
 }

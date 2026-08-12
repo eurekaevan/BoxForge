@@ -66,9 +66,8 @@ public class RouteProfileBuilder(
             new() { IpCidr = ["::/0"], Action = RouteRuleAction.Reject },
             new() { IpCidr = ["223.5.5.5/32"], Action = RouteRuleAction.Route, Outbound = singbox.Direct },
             new() { Port = [3478, 3479, 19302, 19303], Network = ["udp"], Action = RouteRuleAction.Reject },
-            new() { Inbound = [SingboxTags.TunInbound, SingboxTags.MixedInbound], Port = [443], Network = ["udp"], Action = RouteRuleAction.Reject },
-            new() { Inbound = [SingboxTags.TunInbound, SingboxTags.MixedInbound], Action = RouteRuleAction.Sniff, Timeout = "300ms" },
-            new() { Protocol = ["ssh"], Action = RouteRuleAction.Route, Outbound = singbox.Direct },
+            CreateSniffRule("tcp", ["http", "tls"]),
+            CreateSniffRule("udp", ["quic"]),
             new() { RuleSet = ["geosite-category-ads-all"], Action = RouteRuleAction.Reject }
         ]);
 
@@ -86,14 +85,40 @@ public class RouteProfileBuilder(
         }
 
         rules.AddRange([
+            CreateDomesticUdp443RejectRule(["geosite-cn", "geosite-category-pt"]),
             new RouteRule { RuleSet = ["geosite-cn", "geosite-category-pt"], Action = RouteRuleAction.Route, Outbound = singbox.Direct },
             new RouteRule { Inbound = [SingboxTags.MixedInbound], Action = RouteRuleAction.Resolve },
+            CreateDomesticUdp443RejectRule(["geoip-cn"]),
             new RouteRule { RuleSet = ["geoip-cn"], Action = RouteRuleAction.Route, Outbound = singbox.Direct }
         ]);
 
         route.Rules.AddRange(rules);
         return route;
     }
+
+    private static RouteRule CreateSniffRule(string network, List<string> sniffers) =>
+        new()
+        {
+            Inbound = [SingboxTags.TunInbound, SingboxTags.MixedInbound],
+            Network = [network],
+            Action = RouteRuleAction.Sniff,
+            Sniffer = sniffers,
+            Timeout = "300ms"
+        };
+
+    private static RouteRule CreateDomesticUdp443RejectRule(List<string> ruleSets) =>
+        new()
+        {
+            Type = RouteRuleType.Logical,
+            Mode = RouteLogicalMode.And,
+            Rules =
+            [
+                new RouteRule { Inbound = [SingboxTags.TunInbound, SingboxTags.MixedInbound] },
+                new RouteRule { Port = [443], Network = ["udp"] },
+                new RouteRule { RuleSet = ruleSets }
+            ],
+            Action = RouteRuleAction.Reject
+        };
 
     private static SingboxRuleSet CreateRemoteRuleSet(
         string tag,
