@@ -5,6 +5,7 @@ namespace BoxForge.Services;
 
 public interface IDbIpCityDatabase
 {
+    Task InitializeAsync(CancellationToken cancellationToken = default);
     string? FindEnglishCity(IPAddress address);
 }
 
@@ -40,25 +41,44 @@ public sealed class MaxMindDbIpCityReader(
 
 public sealed class DbIpCityDatabase : IDbIpCityDatabase, IDisposable
 {
-    private readonly Lazy<IDbIpCityReader> reader;
+    private readonly IDbIpDatabaseSource databaseSource;
+    private readonly IDbIpCityReaderFactory readerFactory;
+    private readonly object initializationLock = new();
+    private Task? initializationTask;
+    private IDbIpCityReader? reader;
 
     public DbIpCityDatabase(
         IDbIpDatabaseSource databaseSource,
         IDbIpCityReaderFactory readerFactory)
     {
-        reader = new Lazy<IDbIpCityReader>(
-            () => readerFactory.Open(databaseSource.GetDatabasePath()),
-            LazyThreadSafetyMode.ExecutionAndPublication);
+        this.databaseSource = databaseSource;
+        this.readerFactory = readerFactory;
+    }
+
+    public Task InitializeAsync(CancellationToken cancellationToken = default)
+    {
+        Task currentInitialization;
+        lock (initializationLock)
+        {
+            currentInitialization = initializationTask ??=
+                InitializeCoreAsync(cancellationToken);
+        }
+
+        return currentInitialization.WaitAsync(cancellationToken);
     }
 
     public string? FindEnglishCity(IPAddress address) =>
-        reader.Value.FindEnglishCity(address);
+        (reader ?? throw new InvalidOperationException(
+            "DB-IP City Lite 数据库尚未初始化。"))
+        .FindEnglishCity(address);
 
-    public void Dispose()
+    public void Dispose() => Interlocked.Exchange(ref reader, null)?.Dispose();
+
+    private async Task InitializeCoreAsync(CancellationToken cancellationToken)
     {
-        if (reader.IsValueCreated)
-        {
-            reader.Value.Dispose();
-        }
+        string databasePath = await databaseSource.GetDatabasePathAsync(
+            cancellationToken);
+        IDbIpCityReader createdReader = readerFactory.Open(databasePath);
+        Interlocked.Exchange(ref reader, createdReader)?.Dispose();
     }
 }

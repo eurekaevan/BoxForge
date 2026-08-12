@@ -26,13 +26,28 @@ internal sealed class ThrowingAddressResolver : IHostAddressResolver
 internal sealed class StubDbIpCityDatabase(
     IReadOnlyDictionary<IPAddress, string?> cities) : IDbIpCityDatabase
 {
+    public Task InitializeAsync(CancellationToken cancellationToken = default) =>
+        Task.CompletedTask;
+
     public string? FindEnglishCity(IPAddress address) => cities[address];
 }
 
 internal sealed class ThrowingDbIpCityDatabase : IDbIpCityDatabase
 {
+    public Task InitializeAsync(CancellationToken cancellationToken = default) =>
+        Task.CompletedTask;
+
     public string? FindEnglishCity(IPAddress address) =>
         throw new InvalidOperationException("DB-IP failure");
+}
+
+internal sealed class ThrowingInitializingDbIpCityDatabase : IDbIpCityDatabase
+{
+    public Task InitializeAsync(CancellationToken cancellationToken = default) =>
+        Task.FromException(new InvalidOperationException("DB-IP init failure"));
+
+    public string? FindEnglishCity(IPAddress address) =>
+        throw new InvalidOperationException("DB-IP must not be queried");
 }
 
 internal sealed class StubIp2LocationCityClient(
@@ -72,10 +87,11 @@ internal sealed class StubDbIpDatabaseSource(
 {
     public int CallCount { get; private set; }
 
-    public string GetDatabasePath()
+    public Task<string> GetDatabasePathAsync(
+        CancellationToken cancellationToken = default)
     {
         CallCount++;
-        return databasePath;
+        return Task.FromResult(databasePath);
     }
 }
 

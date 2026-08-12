@@ -7,7 +7,8 @@ namespace BoxForge.Services;
 
 public interface IDbIpDatabaseSource
 {
-    string GetDatabasePath();
+    Task<string> GetDatabasePathAsync(
+        CancellationToken cancellationToken = default);
 }
 
 public sealed partial class DbIpDatabaseSource : IDbIpDatabaseSource, IDisposable
@@ -15,7 +16,8 @@ public sealed partial class DbIpDatabaseSource : IDbIpDatabaseSource, IDisposabl
     private readonly NodeEnrichmentOptions options;
     private readonly HttpClient httpClient;
     private readonly ILogger<DbIpDatabaseSource> logger;
-    private readonly Lazy<string> resolvedDatabasePath;
+    private readonly object initializationLock = new();
+    private Task<string>? resolvedDatabasePath;
     private string? temporaryDirectory;
 
     public DbIpDatabaseSource(
@@ -26,16 +28,25 @@ public sealed partial class DbIpDatabaseSource : IDbIpDatabaseSource, IDisposabl
         this.options = options.Value;
         this.httpClient = httpClient;
         this.logger = logger;
-        resolvedDatabasePath = new Lazy<string>(
-            DownloadAndExtract,
-            LazyThreadSafetyMode.ExecutionAndPublication);
     }
 
-    public string GetDatabasePath() => resolvedDatabasePath.Value;
+    public Task<string> GetDatabasePathAsync(
+        CancellationToken cancellationToken = default)
+    {
+        Task<string> initializationTask;
+        lock (initializationLock)
+        {
+            initializationTask = resolvedDatabasePath ??= DownloadAndExtractAsync(
+                cancellationToken);
+        }
+
+        return initializationTask.WaitAsync(cancellationToken);
+    }
 
     public void Dispose() => DeleteTemporaryDirectory();
 
-    private string DownloadAndExtract()
+    private async Task<string> DownloadAndExtractAsync(
+        CancellationToken cancellationToken)
     {
         string configuredUrl = options.DbIpDatabaseUrl.Trim();
         if (!Uri.TryCreate(configuredUrl, UriKind.Absolute, out var databaseUri)
@@ -56,24 +67,33 @@ public sealed partial class DbIpDatabaseSource : IDbIpDatabaseSource, IDisposabl
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, databaseUri);
-            using var response = httpClient.SendAsync(
-                    request,
-                    HttpCompletionOption.ResponseHeadersRead)
-                .GetAwaiter()
-                .GetResult();
+            using var response = await httpClient.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken);
             response.EnsureSuccessStatusCode();
 
-            using Stream compressedStream = response.Content.ReadAsStream();
+            await using Stream compressedStream = await response.Content
+                .ReadAsStreamAsync(cancellationToken);
             using var gzipStream = new GZipStream(
                 compressedStream,
                 CompressionMode.Decompress);
-            using var databaseStream = new FileStream(
+            await using var databaseStream = new FileStream(
                 databasePath,
-                FileMode.CreateNew,
-                FileAccess.Write,
-                FileShare.None);
-            gzipStream.CopyTo(databaseStream);
+                new FileStreamOptions
+                {
+                    Mode = FileMode.CreateNew,
+                    Access = FileAccess.Write,
+                    Share = FileShare.None,
+                    Options = FileOptions.Asynchronous
+                });
+            await gzipStream.CopyToAsync(databaseStream, cancellationToken);
             return databasePath;
+        }
+        catch (OperationCanceledException)
+        {
+            DeleteTemporaryDirectory();
+            throw;
         }
         catch (Exception ex)
         {

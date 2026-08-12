@@ -106,6 +106,33 @@ public sealed class NodeCityTagEnricherTests
     }
 
     [Test]
+    public async Task DbIpInitializationFailureUsesIp2LocationResult()
+    {
+        var address = IPAddress.Parse("203.0.113.1");
+        var logger = new RecordingLogger<NodeCityTagEnricher>();
+        var enricher = CreateEnricher(
+            new ThrowingAddressResolver(),
+            new ThrowingInitializingDbIpCityDatabase(),
+            new StubIp2LocationCityClient(new Dictionary<IPAddress, string?>
+            {
+                [address] = "Tokyo"
+            }),
+            logger: logger);
+
+        NodeCatalog result = await enricher.EnrichAsync(
+            CreateCatalog("node", address.ToString()));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Outbounds[0].Tag, Is.EqualTo("node>Tokyo"));
+            Assert.That(logger.Levels, Does.Contain(LogLevel.Warning));
+            Assert.That(
+                logger.Messages,
+                Has.Some.Contains("DB-IP City Lite 数据库初始化失败"));
+        });
+    }
+
+    [Test]
     public async Task MissingValuesUseAvailableSourceAndIgnoreDash()
     {
         var first = IPAddress.Parse("203.0.113.1");

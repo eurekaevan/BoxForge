@@ -16,11 +16,6 @@ public class ConversionService(
     ISingboxConfigValidator configValidator,
     IConfigSerializer configSerializer)
 {
-    public PreparedConversion Prepare(
-        string yamlContent,
-        bool strictNodeValidation = false) =>
-        PrepareAsync(yamlContent, strictNodeValidation).GetAwaiter().GetResult();
-
     public async Task<PreparedConversion> PrepareAsync(
         string yamlContent,
         bool strictNodeValidation = false,

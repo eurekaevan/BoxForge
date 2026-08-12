@@ -22,7 +22,11 @@ public static class ServiceRegistration
         services.AddSingleton<IConfigSerializer, ConfigSerializer>();
         services.AddSingleton<IProxyCacheIdGenerator, ProxyCacheIdGenerator>();
         services.AddSingleton<ISingboxConfigValidator, SingboxConfigValidator>();
-        services.AddSingleton<HttpClient>();
+        services.AddSingleton(_ => new HttpClient(new SocketsHttpHandler
+        {
+            PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+            PooledConnectionIdleTimeout = TimeSpan.FromMinutes(1)
+        }));
         services.AddSingleton<IDbIpDatabaseSource, DbIpDatabaseSource>();
         services.AddSingleton<IDbIpCityReaderFactory, MaxMindDbIpCityReaderFactory>();
         services.AddSingleton<IDbIpCityDatabase, DbIpCityDatabase>();

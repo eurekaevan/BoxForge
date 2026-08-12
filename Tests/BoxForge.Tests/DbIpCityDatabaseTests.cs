@@ -11,7 +11,7 @@ namespace BoxForge.Tests;
 public sealed class DbIpCityDatabaseTests
 {
     [Test]
-    public void DatabaseIsDownloadedDecompressedAndReusedOnce()
+    public async Task DatabaseIsDownloadedDecompressedAndReusedOnce()
     {
         byte[] expectedContent = "test-mmdb-content"u8.ToArray();
         var handler = new StubHttpHandler((_, _) => Task.FromResult(
@@ -28,8 +28,8 @@ public sealed class DbIpCityDatabaseTests
             httpClient,
             NullLogger<DbIpDatabaseSource>.Instance);
 
-        string firstPath = source.GetDatabasePath();
-        string secondPath = source.GetDatabasePath();
+        string firstPath = await source.GetDatabasePathAsync();
+        string secondPath = await source.GetDatabasePathAsync();
         string temporaryDirectory = Path.GetDirectoryName(firstPath)!;
 
         Assert.Multiple(() =>
@@ -44,12 +44,14 @@ public sealed class DbIpCityDatabaseTests
     }
 
     [Test]
-    public void DatabaseReaderIsOpenedOnceForAllAddresses()
+    public async Task DatabaseReaderIsOpenedOnceForAllAddresses()
     {
         var source = new StubDbIpDatabaseSource("database.mmdb");
         var factory = new StubDbIpReaderFactory("Tokyo");
         using var database = new DbIpCityDatabase(source, factory);
 
+        await database.InitializeAsync();
+        await database.InitializeAsync();
         string? first = database.FindEnglishCity(IPAddress.Parse("203.0.113.1"));
         string? second = database.FindEnglishCity(IPAddress.Parse("2001:db8::1"));
 
@@ -76,10 +78,34 @@ public sealed class DbIpCityDatabaseTests
             httpClient,
             NullLogger<DbIpDatabaseSource>.Instance);
 
-        var exception = Assert.Throws<InvalidOperationException>(
-            () => source.GetDatabasePath());
+        var exception = Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await source.GetDatabasePathAsync());
 
         Assert.That(exception!.ToString(), Does.Not.Contain(configuredValue));
+    }
+
+    [Test]
+    public void DatabaseDownloadPropagatesCancellation()
+    {
+        var handler = new StubHttpHandler(async (_, cancellationToken) =>
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        });
+        using var httpClient = new HttpClient(handler);
+        using var source = new DbIpDatabaseSource(
+            Options.Create(new NodeEnrichmentOptions
+            {
+                DbIpDatabaseUrl = "https://example.test/database.mmdb.gz"
+            }),
+            httpClient,
+            NullLogger<DbIpDatabaseSource>.Instance);
+        using var cancellationSource = new CancellationTokenSource();
+        cancellationSource.Cancel();
+
+        Assert.CatchAsync<OperationCanceledException>(
+            async () => await source.GetDatabasePathAsync(
+                cancellationSource.Token));
     }
 
     private static byte[] Compress(byte[] content)

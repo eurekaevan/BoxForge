@@ -54,9 +54,6 @@ public sealed partial class NodeCityTagEnricher(
 {
     private readonly NodeEnrichmentOptions enrichmentOptions = options.Value;
 
-    public NodeCatalog Enrich(NodeCatalog nodes) =>
-        EnrichAsync(nodes).GetAwaiter().GetResult();
-
     public async Task<NodeCatalog> EnrichAsync(
         NodeCatalog nodes,
         CancellationToken cancellationToken = default)
@@ -75,11 +72,12 @@ public sealed partial class NodeCityTagEnricher(
             .OrderBy(address => address.AddressFamily)
             .ThenBy(address => address.ToString(), StringComparer.Ordinal)];
 
+        Task<Dictionary<IPAddress, string?>> dbIpLookup =
+            LookupDbIpCitiesAsync(uniqueAddresses, cancellationToken);
         Task<Dictionary<IPAddress, string?>> ip2LocationLookup =
-            LookupIp2LocationCitiesAsync(
-                uniqueAddresses,
-                cancellationToken);
-        var dbIpCities = LookupDbIpCities(uniqueAddresses);
+            LookupIp2LocationCitiesAsync(uniqueAddresses, cancellationToken);
+        await Task.WhenAll(dbIpLookup, ip2LocationLookup);
+        var dbIpCities = await dbIpLookup;
         var ip2LocationCities = await ip2LocationLookup;
 
         var outbounds = new List<ProxyOutbound>(nodes.Outbounds.Count);
@@ -157,10 +155,30 @@ public sealed partial class NodeCityTagEnricher(
         return result;
     }
 
-    private Dictionary<IPAddress, string?> LookupDbIpCities(
-        IReadOnlyList<IPAddress> addresses)
+    private async Task<Dictionary<IPAddress, string?>> LookupDbIpCitiesAsync(
+        IPAddress[] addresses,
+        CancellationToken cancellationToken)
     {
         var result = new Dictionary<IPAddress, string?>();
+        if (addresses.Length == 0)
+        {
+            return result;
+        }
+
+        try
+        {
+            await dbIpCityDatabase.InitializeAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            LogDbIpInitializationFailure(logger, ex);
+            return result;
+        }
+
         foreach (IPAddress address in addresses)
         {
             try
@@ -334,4 +352,12 @@ public sealed partial class NodeCityTagEnricher(
     private static partial void LogIp2LocationFailure(
         ILogger logger,
         IPAddress address);
+
+    [LoggerMessage(
+        5,
+        LogLevel.Warning,
+        "DB-IP City Lite 数据库初始化失败，保留原 tag。")]
+    private static partial void LogDbIpInitializationFailure(
+        ILogger logger,
+        Exception exception);
 }
