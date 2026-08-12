@@ -10,23 +10,20 @@ namespace BoxForge.Services;
 public class ConversionService(
     IClashParser clashParser,
     NodeCatalogBuilder nodeCatalogBuilder,
-    NodeCityTagEnricher nodeCityTagEnricher,
     IProxyCacheIdGenerator proxyCacheIdGenerator,
     ISingboxConfigBuilder configBuilder,
     ISingboxConfigValidator configValidator,
     IConfigSerializer configSerializer)
 {
-    public async Task<PreparedConversion> PrepareAsync(
+    public PreparedConversion Prepare(
         string yamlContent,
-        bool strictNodeValidation = false,
-        CancellationToken cancellationToken = default)
+        bool strictNodeValidation = false)
     {
         ClashConfig clashConfig = clashParser.Parse(yamlContent)
             ?? throw new InvalidOperationException("YAML 解析失败，请检查文件内容。");
         NodeCatalog nodes = nodeCatalogBuilder.Build(
             clashConfig,
             strictNodeValidation);
-        nodes = await nodeCityTagEnricher.EnrichAsync(nodes, cancellationToken);
         string cacheId = proxyCacheIdGenerator.Generate(clashConfig.Proxies);
         return new PreparedConversion(nodes, cacheId);
     }

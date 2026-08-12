@@ -30,8 +30,6 @@ public record DirectOutbound : Outbound
 
 public abstract record ProxyOutbound : Outbound
 {
-    [JsonIgnore]
-    public IReadOnlyList<string> ProbeDnsServers { get; init; } = [];
     [JsonPropertyName("server")] public required string Server { get; init; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [JsonPropertyName("server_port")] public int? ServerPort { get; init; }

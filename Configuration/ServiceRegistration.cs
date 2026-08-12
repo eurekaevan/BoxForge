@@ -22,23 +22,6 @@ public static class ServiceRegistration
         services.AddSingleton<IConfigSerializer, ConfigSerializer>();
         services.AddSingleton<IProxyCacheIdGenerator, ProxyCacheIdGenerator>();
         services.AddSingleton<ISingboxConfigValidator, SingboxConfigValidator>();
-        services.AddSingleton(_ => new HttpClient(new SocketsHttpHandler
-        {
-            PooledConnectionLifetime = TimeSpan.FromMinutes(5),
-            PooledConnectionIdleTimeout = TimeSpan.FromMinutes(1)
-        }));
-        services.AddSingleton<IDbIpDatabaseSource, DbIpDatabaseSource>();
-        services.AddSingleton<IDbIpCityReaderFactory, MaxMindDbIpCityReaderFactory>();
-        services.AddSingleton<IDbIpCityDatabase, DbIpCityDatabase>();
-        services.AddSingleton<IIp2LocationCityClient, Ip2LocationCityClient>();
-        services.AddSingleton<IExitIpHttpClientFactory, ExitIpHttpClientFactory>();
-        services.AddSingleton<IExitIpFetcher, ExitIpFetcher>();
-        services.AddSingleton<
-            ISingboxExecutableValidator,
-            SingboxExecutableValidator>();
-        services.AddSingleton<ISingboxProcessLauncher, SingboxProcessLauncher>();
-        services.AddSingleton<IExitIpDetector, SingboxExitIpDetector>();
-
         services.AddTransient<IProxyConverter, TrojanConverter>();
         services.AddTransient<IProxyConverter, VlessConverter>();
         services.AddTransient<IProxyConverter, Hysteria2Converter>();
@@ -46,7 +29,6 @@ public static class ServiceRegistration
         services.AddTransient<IProxyConverter, AnyTlsConverter>();
 
         services.AddTransient<NodeCatalogBuilder>();
-        services.AddTransient<NodeCityTagEnricher>();
         services.AddTransient<ProfilePlanner>();
         services.AddTransient<TailscaleEndpointBuilder>();
         services.AddTransient<DnsProfileBuilder>();

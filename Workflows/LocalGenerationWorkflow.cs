@@ -146,10 +146,9 @@ public sealed partial class LocalGenerationWorkflow(
                 PreparedConversion prepared;
                 try
                 {
-                    prepared = await conversionService.PrepareAsync(
+                    prepared = conversionService.Prepare(
                         yamlContent,
-                        strictNodeValidation: true,
-                        cancellationToken);
+                        strictNodeValidation: true);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
