@@ -31,6 +31,7 @@ public static class ServiceRegistration
         services.AddSingleton<IDbIpCityReaderFactory, MaxMindDbIpCityReaderFactory>();
         services.AddSingleton<IDbIpCityDatabase, DbIpCityDatabase>();
         services.AddSingleton<IIp2LocationCityClient, Ip2LocationCityClient>();
+        services.AddSingleton<IExitIpHttpClientFactory, ExitIpHttpClientFactory>();
         services.AddSingleton<IExitIpFetcher, ExitIpFetcher>();
         services.AddSingleton<
             ISingboxExecutableValidator,

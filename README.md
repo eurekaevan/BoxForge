@@ -133,7 +133,10 @@ BOXFORGE_NodeEnrichment__Enabled=false dotnet run -- generate
 `Exit` 模式在节点转换为 outbound 后顺序测试每个节点。BoxForge
 为当前节点生成只含本地 `mixed` inbound、该节点 outbound 和默认
 路由的临时 sing-box 配置，通过本地 SOCKS 代理访问
-`https://api.ipify.org` 取得真实出口 IP。单节点出口检测超时为 10 秒；
+`https://api.ipify.org` 取得真实出口 IP。IPv4 端点失败时，会在同一
+10 秒节点检测窗口内尝试 `https://api64.ipify.org`。两次都失败时，
+日志只记录 DNS、连接、TLS、代理隧道或 HTTP 状态等安全错误分类，不记录
+原始异常。单节点出口检测超时为 10 秒；
 每次检测结束都会停止 sing-box 并删除临时配置，失败或取消时也会执行
 同样的清理。为保持临时配置最小化，域名型节点 `server` 仅在连接节点时通过
 系统 DNS 解析为 IP；该 IP 不参与城市判断。

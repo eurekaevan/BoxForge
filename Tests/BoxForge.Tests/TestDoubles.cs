@@ -123,6 +123,21 @@ internal sealed class StubHttpHandler(
     }
 }
 
+internal sealed class StubExitIpHttpClientFactory(
+    HttpMessageHandler handler) : IExitIpHttpClientFactory
+{
+    public List<int> SocksPorts { get; } = [];
+
+    public HttpClient Create(int socksPort)
+    {
+        SocksPorts.Add(socksPort);
+        return new HttpClient(handler, disposeHandler: false)
+        {
+            Timeout = Timeout.InfiniteTimeSpan
+        };
+    }
+}
+
 internal sealed class StubExitIpFetcher(IPAddress? exitAddress) : IExitIpFetcher
 {
     public int CallCount { get; private set; }
@@ -175,6 +190,15 @@ internal sealed class ThrowingExitIpFetcher : IExitIpFetcher
         int socksPort,
         CancellationToken cancellationToken = default) =>
         throw new HttpRequestException("ipify failure");
+}
+
+internal sealed class ClassifiedFailureExitIpFetcher(string reason) :
+    IExitIpFetcher
+{
+    public Task<IPAddress?> FetchAsync(
+        int socksPort,
+        CancellationToken cancellationToken = default) =>
+        throw new ExitIpFetchException(reason);
 }
 
 internal sealed class StubSingboxProcessLauncher : ISingboxProcessLauncher

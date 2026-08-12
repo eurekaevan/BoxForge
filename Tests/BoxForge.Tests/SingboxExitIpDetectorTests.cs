@@ -120,6 +120,30 @@ public sealed class SingboxExitIpDetectorTests
         });
     }
 
+    [Test]
+    public async Task ClassifiedIpifyFailureIsLoggedWithoutRawException()
+    {
+        const string reason =
+            "ipv4:ConnectionError/ConnectionReset,universal:timeout";
+        var launcher = new StubSingboxProcessLauncher();
+        var logger = new RecordingLogger<SingboxExitIpDetector>();
+        var detector = CreateDetector(
+            launcher,
+            new ClassifiedFailureExitIpFetcher(reason),
+            logger);
+
+        IPAddress? result = await detector.DetectAsync(CreateOutbound());
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result, Is.Null);
+            Assert.That(launcher.Process.DisposeCount, Is.EqualTo(1));
+            Assert.That(logger.Messages, Has.Some.Contains($"reason={reason}"));
+            Assert.That(logger.Messages, Has.None.Contains("stage=fetch-ipify"));
+            Assert.That(logger.Exceptions, Is.Empty);
+        });
+    }
+
     private static SingboxExitIpDetector CreateDetector(
         ISingboxProcessLauncher launcher,
         IExitIpFetcher fetcher,

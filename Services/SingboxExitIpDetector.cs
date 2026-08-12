@@ -25,6 +25,16 @@ public interface IExitIpFetcher
         CancellationToken cancellationToken = default);
 }
 
+public interface IExitIpHttpClientFactory
+{
+    HttpClient Create(int socksPort);
+}
+
+public sealed class ExitIpFetchException(string reason) : Exception
+{
+    public string Reason { get; } = reason;
+}
+
 public interface IProbeServerResolver
 {
     Task<string> ResolveAsync(
@@ -154,6 +164,11 @@ public sealed partial class SingboxExitIpDetector(
         catch (OperationCanceledException)
         {
             throw new OperationCanceledException(cancellationToken);
+        }
+        catch (ExitIpFetchException ex)
+        {
+            LogIpifyFailure(logger, outbound.Tag, ex.Reason);
+            return null;
         }
         catch (Exception)
         {
@@ -299,6 +314,15 @@ public sealed partial class SingboxExitIpDetector(
         "ipify 未返回有效出口 IP，保留原 tag：{Tag}")]
     private static partial void LogIpifyRejected(ILogger logger, string tag);
 
+    [LoggerMessage(
+        7,
+        LogLevel.Warning,
+        "节点出口 IP 请求失败，reason={Reason}，保留原 tag：{Tag}")]
+    private static partial void LogIpifyFailure(
+        ILogger logger,
+        string tag,
+        string reason);
+
     private sealed record ExitProbeConfig(
         [property: JsonPropertyName("inbounds")] List<Inbound> Inbounds,
         [property: JsonPropertyName("outbounds")] List<Outbound> Outbounds,
@@ -409,38 +433,102 @@ public sealed class ProbeServerResolver : IProbeServerResolver
     }
 }
 
-public sealed class ExitIpFetcher : IExitIpFetcher
+public sealed class ExitIpFetcher(
+    IExitIpHttpClientFactory httpClientFactory) : IExitIpFetcher
 {
-    private static readonly Uri IpifyEndpoint = new("https://api.ipify.org");
+    private static readonly TimeSpan AttemptTimeout = TimeSpan.FromSeconds(4);
+    private static readonly (string Name, Uri Uri)[] IpifyEndpoints =
+    [
+        ("ipv4", new Uri("https://api.ipify.org")),
+        ("universal", new Uri("https://api64.ipify.org"))
+    ];
 
     public async Task<IPAddress?> FetchAsync(
         int socksPort,
         CancellationToken cancellationToken = default)
     {
-        using var handler = new SocketsHttpHandler
+        using HttpClient httpClient = httpClientFactory.Create(socksPort);
+        var failures = new List<string>(IpifyEndpoints.Length);
+        foreach ((string name, Uri endpoint) in IpifyEndpoints)
+        {
+            using var attemptSource = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken);
+            attemptSource.CancelAfter(AttemptTimeout);
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
+                using HttpResponseMessage response = await httpClient.SendAsync(
+                    request,
+                    HttpCompletionOption.ResponseHeadersRead,
+                    attemptSource.Token);
+                if (!response.IsSuccessStatusCode)
+                {
+                    failures.Add($"{name}:http-{(int)response.StatusCode}");
+                    continue;
+                }
+
+                string responseBody = await response.Content.ReadAsStringAsync(
+                    attemptSource.Token);
+                if (IPAddress.TryParse(responseBody.Trim(), out var address))
+                {
+                    return address;
+                }
+
+                failures.Add($"{name}:invalid-response");
+            }
+            catch (OperationCanceledException)
+                when (!cancellationToken.IsCancellationRequested)
+            {
+                failures.Add($"{name}:timeout");
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (HttpRequestException ex)
+            {
+                failures.Add($"{name}:{Classify(ex)}");
+            }
+            catch (Exception)
+            {
+                failures.Add($"{name}:unexpected-error");
+            }
+        }
+
+        throw new ExitIpFetchException(string.Join(',', failures));
+    }
+
+    private static string Classify(HttpRequestException exception)
+    {
+        string reason = exception.HttpRequestError.ToString();
+        Exception? inner = exception.InnerException;
+        while (inner != null)
+        {
+            if (inner is SocketException socketException)
+            {
+                return $"{reason}/{socketException.SocketErrorCode}";
+            }
+
+            inner = inner.InnerException;
+        }
+
+        return reason;
+    }
+}
+
+public sealed class ExitIpHttpClientFactory : IExitIpHttpClientFactory
+{
+    public HttpClient Create(int socksPort)
+    {
+        var handler = new SocketsHttpHandler
         {
             UseProxy = true,
             Proxy = new WebProxy($"socks5://127.0.0.1:{socksPort}")
         };
-        using var httpClient = new HttpClient(handler)
+        return new HttpClient(handler)
         {
             Timeout = Timeout.InfiniteTimeSpan
         };
-        using var request = new HttpRequestMessage(HttpMethod.Get, IpifyEndpoint);
-        using HttpResponseMessage response = await httpClient.SendAsync(
-            request,
-            HttpCompletionOption.ResponseHeadersRead,
-            cancellationToken);
-        if (!response.IsSuccessStatusCode)
-        {
-            return null;
-        }
-
-        string responseBody = await response.Content.ReadAsStringAsync(
-            cancellationToken);
-        return IPAddress.TryParse(responseBody.Trim(), out var address)
-            ? address
-            : null;
     }
 }
 
