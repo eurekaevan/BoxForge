@@ -51,6 +51,8 @@ public interface ISingboxProcessLauncher
 
 public interface ISingboxProcess : IAsyncDisposable
 {
+    string? FailureReason { get; }
+
     Task WaitUntilReadyAsync(CancellationToken cancellationToken = default);
 }
 
@@ -154,7 +156,10 @@ public sealed partial class SingboxExitIpDetector(
         }
         catch (ExitIpFetchException ex)
         {
-            LogIpifyFailure(logger, outbound.Tag, ex.Reason);
+            string reason = process?.FailureReason is { } singboxReason
+                ? $"{ex.Reason},sing-box:{singboxReason}"
+                : ex.Reason;
+            LogIpifyFailure(logger, outbound.Tag, reason);
             return null;
         }
         catch (Exception)
@@ -235,11 +240,13 @@ public sealed partial class SingboxExitIpDetector(
         int socksPort,
         ProxyOutbound outbound)
     {
+        ExitProbeDns? dns = CreateProbeDns(outbound);
         ProxyOutbound probeOutbound = outbound with
         {
-            DomainResolver = null!
+            DomainResolver = dns?.Final!
         };
         return new ExitProbeConfig(
+            dns,
             [
                 new Inbound
                 {
@@ -251,6 +258,44 @@ public sealed partial class SingboxExitIpDetector(
             ],
             [probeOutbound],
             new ExitProbeRoute(probeOutbound.Tag, true));
+    }
+
+    private static ExitProbeDns? CreateProbeDns(ProxyOutbound outbound)
+    {
+        if (IPAddress.TryParse(outbound.Server, out _))
+        {
+            return null;
+        }
+
+        ExitProbeDnsServer server = outbound.ProbeDnsServers
+            .Select(CreateProbeDnsServer)
+            .FirstOrDefault(candidate => candidate != null)
+            ?? new ExitProbeDnsServer(
+                "https",
+                "boxforge-node-dns",
+                "223.5.5.5",
+                null,
+                null,
+                new DnsTlsConfig { ServerName = "dns.alidns.com" });
+        return new ExitProbeDns([server], server.Tag, DnsStrategy.Ipv4Only);
+    }
+
+    private static ExitProbeDnsServer? CreateProbeDnsServer(string value)
+    {
+        if (!Uri.TryCreate(value, UriKind.Absolute, out Uri? uri)
+            || !uri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase)
+            || string.IsNullOrWhiteSpace(uri.Host))
+        {
+            return null;
+        }
+
+        return new ExitProbeDnsServer(
+            "https",
+            "boxforge-node-dns",
+            uri.Host,
+            uri.IsDefaultPort ? null : uri.Port,
+            uri.AbsolutePath == "/" ? null : uri.AbsolutePath,
+            new DnsTlsConfig { ServerName = uri.Host });
     }
 
     [LoggerMessage(
@@ -308,6 +353,8 @@ public sealed partial class SingboxExitIpDetector(
         string reason);
 
     private sealed record ExitProbeConfig(
+        [property: JsonPropertyName("dns")]
+        ExitProbeDns? Dns,
         [property: JsonPropertyName("inbounds")] List<Inbound> Inbounds,
         [property: JsonPropertyName("outbounds")] List<Outbound> Outbounds,
         [property: JsonPropertyName("route")] ExitProbeRoute Route);
@@ -316,6 +363,21 @@ public sealed partial class SingboxExitIpDetector(
         [property: JsonPropertyName("final")] string Final,
         [property: JsonPropertyName("auto_detect_interface")]
         bool AutoDetectInterface);
+
+    private sealed record ExitProbeDns(
+        [property: JsonPropertyName("servers")]
+        List<ExitProbeDnsServer> Servers,
+        [property: JsonPropertyName("final")] string Final,
+        [property: JsonPropertyName("strategy")] DnsStrategy Strategy);
+
+    private sealed record ExitProbeDnsServer(
+        [property: JsonPropertyName("type")] string Type,
+        [property: JsonPropertyName("tag")] string Tag,
+        [property: JsonPropertyName("server")] string Server,
+        [property: JsonPropertyName("server_port")]
+        int? ServerPort,
+        [property: JsonPropertyName("path")] string? Path,
+        [property: JsonPropertyName("tls")] DnsTlsConfig Tls);
 }
 
 public sealed class SingboxExecutableValidator : ISingboxExecutableValidator
@@ -515,6 +577,9 @@ public sealed class SingboxProcessLauncher : ISingboxProcessLauncher
             StartInfo = startInfo,
             EnableRaisingEvents = true
         };
+        var diagnostics = new SingboxProcessDiagnostics();
+        process.OutputDataReceived += diagnostics.Observe;
+        process.ErrorDataReceived += diagnostics.Observe;
         bool started = false;
         try
         {
@@ -526,7 +591,7 @@ public sealed class SingboxProcessLauncher : ISingboxProcessLauncher
             started = true;
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
-            return new SingboxProcess(process, socksPort);
+            return new SingboxProcess(process, socksPort, diagnostics);
         }
         catch
         {
@@ -542,11 +607,16 @@ public sealed class SingboxProcessLauncher : ISingboxProcessLauncher
     }
 }
 
-public sealed class SingboxProcess(Process process, int socksPort) :
+internal sealed class SingboxProcess(
+    Process process,
+    int socksPort,
+    SingboxProcessDiagnostics diagnostics) :
     ISingboxProcess
 {
     private static readonly TimeSpan ReadinessPollInterval =
         TimeSpan.FromMilliseconds(50);
+
+    public string? FailureReason => diagnostics.FailureReason;
 
     public async Task WaitUntilReadyAsync(
         CancellationToken cancellationToken = default)

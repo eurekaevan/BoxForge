@@ -29,12 +29,16 @@ public sealed class SingboxExitIpDetectorTests
         JsonElement inbound = root.GetProperty("inbounds")[0];
         JsonElement outbound = root.GetProperty("outbounds")[0];
         JsonElement route = root.GetProperty("route");
+        JsonElement dns = root.GetProperty("dns");
 
         Assert.Multiple(() =>
         {
             Assert.That(
                 rootProperties,
-                Is.EqualTo(new[] { "inbounds", "outbounds", "route" }));
+                Is.EqualTo(new[] { "dns", "inbounds", "outbounds", "route" }));
+            Assert.That(
+                dns.GetProperty("servers")[0].GetProperty("server").GetString(),
+                Is.EqualTo("223.5.5.5"));
             Assert.That(inbound.GetProperty("type").GetString(), Is.EqualTo("mixed"));
             Assert.That(
                 inbound.GetProperty("listen").GetString(),
@@ -49,7 +53,9 @@ public sealed class SingboxExitIpDetectorTests
             Assert.That(
                 outbound.GetProperty("server").GetString(),
                 Is.EqualTo("node.example"));
-            Assert.That(outbound.TryGetProperty("domain_resolver", out _), Is.False);
+            Assert.That(
+                outbound.GetProperty("domain_resolver").GetString(),
+                Is.EqualTo("boxforge-node-dns"));
             Assert.That(route.GetProperty("final").GetString(), Is.EqualTo("node"));
             Assert.That(launcher.Executable, Is.EqualTo("/opt/sing-box"));
             Assert.That(fetcher.SocksPort, Is.EqualTo(launcher.SocksPort));
@@ -59,6 +65,44 @@ public sealed class SingboxExitIpDetectorTests
             Assert.That(
                 Directory.Exists(Path.GetDirectoryName(launcher.ConfigPath)),
                 Is.False);
+        });
+    }
+
+    [Test]
+    public async Task UsesMatchedClashDnsPolicyForNodeDomain()
+    {
+        var launcher = new StubSingboxProcessLauncher();
+        var detector = CreateDetector(
+            launcher,
+            new StubExitIpFetcher(IPAddress.Parse("203.0.113.1")));
+        ShadowsocksOutbound outbound = CreateOutbound() with
+        {
+            ProbeDnsServers =
+            [
+                "https://resolver.example:8443/dns-query?token=must-not-leak"
+            ]
+        };
+
+        await detector.DetectAsync(outbound);
+
+        using JsonDocument document = JsonDocument.Parse(launcher.ConfigContent!);
+        JsonElement dnsServer = document.RootElement
+            .GetProperty("dns")
+            .GetProperty("servers")[0];
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                dnsServer.GetProperty("server").GetString(),
+                Is.EqualTo("resolver.example"));
+            Assert.That(
+                dnsServer.GetProperty("server_port").GetInt32(),
+                Is.EqualTo(8443));
+            Assert.That(
+                dnsServer.GetProperty("path").GetString(),
+                Is.EqualTo("/dns-query"));
+            Assert.That(
+                launcher.ConfigContent,
+                Does.Not.Contain("must-not-leak"));
         });
     }
 
@@ -140,6 +184,30 @@ public sealed class SingboxExitIpDetectorTests
             Assert.That(launcher.Process.DisposeCount, Is.EqualTo(1));
             Assert.That(logger.Messages, Has.Some.Contains($"reason={reason}"));
             Assert.That(logger.Messages, Has.None.Contains("stage=fetch-ipify"));
+            Assert.That(logger.Exceptions, Is.Empty);
+        });
+    }
+
+    [Test]
+    public async Task FetchFailureIncludesOnlySafeSingboxClassification()
+    {
+        const string fetchReason = "ipv4:ProxyTunnelError,universal:timeout";
+        var launcher = new StubSingboxProcessLauncher();
+        launcher.Process.FailureReason = "tls-certificate";
+        var logger = new RecordingLogger<SingboxExitIpDetector>();
+        var detector = CreateDetector(
+            launcher,
+            new ClassifiedFailureExitIpFetcher(fetchReason),
+            logger);
+
+        IPAddress? result = await detector.DetectAsync(CreateOutbound());
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result, Is.Null);
+            Assert.That(
+                logger.Messages,
+                Has.Some.Contains($"reason={fetchReason},sing-box:tls-certificate"));
             Assert.That(logger.Exceptions, Is.Empty);
         });
     }

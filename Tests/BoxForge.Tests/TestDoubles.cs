@@ -212,6 +212,7 @@ internal sealed class StubSingboxProcess : ISingboxProcess
 {
     public int WaitCount { get; private set; }
     public int DisposeCount { get; private set; }
+    public string? FailureReason { get; set; }
 
     public Task WaitUntilReadyAsync(
         CancellationToken cancellationToken = default)

@@ -58,7 +58,12 @@ public partial class NodeCatalogBuilder(
                 continue;
             }
 
-            var outbound = ((ConvertedNode)result).Outbound;
+            ProxyOutbound convertedOutbound = ((ConvertedNode)result).Outbound;
+            var outbound = convertedOutbound with
+            {
+                ProbeDnsServers = clashConfig.FindNodeDnsServers(
+                    convertedOutbound.Server)
+            };
             if (!string.IsNullOrEmpty(outbound.Tag))
             {
                 names.Add(outbound.Tag);
