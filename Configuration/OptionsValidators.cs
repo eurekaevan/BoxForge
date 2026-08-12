@@ -59,3 +59,28 @@ public sealed class TailscaleOptionsValidator(
         return ValidateOptionsResult.Success;
     }
 }
+
+public sealed class NodeEnrichmentOptionsValidator :
+    IValidateOptions<NodeEnrichmentOptions>
+{
+    public ValidateOptionsResult Validate(
+        string? name,
+        NodeEnrichmentOptions options)
+    {
+        if (!options.Enabled)
+        {
+            return ValidateOptionsResult.Success;
+        }
+
+        if (options.Mode != NodeEnrichmentMode.Exit)
+        {
+            return ValidateOptionsResult.Fail(
+                "节点城市标注仅支持 Exit 模式。");
+        }
+
+        return string.IsNullOrWhiteSpace(options.SingBoxPath)
+            ? ValidateOptionsResult.Fail(
+                "启用节点城市标注时 sing-box 路径不能为空。")
+            : ValidateOptionsResult.Success;
+    }
+}

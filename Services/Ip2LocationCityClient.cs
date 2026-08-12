@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json.Serialization;
 using BoxForge.Configuration;
@@ -67,6 +68,7 @@ public sealed partial class Ip2LocationCityClient :
             using var request = new HttpRequestMessage(
                 HttpMethod.Get,
                 BuildRequestUri(address));
+            AddAuthorizationHeader(request);
             using HttpResponseMessage response = await httpClient.SendAsync(
                 request,
                 HttpCompletionOption.ResponseHeadersRead,
@@ -111,16 +113,23 @@ public sealed partial class Ip2LocationCityClient :
         }
     }
 
-    private Uri BuildRequestUri(IPAddress address)
+    private static Uri BuildRequestUri(IPAddress address)
     {
-        string apiKey = options.Ip2LocationApiKey.Trim();
-        string query = string.IsNullOrEmpty(apiKey)
-            ? $"ip={Uri.EscapeDataString(address.ToString())}"
-            : $"key={Uri.EscapeDataString(apiKey)}&ip={Uri.EscapeDataString(address.ToString())}";
         return new UriBuilder("https://api.ip2location.io/")
         {
-            Query = query
+            Query = $"ip={Uri.EscapeDataString(address.ToString())}"
         }.Uri;
+    }
+
+    private void AddAuthorizationHeader(HttpRequestMessage request)
+    {
+        string apiKey = options.Ip2LocationApiKey.Trim();
+        if (!string.IsNullOrEmpty(apiKey))
+        {
+            request.Headers.Authorization = new AuthenticationHeaderValue(
+                "Bearer",
+                apiKey);
+        }
     }
 
     [LoggerMessage(

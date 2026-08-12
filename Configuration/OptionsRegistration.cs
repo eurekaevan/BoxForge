@@ -80,6 +80,17 @@ public static class OptionsRegistration
                 "NodeEnrichment:Enabled",
                 "NodeEnrichmentEnabled",
                 true);
+            string mode = Read(
+                configuration,
+                "NodeEnrichment:Mode",
+                "NodeEnrichmentMode",
+                nameof(NodeEnrichmentMode.Exit));
+            options.Mode = Enum.TryParse(
+                mode,
+                ignoreCase: true,
+                out NodeEnrichmentMode parsedMode)
+                    ? parsedMode
+                    : (NodeEnrichmentMode)(-1);
             options.Ip2LocationApiKey = Read(
                 configuration,
                 "NodeEnrichment:Ip2LocationApiKey",
@@ -90,10 +101,18 @@ public static class OptionsRegistration
                 "NodeEnrichment:DbIpDatabaseUrl",
                 "NodeEnrichmentDbIpDatabaseUrl",
                 NodeEnrichmentOptions.DefaultDbIpDatabaseUrl);
+            options.SingBoxPath = Read(
+                configuration,
+                "NodeEnrichment:SingBoxPath",
+                "NodeEnrichmentSingBoxPath",
+                "sing-box");
         });
 
         services.AddSingleton<IValidateOptions<SingboxOptions>, SingboxOptionsValidator>();
         services.AddSingleton<IValidateOptions<TailscaleOptions>, TailscaleOptionsValidator>();
+        services.AddSingleton<
+            IValidateOptions<NodeEnrichmentOptions>,
+            NodeEnrichmentOptionsValidator>();
 
         return services;
     }

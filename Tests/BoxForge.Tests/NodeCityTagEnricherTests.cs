@@ -14,60 +14,59 @@ namespace BoxForge.Tests;
 public sealed class NodeCityTagEnricherTests
 {
     [Test]
-    public async Task MultipleAddressesAreDeduplicatedPerSourceAndMergedInFixedOrder()
+    public async Task UsesDetectedExitInsteadOfNodeServerAndMergesFixedOrder()
     {
-        var ipv4 = IPAddress.Parse("203.0.113.1");
-        var ipv6 = IPAddress.Parse("2001:db8::1");
-        var resolver = new StubAddressResolver([ipv6, ipv4, ipv4]);
-        var dbIp = new StubDbIpCityDatabase(new Dictionary<IPAddress, string?>
-        {
-            [ipv4] = " Tokyo (Tokyo Prefecture) ",
-            [ipv6] = "Singapore（Central）"
-        });
-        var ip2Location = new StubIp2LocationCityClient(
-            new Dictionary<IPAddress, string?>
+        var serverAddress = IPAddress.Parse("198.51.100.10");
+        var exitAddress = IPAddress.Parse("203.0.113.1");
+        var detector = new StubExitIpDetector([exitAddress]);
+        var enricher = CreateEnricher(
+            detector,
+            new StubDbIpCityDatabase(new Dictionary<IPAddress, string?>
             {
-                [ipv4] = "tokyo",
-                [ipv6] = "Osaka"
-            });
-        var enricher = CreateEnricher(resolver, dbIp, ip2Location);
+                [exitAddress] = " Tokyo (Tokyo Prefecture) "
+            }),
+            new StubIp2LocationCityClient(
+                new Dictionary<IPAddress, string?>
+                {
+                    [exitAddress] = "Osaka"
+                }));
 
         NodeCatalog result = await enricher.EnrichAsync(
-            CreateCatalog("node", "example.test"));
+            CreateCatalog(CreateOutbound("node", serverAddress.ToString())));
 
         Assert.Multiple(() =>
         {
+            Assert.That(result.Outbounds[0].Tag, Is.EqualTo("node>Tokyo\\Osaka"));
             Assert.That(
-                result.Outbounds[0].Tag,
-                Is.EqualTo("node>Tokyo/Singapore\\tokyo/Osaka"));
-            Assert.That(result.Outbounds[0].Server, Is.EqualTo("example.test"));
+                result.Outbounds[0].Server,
+                Is.EqualTo(serverAddress.ToString()));
+            Assert.That(result.Names, Is.EqualTo(new[] { "node>Tokyo\\Osaka" }));
+            Assert.That(detector.CallCount, Is.EqualTo(1));
             Assert.That(
-                result.Names,
-                Is.EqualTo(new[] { "node>Tokyo/Singapore\\tokyo/Osaka" }));
-            Assert.That(resolver.CallCount, Is.EqualTo(1));
+                detector.Outbounds[0].Server,
+                Is.EqualTo(serverAddress.ToString()));
         });
     }
 
     [Test]
     public async Task EqualCitiesUseDbIpCasingAndOneSuffix()
     {
-        var address = IPAddress.Parse("203.0.113.1");
+        var exitAddress = IPAddress.Parse("203.0.113.1");
         var enricher = CreateEnricher(
-            new ThrowingAddressResolver(),
+            new StubExitIpDetector([exitAddress]),
             new StubDbIpCityDatabase(new Dictionary<IPAddress, string?>
             {
-                [address] = " Tokyo (Japan) "
+                [exitAddress] = " Tokyo (Japan) "
             }),
             new StubIp2LocationCityClient(new Dictionary<IPAddress, string?>
             {
-                [address] = "tokyo"
+                [exitAddress] = "tokyo"
             }));
 
         NodeCatalog result = await enricher.EnrichAsync(
-            CreateCatalog("node", address.ToString()));
+            CreateCatalog(CreateOutbound("node", "node.example")));
 
         Assert.That(result.Outbounds[0].Tag, Is.EqualTo("node>Tokyo"));
-        Assert.That(result.Outbounds[0].Server, Is.EqualTo(address.ToString()));
     }
 
     [TestCase(SourceFailure.DbIp, "node>Tokyo")]
@@ -77,29 +76,29 @@ public sealed class NodeCityTagEnricherTests
         SourceFailure failure,
         string expectedTag)
     {
-        var address = IPAddress.Parse("203.0.113.1");
+        var exitAddress = IPAddress.Parse("203.0.113.1");
         IDbIpCityDatabase dbIp = failure is SourceFailure.DbIp or SourceFailure.Both
             ? new ThrowingDbIpCityDatabase()
             : new StubDbIpCityDatabase(new Dictionary<IPAddress, string?>
             {
-                [address] = "Tokyo"
+                [exitAddress] = "Tokyo"
             });
         IIp2LocationCityClient ip2Location = failure is
             SourceFailure.Ip2Location or SourceFailure.Both
             ? new ThrowingIp2LocationCityClient()
             : new StubIp2LocationCityClient(new Dictionary<IPAddress, string?>
             {
-                [address] = "Tokyo"
+                [exitAddress] = "Tokyo"
             });
         var logger = new RecordingLogger<NodeCityTagEnricher>();
         var enricher = CreateEnricher(
-            new ThrowingAddressResolver(),
+            new StubExitIpDetector([exitAddress]),
             dbIp,
             ip2Location,
             logger: logger);
 
         NodeCatalog result = await enricher.EnrichAsync(
-            CreateCatalog("node", address.ToString()));
+            CreateCatalog(CreateOutbound("node", "node.example")));
 
         Assert.That(result.Outbounds[0].Tag, Is.EqualTo(expectedTag));
         Assert.That(logger.Levels, Does.Contain(LogLevel.Warning));
@@ -108,24 +107,23 @@ public sealed class NodeCityTagEnricherTests
     [Test]
     public async Task DbIpInitializationFailureUsesIp2LocationResult()
     {
-        var address = IPAddress.Parse("203.0.113.1");
+        var exitAddress = IPAddress.Parse("203.0.113.1");
         var logger = new RecordingLogger<NodeCityTagEnricher>();
         var enricher = CreateEnricher(
-            new ThrowingAddressResolver(),
+            new StubExitIpDetector([exitAddress]),
             new ThrowingInitializingDbIpCityDatabase(),
             new StubIp2LocationCityClient(new Dictionary<IPAddress, string?>
             {
-                [address] = "Tokyo"
+                [exitAddress] = "Tokyo"
             }),
             logger: logger);
 
         NodeCatalog result = await enricher.EnrichAsync(
-            CreateCatalog("node", address.ToString()));
+            CreateCatalog(CreateOutbound("node", "node.example")));
 
         Assert.Multiple(() =>
         {
             Assert.That(result.Outbounds[0].Tag, Is.EqualTo("node>Tokyo"));
-            Assert.That(logger.Levels, Does.Contain(LogLevel.Warning));
             Assert.That(
                 logger.Messages,
                 Has.Some.Contains("DB-IP City Lite 数据库初始化失败"));
@@ -133,87 +131,100 @@ public sealed class NodeCityTagEnricherTests
     }
 
     [Test]
-    public async Task MissingValuesUseAvailableSourceAndIgnoreDash()
+    public async Task MissingCitiesKeepOriginalTag()
     {
-        var first = IPAddress.Parse("203.0.113.1");
-        var second = IPAddress.Parse("203.0.113.2");
+        var exitAddress = IPAddress.Parse("203.0.113.1");
         var enricher = CreateEnricher(
-            new StubAddressResolver([first, second]),
+            new StubExitIpDetector([exitAddress]),
             new StubDbIpCityDatabase(new Dictionary<IPAddress, string?>
             {
-                [first] = "-",
-                [second] = "  "
+                [exitAddress] = " - "
             }),
             new StubIp2LocationCityClient(new Dictionary<IPAddress, string?>
             {
-                [first] = " Singapore ",
-                [second] = "singapore"
+                [exitAddress] = null
             }));
 
         NodeCatalog result = await enricher.EnrichAsync(
-            CreateCatalog("node", "example.test"));
-
-        Assert.That(result.Outbounds[0].Tag, Is.EqualTo("node>Singapore"));
-    }
-
-    [Test]
-    public async Task BothSourcesWithoutCitiesKeepOriginalTag()
-    {
-        var address = IPAddress.Parse("203.0.113.1");
-        var enricher = CreateEnricher(
-            new ThrowingAddressResolver(),
-            new StubDbIpCityDatabase(new Dictionary<IPAddress, string?>
-            {
-                [address] = " - "
-            }),
-            new StubIp2LocationCityClient(new Dictionary<IPAddress, string?>
-            {
-                [address] = null
-            }));
-
-        NodeCatalog result = await enricher.EnrichAsync(
-            CreateCatalog("node", address.ToString()));
+            CreateCatalog(CreateOutbound("node", "node.example")));
 
         Assert.That(result.Outbounds[0].Tag, Is.EqualTo("node"));
     }
 
     [Test]
-    public async Task FinalTagsFlowIntoSelectorsWithoutChangingServers()
+    public async Task SameExitIsProbedPerNodeButGeolocationIsCachedAndSequential()
     {
-        var address = IPAddress.Parse("203.0.113.1");
-        var enricher = CreateEnricher(
-            new ThrowingAddressResolver(),
-            new StubDbIpCityDatabase(new Dictionary<IPAddress, string?>
+        var exitAddress = IPAddress.Parse("203.0.113.1");
+        var detector = new StubExitIpDetector(
+            [exitAddress, exitAddress],
+            TimeSpan.FromMilliseconds(10));
+        var dbIp = new StubDbIpCityDatabase(new Dictionary<IPAddress, string?>
+        {
+            [exitAddress] = "Tokyo"
+        });
+        var ip2Location = new StubIp2LocationCityClient(
+            new Dictionary<IPAddress, string?>
             {
-                [address] = "Tokyo"
-            }),
-            new StubIp2LocationCityClient(new Dictionary<IPAddress, string?>
-            {
-                [address] = "Tokyo"
-            }));
-        NodeCatalog nodes = await enricher.EnrichAsync(
-            CreateCatalog("node", address.ToString()));
+                [exitAddress] = "Tokyo"
+            });
+        var enricher = CreateEnricher(detector, dbIp, ip2Location);
 
-        var plan = new ProfilePlanner(Options.Create(new SingboxOptions()))
-            .Plan(nodes);
+        NodeCatalog result = await enricher.EnrichAsync(CreateCatalog(
+            CreateOutbound("first", "first.example"),
+            CreateOutbound("second", "second.example")));
 
         Assert.Multiple(() =>
         {
-            Assert.That(nodes.Outbounds[0].Server, Is.EqualTo(address.ToString()));
-            Assert.That(plan.MainOutbound.Outbounds, Does.Contain("node>Tokyo"));
-            Assert.That(plan.MainOutbound.Outbounds, Does.Not.Contain("node"));
+            Assert.That(detector.CallCount, Is.EqualTo(2));
+            Assert.That(detector.MaximumConcurrency, Is.EqualTo(1));
+            Assert.That(dbIp.InitializeCount, Is.EqualTo(1));
+            Assert.That(dbIp.LookupCount, Is.EqualTo(1));
+            Assert.That(ip2Location.CallCount, Is.EqualTo(1));
             Assert.That(
-                plan.ServiceOutbounds.SelectMany(outbound => outbound.Outbounds),
-                Does.Contain("node>Tokyo"));
+                result.Names,
+                Is.EqualTo(new[] { "first>Tokyo", "second>Tokyo" }));
         });
     }
 
     [Test]
-    public async Task DisabledEnrichmentDoesNotResolveOrQuery()
+    public async Task FinalTagsFlowIntoOutboundAndEveryGeneratedSelector()
     {
-        NodeCatalog catalog = CreateCatalog("node", "example.test");
+        var exitAddress = IPAddress.Parse("203.0.113.1");
         var enricher = CreateEnricher(
-            new ThrowingAddressResolver(),
+            new StubExitIpDetector([exitAddress]),
+            new StubDbIpCityDatabase(new Dictionary<IPAddress, string?>
+            {
+                [exitAddress] = "Tokyo"
+            }),
+            new StubIp2LocationCityClient(new Dictionary<IPAddress, string?>
+            {
+                [exitAddress] = "Tokyo"
+            }));
+        NodeCatalog nodes = await enricher.EnrichAsync(
+            CreateCatalog(CreateOutbound("node", "node.example")));
+
+        ProfilePlan plan = new ProfilePlanner(Options.Create(new SingboxOptions()))
+            .Plan(nodes);
+        IEnumerable<string> selectorTargets = plan.RegionOutbounds
+            .Concat(plan.ServiceOutbounds)
+            .Append(plan.MainOutbound)
+            .SelectMany(outbound => outbound.Outbounds);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(nodes.Outbounds[0].Tag, Is.EqualTo("node>Tokyo"));
+            Assert.That(selectorTargets, Does.Contain("node>Tokyo"));
+            Assert.That(selectorTargets, Does.Not.Contain("node"));
+        });
+    }
+
+    [Test]
+    public async Task DisabledEnrichmentDoesNotProbeOrQuery()
+    {
+        NodeCatalog catalog = CreateCatalog(
+            CreateOutbound("node", "node.example"));
+        var enricher = CreateEnricher(
+            new ThrowingExitIpDetector(),
             new ThrowingDbIpCityDatabase(),
             new ThrowingIp2LocationCityClient(),
             enabled: false);
@@ -224,25 +235,40 @@ public sealed class NodeCityTagEnricherTests
     }
 
     [Test]
-    public async Task DnsFailureKeepsOriginalTagAndDoesNotFailGeneration()
+    public async Task FailedExitDetectionKeepsOriginalTagWithoutGeoLookup()
     {
-        var logger = new RecordingLogger<NodeCityTagEnricher>();
+        var dbIp = new StubDbIpCityDatabase(
+            new Dictionary<IPAddress, string?>());
+        var ip2Location = new StubIp2LocationCityClient(
+            new Dictionary<IPAddress, string?>());
         var enricher = CreateEnricher(
-            new ThrowingAddressResolver(),
-            new ThrowingDbIpCityDatabase(),
-            new ThrowingIp2LocationCityClient(),
-            logger: logger);
+            new StubExitIpDetector([null]),
+            dbIp,
+            ip2Location);
 
         NodeCatalog result = await enricher.EnrichAsync(
-            CreateCatalog("node", "example.test"));
+            CreateCatalog(CreateOutbound("node", "node.example")));
 
-        Assert.That(result.Outbounds[0].Tag, Is.EqualTo("node"));
-        Assert.That(logger.Levels, Does.Contain(LogLevel.Warning));
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Outbounds[0].Tag, Is.EqualTo("node"));
+            Assert.That(dbIp.InitializeCount, Is.Zero);
+            Assert.That(ip2Location.CallCount, Is.Zero);
+        });
     }
 
-    private static NodeCatalog CreateCatalog(string tag, string server)
-    {
-        var outbound = new ShadowsocksOutbound
+    private static NodeCatalog CreateCatalog(params ProxyOutbound[] outbounds) =>
+        new(
+            outbounds,
+            [.. outbounds.Select(outbound => outbound.Tag)],
+            [.. outbounds
+                .Select(outbound => outbound.Server)
+                .Where(server => !IPAddress.TryParse(server, out _))
+                .Distinct(StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal)]);
+
+    private static ShadowsocksOutbound CreateOutbound(string tag, string server) =>
+        new()
         {
             Tag = tag,
             Server = server,
@@ -250,21 +276,20 @@ public sealed class NodeCityTagEnricherTests
             Method = "aes-128-gcm",
             Password = "secret"
         };
-        return new NodeCatalog(
-            [outbound],
-            [outbound.Tag],
-            IPAddress.TryParse(server, out _) ? [] : [server]);
-    }
 
     private static NodeCityTagEnricher CreateEnricher(
-        IHostAddressResolver resolver,
+        IExitIpDetector exitIpDetector,
         IDbIpCityDatabase dbIp,
         IIp2LocationCityClient ip2Location,
         bool enabled = true,
         ILogger<NodeCityTagEnricher>? logger = null) =>
         new(
-            Options.Create(new NodeEnrichmentOptions { Enabled = enabled }),
-            resolver,
+            Options.Create(new NodeEnrichmentOptions
+            {
+                Enabled = enabled,
+                Mode = NodeEnrichmentMode.Exit
+            }),
+            exitIpDetector,
             dbIp,
             ip2Location,
             logger ?? NullLogger<NodeCityTagEnricher>.Instance);

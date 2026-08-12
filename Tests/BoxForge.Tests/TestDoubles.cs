@@ -1,35 +1,69 @@
 using System.Net;
-using BoxForge.Builders.Components;
+using BoxForge.Models.Singbox;
 using BoxForge.Services;
 using Microsoft.Extensions.Logging;
 
 namespace BoxForge.Tests;
 
-internal sealed class StubAddressResolver(
-    IReadOnlyList<IPAddress> addresses) : IHostAddressResolver
+internal sealed class StubExitIpDetector(
+    IReadOnlyList<IPAddress?> exitAddresses,
+    TimeSpan? delay = null) : IExitIpDetector
 {
     public int CallCount { get; private set; }
+    public int MaximumConcurrency { get; private set; }
+    public List<ProxyOutbound> Outbounds { get; } = [];
+    private int activeCount;
 
-    public IReadOnlyList<IPAddress> Resolve(string hostName)
+    public async Task<IPAddress?> DetectAsync(
+        ProxyOutbound outbound,
+        CancellationToken cancellationToken = default)
     {
+        int index = CallCount;
         CallCount++;
-        return addresses;
+        Outbounds.Add(outbound);
+        int active = Interlocked.Increment(ref activeCount);
+        MaximumConcurrency = Math.Max(MaximumConcurrency, active);
+        try
+        {
+            if (delay.HasValue)
+            {
+                await Task.Delay(delay.Value, cancellationToken);
+            }
+
+            return exitAddresses[index];
+        }
+        finally
+        {
+            Interlocked.Decrement(ref activeCount);
+        }
     }
 }
 
-internal sealed class ThrowingAddressResolver : IHostAddressResolver
+internal sealed class ThrowingExitIpDetector : IExitIpDetector
 {
-    public IReadOnlyList<IPAddress> Resolve(string hostName) =>
-        throw new InvalidOperationException("DNS failure");
+    public Task<IPAddress?> DetectAsync(
+        ProxyOutbound outbound,
+        CancellationToken cancellationToken = default) =>
+        throw new InvalidOperationException("Exit detection must not run");
 }
 
 internal sealed class StubDbIpCityDatabase(
     IReadOnlyDictionary<IPAddress, string?> cities) : IDbIpCityDatabase
 {
-    public Task InitializeAsync(CancellationToken cancellationToken = default) =>
-        Task.CompletedTask;
+    public int InitializeCount { get; private set; }
+    public int LookupCount { get; private set; }
 
-    public string? FindEnglishCity(IPAddress address) => cities[address];
+    public Task InitializeAsync(CancellationToken cancellationToken = default)
+    {
+        InitializeCount++;
+        return Task.CompletedTask;
+    }
+
+    public string? FindEnglishCity(IPAddress address)
+    {
+        LookupCount++;
+        return cities[address];
+    }
 }
 
 internal sealed class ThrowingDbIpCityDatabase : IDbIpCityDatabase
@@ -53,10 +87,15 @@ internal sealed class ThrowingInitializingDbIpCityDatabase : IDbIpCityDatabase
 internal sealed class StubIp2LocationCityClient(
     IReadOnlyDictionary<IPAddress, string?> cities) : IIp2LocationCityClient
 {
+    public int CallCount { get; private set; }
+
     public Task<string?> FindCityAsync(
         IPAddress address,
-        CancellationToken cancellationToken = default) =>
-        Task.FromResult(cities[address]);
+        CancellationToken cancellationToken = default)
+    {
+        CallCount++;
+        return Task.FromResult(cities[address]);
+    }
 }
 
 internal sealed class ThrowingIp2LocationCityClient : IIp2LocationCityClient
@@ -71,14 +110,95 @@ internal sealed class StubHttpHandler(
     Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> handler) :
     HttpMessageHandler
 {
-    public int CallCount { get; private set; }
+    private int callCount;
+
+    public int CallCount => Volatile.Read(ref callCount);
 
     protected override Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request,
         CancellationToken cancellationToken)
     {
-        CallCount++;
+        Interlocked.Increment(ref callCount);
         return handler(request, cancellationToken);
+    }
+}
+
+internal sealed class StubExitIpFetcher(IPAddress? exitAddress) : IExitIpFetcher
+{
+    public int CallCount { get; private set; }
+    public int SocksPort { get; private set; }
+
+    public Task<IPAddress?> FetchAsync(
+        int socksPort,
+        CancellationToken cancellationToken = default)
+    {
+        CallCount++;
+        SocksPort = socksPort;
+        return Task.FromResult(exitAddress);
+    }
+}
+
+internal sealed class StubProbeServerResolver(string resolvedServer) :
+    IProbeServerResolver
+{
+    public int CallCount { get; private set; }
+    public string? OriginalServer { get; private set; }
+
+    public Task<string> ResolveAsync(
+        string server,
+        CancellationToken cancellationToken = default)
+    {
+        CallCount++;
+        OriginalServer = server;
+        return Task.FromResult(resolvedServer);
+    }
+}
+
+internal sealed class ThrowingExitIpFetcher : IExitIpFetcher
+{
+    public Task<IPAddress?> FetchAsync(
+        int socksPort,
+        CancellationToken cancellationToken = default) =>
+        throw new HttpRequestException("ipify failure");
+}
+
+internal sealed class StubSingboxProcessLauncher : ISingboxProcessLauncher
+{
+    public StubSingboxProcess Process { get; } = new();
+    public string? Executable { get; private set; }
+    public string? ConfigPath { get; private set; }
+    public string? ConfigContent { get; private set; }
+    public int SocksPort { get; private set; }
+
+    public ISingboxProcess Start(
+        string executable,
+        string configPath,
+        int socksPort)
+    {
+        Executable = executable;
+        ConfigPath = configPath;
+        ConfigContent = File.ReadAllText(configPath);
+        SocksPort = socksPort;
+        return Process;
+    }
+}
+
+internal sealed class StubSingboxProcess : ISingboxProcess
+{
+    public int WaitCount { get; private set; }
+    public int DisposeCount { get; private set; }
+
+    public Task WaitUntilReadyAsync(
+        CancellationToken cancellationToken = default)
+    {
+        WaitCount++;
+        return Task.CompletedTask;
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        DisposeCount++;
+        return ValueTask.CompletedTask;
     }
 }
 

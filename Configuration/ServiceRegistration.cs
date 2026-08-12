@@ -31,7 +31,10 @@ public static class ServiceRegistration
         services.AddSingleton<IDbIpCityReaderFactory, MaxMindDbIpCityReaderFactory>();
         services.AddSingleton<IDbIpCityDatabase, DbIpCityDatabase>();
         services.AddSingleton<IIp2LocationCityClient, Ip2LocationCityClient>();
-        services.AddSingleton<IHostAddressResolver, HostAddressResolver>();
+        services.AddSingleton<IExitIpFetcher, ExitIpFetcher>();
+        services.AddSingleton<IProbeServerResolver, ProbeServerResolver>();
+        services.AddSingleton<ISingboxProcessLauncher, SingboxProcessLauncher>();
+        services.AddSingleton<IExitIpDetector, SingboxExitIpDetector>();
 
         services.AddTransient<IProxyConverter, TrojanConverter>();
         services.AddTransient<IProxyConverter, VlessConverter>();

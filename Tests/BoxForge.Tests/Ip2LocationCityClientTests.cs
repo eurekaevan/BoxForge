@@ -15,9 +15,13 @@ public sealed class Ip2LocationCityClientTests
     {
         const string apiKey = "secret-key";
         Uri? requestUri = null;
+        string? authorizationScheme = null;
+        string? authorizationParameter = null;
         var handler = new StubHttpHandler((request, _) =>
         {
             requestUri = request.RequestUri;
+            authorizationScheme = request.Headers.Authorization?.Scheme;
+            authorizationParameter = request.Headers.Authorization?.Parameter;
             return Task.FromResult(JsonResponse("{\"city_name\":\"Tokyo\"}"));
         });
         var client = CreateClient(handler, apiKey);
@@ -32,9 +36,12 @@ public sealed class Ip2LocationCityClientTests
             Assert.That(cities, Is.EqualTo(new[] { "Tokyo", "Tokyo" }));
             Assert.That(handler.CallCount, Is.EqualTo(1));
             Assert.That(requestUri!.Host, Is.EqualTo("api.ip2location.io"));
+            Assert.That(requestUri.Query, Does.Not.Contain(apiKey));
             Assert.That(
                 Uri.UnescapeDataString(requestUri.Query),
-                Does.Contain("key=secret-key").And.Contain("ip=203.0.113.1"));
+                Does.Not.Contain("key=").And.Contain("ip=203.0.113.1"));
+            Assert.That(authorizationScheme, Is.EqualTo("Bearer"));
+            Assert.That(authorizationParameter, Is.EqualTo(apiKey));
         });
     }
 
@@ -42,9 +49,11 @@ public sealed class Ip2LocationCityClientTests
     public async Task EmptyApiKeyOmitsKeyParameter()
     {
         Uri? requestUri = null;
+        bool hasAuthorization = true;
         var handler = new StubHttpHandler((request, _) =>
         {
             requestUri = request.RequestUri;
+            hasAuthorization = request.Headers.Authorization != null;
             return Task.FromResult(JsonResponse("{\"city_name\":\"Tokyo\"}"));
         });
         var client = CreateClient(handler, "  ");
@@ -56,6 +65,7 @@ public sealed class Ip2LocationCityClientTests
         {
             Assert.That(city, Is.EqualTo("Tokyo"));
             Assert.That(requestUri!.Query, Does.Not.Contain("key="));
+            Assert.That(hasAuthorization, Is.False);
             Assert.That(
                 Uri.UnescapeDataString(requestUri.Query),
                 Does.Contain("ip=2001:db8::1"));

@@ -95,8 +95,10 @@ dotnet run -- generate \
 - `BOXFORGE_TailscaleExitNode`
 - `BOXFORGE_TailscaleExitNodeAllowLanAccess`
 - `BOXFORGE_NodeEnrichment__Enabled`（默认 `true`）
+- `BOXFORGE_NodeEnrichment__Mode`（默认 `Exit`）
 - `BOXFORGE_NodeEnrichment__Ip2LocationApiKey`（可选）
 - `BOXFORGE_NodeEnrichment__DbIpDatabaseUrl`（可选）
+- `BOXFORGE_NodeEnrichment__SingBoxPath`（默认 `sing-box`）
 
 也支持分组形式；嵌套键使用双下划线，例如：
 
@@ -107,11 +109,29 @@ dotnet run -- generate --platform Android
 
 新旧形式同时存在时，分组形式优先。
 
-节点城市标注默认启用；可显式关闭：
+节点城市标注默认开启，使用真实出口 IP 检测。完整配置示例：
+
+```bash
+BOXFORGE_NodeEnrichment__Enabled=true \
+BOXFORGE_NodeEnrichment__Mode=Exit \
+BOXFORGE_NodeEnrichment__Ip2LocationApiKey=... \
+BOXFORGE_NodeEnrichment__SingBoxPath=sing-box \
+dotnet run -- generate
+```
+
+如需关闭：
 
 ```bash
 BOXFORGE_NodeEnrichment__Enabled=false dotnet run -- generate
 ```
+
+`Exit` 模式在节点转换为 outbound 后顺序测试每个节点。BoxForge
+为当前节点生成只含本地 `mixed` inbound、该节点 outbound 和默认
+路由的临时 sing-box 配置，通过本地 SOCKS 代理访问
+`https://api.ipify.org` 取得真实出口 IP。单节点出口检测超时为 10 秒；
+每次检测结束都会停止 sing-box 并删除临时配置，失败或取消时也会执行
+同样的清理。为保持临时配置最小化，域名型节点 `server` 仅在连接节点时通过
+系统 DNS 解析为 IP；该 IP 不参与城市判断。
 
 启用时，BoxForge 从以下默认地址下载 DB-IP City Lite MMDB：
 
@@ -128,23 +148,25 @@ BOXFORGE_NodeEnrichment__DbIpDatabaseUrl=https://example.com/dbip-city-lite.mmdb
 dotnet run -- generate
 ```
 
-同一批节点的 `server` 会解析为 A/AAAA 地址并全局去重，然后同时查询 DB-IP
-City Lite 和 IP2Location.io：
+真实出口 IP 会分别查询 DB-IP City Lite 和 IP2Location.io：
 
 ```text
-https://api.ip2location.io/?key={ApiKey}&ip={IP}
+https://api.ip2location.io/?ip={IP}
 ```
 
-`Ip2LocationApiKey` 为空时省略 `key` 参数，使用 IP2Location.io 每日 1000 次的
-无 Key 接口。相同 IP 在一次 `generate` 中只请求一次，最多同时发出 4 个请求；
-API Key 不会写入日志或异常，也不会输出完整请求 URL。
+`Ip2LocationApiKey` 为空时不发送认证请求头，使用 IP2Location.io 每日 1000 次的
+无 Key 接口。配置 Key 时通过 `Authorization: Bearer` 请求头发送，不放入 URL；
+API Key 不会写入日志或异常。相同出口 IP 在一次 `generate` 中只查询
+一次城市，但不同节点仍会分别启动 sing-box 并检测各自出口。
 
-两个来源均取英文城市名并 `Trim`；DB-IP 城市名还会移除末尾括号内容。每个来源
-内部按 `OrdinalIgnoreCase` 去重，多 IP 的不同城市以 `/` 连接。两个来源结果相同
-时 tag 为 `原tag>City`；不同时固定为 `原tag>DbIpCity\Ip2LocationCity`；只有一个
+两个来源均取英文城市名并 `Trim`；DB-IP 城市名还会移除末尾括号内容。
+两个来源结果相同时 tag 为 `原tag>City`；不同时固定为
+`原tag>DbIpCity\Ip2LocationCity`；只有一个
 来源有结果时使用该结果，两者都没有时保留原 tag。节点 `server` 不会改变，最终
-tag 会同步用于 outbound、selector 和服务分组。DNS、下载、解压、数据库或 API
-任一来源失败只输出 warning，不会阻断另一来源或导致配置生成失败。
+tag 会在生成分组前同步写入 outbound 和节点名称目录，因此 selector 及由该目录
+构建的 urltest 都不会保留旧 tag（当前 profile 未生成 urltest）。出口检测、下载、
+解压、数据库或 API 任一环节
+失败只输出 warning，不会阻断其他节点或导致配置生成失败。
 
 免费 IP2Location.io 查询的署名：IP geolocation by IP2Location.io
 

@@ -1,0 +1,403 @@
+using System.Diagnostics;
+using System.Net;
+using System.Net.Sockets;
+using System.Text.Encodings.Web;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using BoxForge.Configuration;
+using BoxForge.Models.Singbox;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+
+namespace BoxForge.Services;
+
+public interface IExitIpDetector
+{
+    Task<IPAddress?> DetectAsync(
+        ProxyOutbound outbound,
+        CancellationToken cancellationToken = default);
+}
+
+public interface IExitIpFetcher
+{
+    Task<IPAddress?> FetchAsync(
+        int socksPort,
+        CancellationToken cancellationToken = default);
+}
+
+public interface IProbeServerResolver
+{
+    Task<string> ResolveAsync(
+        string server,
+        CancellationToken cancellationToken = default);
+}
+
+public interface ISingboxProcessLauncher
+{
+    ISingboxProcess Start(string executable, string configPath, int socksPort);
+}
+
+public interface ISingboxProcess : IAsyncDisposable
+{
+    Task WaitUntilReadyAsync(CancellationToken cancellationToken = default);
+}
+
+public sealed partial class SingboxExitIpDetector(
+    IOptions<NodeEnrichmentOptions> options,
+    IProbeServerResolver serverResolver,
+    ISingboxProcessLauncher processLauncher,
+    IExitIpFetcher exitIpFetcher,
+    ILogger<SingboxExitIpDetector> logger) : IExitIpDetector
+{
+    private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(10);
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        WriteIndented = true,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    };
+
+    private readonly NodeEnrichmentOptions enrichmentOptions = options.Value;
+
+    public async Task<IPAddress?> DetectAsync(
+        ProxyOutbound outbound,
+        CancellationToken cancellationToken = default)
+    {
+        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken);
+        timeoutSource.CancelAfter(ProbeTimeout);
+        CancellationToken probeToken = timeoutSource.Token;
+
+        string? temporaryDirectory = null;
+        ISingboxProcess? process = null;
+        try
+        {
+            string probeServer = await serverResolver.ResolveAsync(
+                outbound.Server,
+                probeToken);
+            int socksPort = ReserveLoopbackPort();
+            temporaryDirectory = Directory.CreateTempSubdirectory(
+                "boxforge-exit-").FullName;
+            string configPath = Path.Combine(temporaryDirectory, "config.json");
+            await WriteProbeConfigAsync(
+                configPath,
+                socksPort,
+                outbound,
+                probeServer,
+                probeToken);
+
+            process = processLauncher.Start(
+                enrichmentOptions.SingBoxPath.Trim(),
+                configPath,
+                socksPort);
+            await process.WaitUntilReadyAsync(probeToken);
+            return await exitIpFetcher.FetchAsync(socksPort, probeToken);
+        }
+        catch (OperationCanceledException)
+            when (!cancellationToken.IsCancellationRequested)
+        {
+            LogProbeTimeout(logger, outbound.Tag);
+            return null;
+        }
+        catch (OperationCanceledException)
+        {
+            throw new OperationCanceledException(cancellationToken);
+        }
+        catch (Exception)
+        {
+            LogProbeFailure(logger, outbound.Tag);
+            return null;
+        }
+        finally
+        {
+            if (process != null)
+            {
+                try
+                {
+                    await process.DisposeAsync();
+                }
+                catch (Exception)
+                {
+                    LogProcessCleanupFailure(logger, outbound.Tag);
+                }
+            }
+
+            if (temporaryDirectory != null)
+            {
+                try
+                {
+                    Directory.Delete(temporaryDirectory, recursive: true);
+                }
+                catch (Exception)
+                {
+                    LogFileCleanupFailure(logger, outbound.Tag);
+                }
+            }
+        }
+    }
+
+    private static int ReserveLoopbackPort()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        try
+        {
+            listener.Start();
+            return ((IPEndPoint)listener.LocalEndpoint).Port;
+        }
+        finally
+        {
+            listener.Stop();
+        }
+    }
+
+    private static async Task WriteProbeConfigAsync(
+        string configPath,
+        int socksPort,
+        ProxyOutbound outbound,
+        string probeServer,
+        CancellationToken cancellationToken)
+    {
+        var fileOptions = new FileStreamOptions
+        {
+            Mode = FileMode.CreateNew,
+            Access = FileAccess.Write,
+            Share = FileShare.None,
+            Options = FileOptions.Asynchronous
+        };
+        if (!OperatingSystem.IsWindows())
+        {
+            fileOptions.UnixCreateMode = UnixFileMode.UserRead
+                | UnixFileMode.UserWrite;
+        }
+
+        await using var stream = new FileStream(configPath, fileOptions);
+        await JsonSerializer.SerializeAsync(
+            stream,
+            CreateProbeConfig(socksPort, outbound, probeServer),
+            JsonOptions,
+            cancellationToken);
+    }
+
+    private static ExitProbeConfig CreateProbeConfig(
+        int socksPort,
+        ProxyOutbound outbound,
+        string probeServer)
+    {
+        ProxyOutbound probeOutbound = outbound with
+        {
+            Server = probeServer,
+            DomainResolver = null!
+        };
+        return new ExitProbeConfig(
+            [
+                new Inbound
+                {
+                    Type = "mixed",
+                    Tag = "boxforge-exit-in",
+                    Listen = IPAddress.Loopback.ToString(),
+                    ListenPort = socksPort
+                }
+            ],
+            [probeOutbound],
+            new ExitProbeRoute(probeOutbound.Tag, true));
+    }
+
+    [LoggerMessage(
+        1,
+        LogLevel.Warning,
+        "节点出口 IP 检测超时，保留原 tag：{Tag}")]
+    private static partial void LogProbeTimeout(ILogger logger, string tag);
+
+    [LoggerMessage(
+        2,
+        LogLevel.Warning,
+        "节点出口 IP 检测失败，保留原 tag：{Tag}")]
+    private static partial void LogProbeFailure(ILogger logger, string tag);
+
+    [LoggerMessage(
+        3,
+        LogLevel.Warning,
+        "sing-box 测试进程清理失败：{Tag}")]
+    private static partial void LogProcessCleanupFailure(
+        ILogger logger,
+        string tag);
+
+    [LoggerMessage(
+        4,
+        LogLevel.Warning,
+        "sing-box 临时文件清理失败：{Tag}")]
+    private static partial void LogFileCleanupFailure(ILogger logger, string tag);
+
+    private sealed record ExitProbeConfig(
+        [property: JsonPropertyName("inbounds")] List<Inbound> Inbounds,
+        [property: JsonPropertyName("outbounds")] List<Outbound> Outbounds,
+        [property: JsonPropertyName("route")] ExitProbeRoute Route);
+
+    private sealed record ExitProbeRoute(
+        [property: JsonPropertyName("final")] string Final,
+        [property: JsonPropertyName("auto_detect_interface")]
+        bool AutoDetectInterface);
+}
+
+public sealed class ProbeServerResolver : IProbeServerResolver
+{
+    public async Task<string> ResolveAsync(
+        string server,
+        CancellationToken cancellationToken = default)
+    {
+        if (IPAddress.TryParse(server, out var literalAddress))
+        {
+            return literalAddress.ToString();
+        }
+
+        IPAddress? address = (await Dns.GetHostAddressesAsync(
+                server,
+                cancellationToken))
+            .Where(candidate => candidate.AddressFamily is
+                AddressFamily.InterNetwork or AddressFamily.InterNetworkV6)
+            .OrderBy(candidate => candidate.AddressFamily)
+            .ThenBy(candidate => candidate.ToString(), StringComparer.Ordinal)
+            .FirstOrDefault();
+        return address?.ToString()
+            ?? throw new InvalidOperationException(
+                "节点 server 未解析到 IPv4/IPv6 地址。");
+    }
+}
+
+public sealed class ExitIpFetcher : IExitIpFetcher
+{
+    private static readonly Uri IpifyEndpoint = new("https://api.ipify.org");
+
+    public async Task<IPAddress?> FetchAsync(
+        int socksPort,
+        CancellationToken cancellationToken = default)
+    {
+        using var handler = new SocketsHttpHandler
+        {
+            UseProxy = true,
+            Proxy = new WebProxy($"socks5://127.0.0.1:{socksPort}")
+        };
+        using var httpClient = new HttpClient(handler)
+        {
+            Timeout = Timeout.InfiniteTimeSpan
+        };
+        using var request = new HttpRequestMessage(HttpMethod.Get, IpifyEndpoint);
+        using HttpResponseMessage response = await httpClient.SendAsync(
+            request,
+            HttpCompletionOption.ResponseHeadersRead,
+            cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        string responseBody = await response.Content.ReadAsStringAsync(
+            cancellationToken);
+        return IPAddress.TryParse(responseBody.Trim(), out var address)
+            ? address
+            : null;
+    }
+}
+
+public sealed class SingboxProcessLauncher : ISingboxProcessLauncher
+{
+    public ISingboxProcess Start(
+        string executable,
+        string configPath,
+        int socksPort)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = executable,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+        startInfo.ArgumentList.Add("run");
+        startInfo.ArgumentList.Add("-c");
+        startInfo.ArgumentList.Add(configPath);
+
+        var process = new Process
+        {
+            StartInfo = startInfo,
+            EnableRaisingEvents = true
+        };
+        bool started = false;
+        try
+        {
+            if (!process.Start())
+            {
+                throw new InvalidOperationException("sing-box 进程未能启动。");
+            }
+
+            started = true;
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+            return new SingboxProcess(process, socksPort);
+        }
+        catch
+        {
+            if (started && !process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                process.WaitForExit();
+            }
+
+            process.Dispose();
+            throw;
+        }
+    }
+}
+
+public sealed class SingboxProcess(Process process, int socksPort) :
+    ISingboxProcess
+{
+    private static readonly TimeSpan ReadinessPollInterval =
+        TimeSpan.FromMilliseconds(50);
+
+    public async Task WaitUntilReadyAsync(
+        CancellationToken cancellationToken = default)
+    {
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (process.HasExited)
+            {
+                throw new InvalidOperationException(
+                    "sing-box 在本地代理就绪前退出。");
+            }
+
+            using var client = new TcpClient(AddressFamily.InterNetwork);
+            try
+            {
+                await client.ConnectAsync(
+                    IPAddress.Loopback,
+                    socksPort,
+                    cancellationToken);
+                return;
+            }
+            catch (SocketException) when (!process.HasExited)
+            {
+                await Task.Delay(ReadinessPollInterval, cancellationToken);
+            }
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+
+            await process.WaitForExitAsync();
+        }
+        finally
+        {
+            process.Dispose();
+        }
+    }
+}
