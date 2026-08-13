@@ -8,7 +8,7 @@ public record DnsConfig
     [JsonPropertyName("servers")] public List<DnsServer> Servers { get; init; } = [];
     [JsonPropertyName("rules")] public List<DnsRule> Rules { get; init; } = [];
     [JsonPropertyName("final")] public string Final { get; init; } = SingboxTags.RemoteDns;
-    [JsonPropertyName("strategy")] public DnsStrategy Strategy { get; init; } = DnsStrategy.Ipv4Only;
+    [JsonPropertyName("strategy")] public DnsStrategy Strategy { get; init; } = DnsStrategy.PreferIpv4;
     [JsonPropertyName("cache_capacity")] public uint CacheCapacity { get; init; } = 4096;
     [JsonPropertyName("optimistic")] public DnsOptimisticConfig Optimistic { get; init; } = new();
     [JsonPropertyName("reverse_mapping")] public bool ReverseMapping { get; init; } = true;

@@ -19,11 +19,13 @@ public sealed class RouteProfileBuilderTests
                 && ContainsUdp443Condition(item.Rule))
             .ToList();
 
-        Assert.That(udp443Rejects, Has.Count.EqualTo(2));
+        Assert.That(udp443Rejects, Has.Count.EqualTo(3));
         Assert.Multiple(() =>
         {
             Assert.That(
-                udp443Rejects.SelectMany(item => ReferencedRuleSets(item.Rule)),
+                udp443Rejects
+                    .SelectMany(item => ReferencedRuleSets(item.Rule))
+                    .Distinct(),
                 Is.EquivalentTo(new[]
                 {
                     "geosite-cn",
@@ -42,6 +44,59 @@ public sealed class RouteProfileBuilderTests
                     && rule.Port?.Contains(443) == true),
                 Is.False,
                 "UDP/443 must not be rejected by an unscoped top-level rule.");
+        });
+    }
+
+    [Test]
+    public void DomesticIpv6IsDirectBeforeOtherPublicIpv6IsRejected()
+    {
+        RouteConfig route = CreateBuilder().Build();
+
+        int domesticUdp443RejectIndex = route.Rules.FindIndex(rule =>
+            rule.Action == RouteRuleAction.Reject
+            && ContainsUdp443Condition(rule)
+            && ContainsIpv6Condition(rule)
+            && ReferencedRuleSets(rule).ToHashSet().SetEquals(new[]
+            {
+                "geosite-cn",
+                "geosite-category-pt",
+                "geoip-cn"
+            }));
+        int domesticIpv6DirectIndex = route.Rules.FindIndex(rule =>
+            rule.Action == RouteRuleAction.Route
+            && rule.Outbound == new SingboxOptions().Direct
+            && ContainsIpv6Condition(rule)
+            && ReferencedRuleSets(rule).ToHashSet().SetEquals(new[]
+            {
+                "geosite-cn",
+                "geosite-category-pt",
+                "geoip-cn"
+            }));
+        int publicIpv6RejectIndex = route.Rules.FindIndex(rule =>
+            rule.Action == RouteRuleAction.Reject
+            && rule.IpCidr?.Contains("::/0") == true);
+        int firstServiceIndex = route.Rules.FindIndex(rule =>
+            rule.Action == RouteRuleAction.Route
+            && ProfileDefinitions.Services.Any(service =>
+                rule.Outbound == service.Name));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                new[]
+                {
+                    domesticUdp443RejectIndex,
+                    domesticIpv6DirectIndex,
+                    publicIpv6RejectIndex,
+                    firstServiceIndex
+                },
+                Is.Ordered.And.All.GreaterThanOrEqualTo(0));
+            Assert.That(
+                route.Rules[domesticIpv6DirectIndex].Type,
+                Is.EqualTo(RouteRuleType.Logical));
+            Assert.That(
+                route.Rules[domesticIpv6DirectIndex].Mode,
+                Is.EqualTo(RouteLogicalMode.And));
         });
     }
 
@@ -127,6 +182,7 @@ public sealed class RouteProfileBuilderTests
         route.Rules.FindIndex(rule =>
             rule.Action == RouteRuleAction.Reject
             && ContainsUdp443Condition(rule)
+            && !ContainsIpv6Condition(rule)
             && ReferencedRuleSets(rule).Contains(ruleSet));
 
     private static int FindSniffIndex(RouteConfig route, string network) =>
@@ -143,6 +199,10 @@ public sealed class RouteProfileBuilderTests
         rule.Port?.Contains(443) == true
         && rule.Network?.Contains("udp") == true
         || rule.Rules?.Any(ContainsUdp443Condition) == true;
+
+    private static bool ContainsIpv6Condition(RouteRule rule) =>
+        rule.IpCidr?.Contains("::/0") == true
+        || rule.Rules?.Any(ContainsIpv6Condition) == true;
 
     private static IEnumerable<string> ReferencedRuleSets(RouteRule rule)
     {

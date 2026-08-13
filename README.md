@@ -123,10 +123,14 @@ dotnet test BoxForge.slnx --no-build
   optimistic 过期缓存，避免地址变化后继续使用旧记录。
 - 协议嗅探不限端口，但 TCP 仅启用 HTTP/TLS，UDP 仅启用 QUIC；固定
   STUN 拒绝位于嗅探之前。命中国内直连规则的 UDP/443 会快速拒绝以促使
-  QUIC 回退 TCP；未命中的国外或最终代理流量继续使用 UDP/443。
-- 两台 DNS 并发 `evaluate`；最快出现的有效 A 地址立即胜出。若都没有有效
-  地址，才接受任一 `NXDOMAIN`；再否则优先复用第二台已返回的错误响应，
-  第二台尚无响应时最后重新 route 它一次。
+  QUIC 回退 TCP；未命中的国外或最终代理 IPv4 流量继续使用 UDP/443。
+- 国内域名允许 A/AAAA，并将命中 `geosite-cn`、`geosite-category-pt` 或
+  `geoip-cn` 的公网 IPv6 直连；其他 AAAA 返回空结果，未命中的公网 IPv6
+  仍会拒绝，避免绕过代理策略。全局 DNS 使用 `prefer_ipv4`，保持 IPv4 优先
+  并允许国内规则返回 AAAA。
+- 两台 DNS 并发 `evaluate`；最快出现的有效地址立即胜出。若都没有有效地址，
+  才接受任一 `NXDOMAIN`；再否则优先复用第二台已返回的错误响应，第二台尚无
+  响应时最后重新 route 它一次。
 - Hysteria2 出站使用 `hop_interval: 30s`、`hop_interval_max: 60s` 和
   `bbr_profile: standard`。
 - 生成配置包含官方 `$schema`，DNS 缓存容量为 `4096`，启用

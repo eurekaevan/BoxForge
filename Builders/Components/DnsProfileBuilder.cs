@@ -53,12 +53,6 @@ public class DnsProfileBuilder(
 
         dns.Rules.Add(new DnsRule
         {
-            QueryType = ["AAAA"],
-            Action = DnsRuleAction.Predefined,
-            Rcode = DnsResponseCode.NoError
-        });
-        dns.Rules.Add(new DnsRule
-        {
             RuleSet = ["geosite-category-ads-all"],
             Action = DnsRuleAction.Predefined,
             Rcode = DnsResponseCode.NoError
@@ -69,6 +63,7 @@ public class DnsProfileBuilder(
             dns.Rules.Add(new DnsRule
             {
                 Domain = [.. nodes.ServerDomains],
+                QueryType = ["A"],
                 Action = DnsRuleAction.Route,
                 Server = SingboxTags.NodeResolverDns,
                 DisableOptimisticCache = true
@@ -81,6 +76,15 @@ public class DnsProfileBuilder(
             SingboxTags.LocalTencentDns,
             SingboxTags.LocalDns,
             "cn");
+
+        // 国内域名先由本地 DNS 返回 A/AAAA；其余 AAAA 仍返回空结果，
+        // 防止非国内公网 IPv6 绕过后续的 IPv6 拒绝策略。
+        dns.Rules.Add(new DnsRule
+        {
+            QueryType = ["AAAA"],
+            Action = DnsRuleAction.Predefined,
+            Rcode = DnsResponseCode.NoError
+        });
 
         AddRace(
             dns.Rules,

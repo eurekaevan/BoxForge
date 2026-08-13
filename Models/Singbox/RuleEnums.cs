@@ -62,5 +62,6 @@ public enum DnsResponseCode
 [JsonConverter(typeof(JsonStringEnumConverter<DnsStrategy>))]
 public enum DnsStrategy
 {
+    [JsonStringEnumMemberName("prefer_ipv4")] PreferIpv4,
     [JsonStringEnumMemberName("ipv4_only")] Ipv4Only
 }

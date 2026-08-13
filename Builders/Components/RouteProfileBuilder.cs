@@ -63,12 +63,14 @@ public class RouteProfileBuilder(
 
         rules.AddRange([
             new RouteRule { IpIsPrivate = true, Action = RouteRuleAction.Route, Outbound = singbox.Direct },
-            new() { IpCidr = ["::/0"], Action = RouteRuleAction.Reject },
             new() { IpCidr = ["223.5.5.5/32"], Action = RouteRuleAction.Route, Outbound = singbox.Direct },
             new() { Port = [3478, 3479, 19302, 19303], Network = ["udp"], Action = RouteRuleAction.Reject },
             CreateSniffRule("tcp", ["http", "tls"]),
             CreateSniffRule("udp", ["quic"]),
-            new() { RuleSet = ["geosite-category-ads-all"], Action = RouteRuleAction.Reject }
+            new() { RuleSet = ["geosite-category-ads-all"], Action = RouteRuleAction.Reject },
+            CreateDomesticIpv6Udp443RejectRule(),
+            CreateDomesticIpv6DirectRule(singbox.Direct),
+            new() { IpCidr = ["::/0"], Action = RouteRuleAction.Reject }
         ]);
 
         foreach (var service in ProfileDefinitions.Services)
@@ -104,6 +106,42 @@ public class RouteProfileBuilder(
             Action = RouteRuleAction.Sniff,
             Sniffer = sniffers,
             Timeout = "300ms"
+        };
+
+    private static RouteRule CreateDomesticIpv6Udp443RejectRule() =>
+        new()
+        {
+            Type = RouteRuleType.Logical,
+            Mode = RouteLogicalMode.And,
+            Rules =
+            [
+                new RouteRule { IpCidr = ["::/0"] },
+                new RouteRule
+                {
+                    Inbound = [SingboxTags.TunInbound, SingboxTags.MixedInbound],
+                    Port = [443],
+                    Network = ["udp"],
+                    RuleSet = ["geosite-cn", "geosite-category-pt", "geoip-cn"]
+                }
+            ],
+            Action = RouteRuleAction.Reject
+        };
+
+    private static RouteRule CreateDomesticIpv6DirectRule(string directOutbound) =>
+        new()
+        {
+            Type = RouteRuleType.Logical,
+            Mode = RouteLogicalMode.And,
+            Rules =
+            [
+                new RouteRule { IpCidr = ["::/0"] },
+                new RouteRule
+                {
+                    RuleSet = ["geosite-cn", "geosite-category-pt", "geoip-cn"]
+                }
+            ],
+            Action = RouteRuleAction.Route,
+            Outbound = directOutbound
         };
 
     private static RouteRule CreateDomesticUdp443RejectRule(List<string> ruleSets) =>
