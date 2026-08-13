@@ -24,7 +24,7 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
         ValidateInbounds(config.Inbounds, context.Diagnostics);
         ValidateDnsServers(config.Dns.Servers, context);
         ValidateDnsRules(config.Dns.Rules, context);
-        ValidateRuleSets(config.Route.RuleSet, context.Diagnostics);
+        ValidateRuleSets(config.Route.RuleSet, context);
         ValidateCacheFile(config.Experimental?.CacheFile, context.Diagnostics);
         ValidateRouteRules(config.Route.Rules, context);
         ThrowIfInvalid(context.Diagnostics);
@@ -57,8 +57,10 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
             config.Dns.Servers.Select(server => server.Tag),
             "dns.servers",
             diagnostics);
-        var httpClientTags = CollectTags(
-            config.HttpClients.Select(client => client.Tag));
+        var httpClientTags = CollectUniqueRequiredTags(
+            config.HttpClients.Select(client => client.Tag),
+            "http_clients",
+            diagnostics);
         var ruleSetTags = CollectTags(
             config.Route.RuleSet.Select(ruleSet => ruleSet.Tag));
         var inboundTags = CollectTags(
@@ -382,14 +384,14 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
 
     private static void ValidateRuleSets(
         List<SingboxRuleSet> ruleSets,
-        List<ConfigDiagnostic> diagnostics)
+        ValidationContext context)
     {
         for (var index = 0; index < ruleSets.Count; index++)
         {
             SingboxRuleSet ruleSet = ruleSets[index];
             if (!ruleSet.Format.HasValue)
             {
-                diagnostics.Add(new ConfigDiagnostic(
+                context.Diagnostics.Add(new ConfigDiagnostic(
                     "SB056",
                     $"route.rule_set[{index}].format",
                     "rule-set format 不能为空。"));
@@ -400,7 +402,17 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
                 "SB057",
                 $"route.rule_set[{index}].url",
                 "远程 rule-set URL 不能为空。",
-                diagnostics);
+                context.Diagnostics);
+            if (ruleSet.Type == RuleSetType.Remote)
+            {
+                ValidateReference(
+                    ruleSet.HttpClient,
+                    context.HttpClientTags,
+                    "SB016",
+                    $"route.rule_set[{index}].http_client",
+                    "引用了不存在的 HTTP client。",
+                    context.Diagnostics);
+            }
         }
     }
 

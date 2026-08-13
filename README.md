@@ -138,4 +138,6 @@ dotnet test BoxForge.slnx --no-build
   `optimistic` 缓存（`3d`）并通过 `store_dns` 持久化。
 - `cache_id` 是 YAML `proxies` 列表的规范化 SHA-256；只要核心代理列表相同，
   不同平台或其他配置项就会复用同一缓存身份。
-- 远程 rule-set 通过显式的 `http_clients` 使用直连出站下载。
+- 远程 rule-set 默认通过 `rule-set-direct` 使用直连出站下载；
+  `adguard-dns` 显式绑定 `rule-set-proxy`，通过主代理组下载。sing-box 的单个
+  远程 rule-set 只能绑定一个 HTTP client，此配置不提供直连/代理失败自动回退。

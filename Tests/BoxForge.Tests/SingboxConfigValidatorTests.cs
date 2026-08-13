@@ -17,6 +17,72 @@ public sealed class SingboxConfigValidatorTests
     }
 
     [Test]
+    public void RuleSetHttpClientMustExist()
+    {
+        SingboxConfig valid = CreateValidConfig();
+        SingboxRuleSet ruleSet = valid.Route.RuleSet[0] with
+        {
+            HttpClient = "missing-http"
+        };
+        SingboxConfig config = valid with
+        {
+            Route = valid.Route with
+            {
+                RuleSet = [ruleSet]
+            }
+        };
+
+        AssertDiagnostics(
+            config,
+            new ConfigDiagnostic(
+                "SB016",
+                "route.rule_set[0].http_client",
+                "引用了不存在的 HTTP client。"));
+    }
+
+    [Test]
+    public void HttpClientTagsMustBePresentAndUnique()
+    {
+        SingboxConfig config = CreateValidConfig() with
+        {
+            HttpClients =
+            [
+                new HttpClientConfig { Tag = "", Detour = "direct" },
+                new HttpClientConfig { Tag = "http", Detour = "direct" },
+                new HttpClientConfig { Tag = "http", Detour = "selector" }
+            ]
+        };
+
+        AssertDiagnostics(
+            config,
+            new("SB008", "http_clients[0].tag", "标签不能为空。"),
+            new("SB009", "http_clients[2].tag", "标签 'http' 重复。"));
+    }
+
+    [Test]
+    public void HttpClientDetourMustExist()
+    {
+        SingboxConfig config = CreateValidConfig() with
+        {
+            HttpClients =
+            [
+                new HttpClientConfig
+                {
+                    Tag = "http",
+                    Detour = "missing-target"
+                }
+            ]
+        };
+
+        AssertDiagnostics(
+            config,
+            new ConfigDiagnostic(
+                "SB015",
+                "http_clients[0].detour",
+                "引用了不存在的 outbound 或 endpoint。"));
+    }
+
+    [Test]
     public void ModuleDiagnosticsPreserveCodesPathsMessagesAndOrder()
     {
         SingboxConfig config = CreateValidConfig() with
@@ -310,7 +376,8 @@ public sealed class SingboxConfigValidatorTests
                         Type = RuleSetType.Remote,
                         Tag = "rules",
                         Format = RuleSetFormat.Binary,
-                        Url = "https://example.test/rules.srs"
+                        Url = "https://example.test/rules.srs",
+                        HttpClient = "http"
                     }
                 ],
                 Rules =

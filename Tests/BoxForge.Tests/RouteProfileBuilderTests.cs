@@ -29,8 +29,19 @@ public sealed class RouteProfileBuilderTests
             Assert.That(adGuardRuleSet!.Type, Is.EqualTo(RuleSetType.Remote));
             Assert.That(adGuardRuleSet.Format, Is.EqualTo(RuleSetFormat.Binary));
             Assert.That(adGuardRuleSet.Url, Is.EqualTo(AdGuardDnsRuleSetUrl));
+            Assert.That(
+                adGuardRuleSet.HttpClient,
+                Is.EqualTo(HttpClientTags.RuleSetProxy));
             Assert.That(adGuardRuleSet.UpdateInterval, Is.EqualTo("1d"));
             Assert.That(adGuardRejectRule, Is.Not.Null);
+            Assert.That(
+                route.DefaultHttpClient,
+                Is.EqualTo(HttpClientTags.RuleSetDirect));
+            Assert.That(
+                route.RuleSet.Where(ruleSet =>
+                    ruleSet.Tag != SingboxOptions.AdGuardDnsRuleSetTag)
+                    .All(ruleSet => ruleSet.HttpClient == null),
+                Is.True);
             Assert.That(
                 route.RuleSet.Select(ruleSet => ruleSet.Tag)
                     .Concat(route.Rules.SelectMany(ReferencedRuleSets)),

@@ -16,7 +16,7 @@ public class RouteProfileBuilder(
         var route = new RouteConfig
         {
             Final = singbox.MainProxyGroup,
-            DefaultHttpClient = SingboxOptions.RuleSetHttpClientTag
+            DefaultHttpClient = HttpClientTags.RuleSetDirect
         };
 
         route.RuleSet.AddRange([
@@ -26,6 +26,7 @@ public class RouteProfileBuilder(
                 Type = RuleSetType.Remote,
                 Format = RuleSetFormat.Binary,
                 Url = singbox.AdGuardDnsRuleSetUrl,
+                HttpClient = HttpClientTags.RuleSetProxy,
                 UpdateInterval = "1d"
             },
             CreateRemoteRuleSet("geosite-category-pt", "geosite", "geosite-category-pt"),

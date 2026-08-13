@@ -17,6 +17,7 @@ public record SingboxRuleSet
     [JsonPropertyName("tag")] public string? Tag { get; init; }
     [JsonPropertyName("format")] public RuleSetFormat? Format { get; init; }
     [JsonPropertyName("url")] public string? Url { get; init; }
+    [JsonPropertyName("http_client")] public string? HttpClient { get; init; }
     [JsonPropertyName("update_interval")] public string? UpdateInterval { get; init; }
 }
 
