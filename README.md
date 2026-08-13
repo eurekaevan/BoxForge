@@ -83,6 +83,7 @@ dotnet run -- generate \
 
 - `BOXFORGE_MainProxyGroup`
 - `BOXFORGE_Direct`
+- `BOXFORGE_Singbox__AdGuardDnsRuleSetUrl`
 - `BOXFORGE_TailscaleEnabled`
 - `BOXFORGE_TailscaleTag`
 - `BOXFORGE_TailscaleDnsTag`

@@ -8,6 +8,36 @@ namespace BoxForge.Tests;
 [TestFixture]
 public sealed class RouteProfileBuilderTests
 {
+    private const string AdGuardDnsRuleSetUrl =
+        "https://sublinks.skuld.workers.dev/rules/adguard-dns.srs";
+
+    [Test]
+    public void AdGuardRuleSetUsesConfiguredRemoteBinaryUrlAndIsRejected()
+    {
+        RouteConfig route = CreateBuilder().Build();
+
+        SingboxRuleSet? adGuardRuleSet = route.RuleSet.SingleOrDefault(ruleSet =>
+            ruleSet.Tag == SingboxOptions.AdGuardDnsRuleSetTag);
+        RouteRule? adGuardRejectRule = route.Rules.SingleOrDefault(rule =>
+            rule.Action == RouteRuleAction.Reject
+            && rule.RuleSet?.SequenceEqual(
+                [SingboxOptions.AdGuardDnsRuleSetTag]) == true);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(adGuardRuleSet, Is.Not.Null);
+            Assert.That(adGuardRuleSet!.Type, Is.EqualTo(RuleSetType.Remote));
+            Assert.That(adGuardRuleSet.Format, Is.EqualTo(RuleSetFormat.Binary));
+            Assert.That(adGuardRuleSet.Url, Is.EqualTo(AdGuardDnsRuleSetUrl));
+            Assert.That(adGuardRuleSet.UpdateInterval, Is.EqualTo("1d"));
+            Assert.That(adGuardRejectRule, Is.Not.Null);
+            Assert.That(
+                route.RuleSet.Select(ruleSet => ruleSet.Tag)
+                    .Concat(route.Rules.SelectMany(ReferencedRuleSets)),
+                Does.Not.Contain("geosite-category-ads-all"));
+        });
+    }
+
     [Test]
     public void Udp443IsRejectedOnlyForDomesticDirectDestinations()
     {
@@ -175,7 +205,10 @@ public sealed class RouteProfileBuilderTests
 
     private static RouteProfileBuilder CreateBuilder() =>
         new(
-            Options.Create(new SingboxOptions()),
+            Options.Create(new SingboxOptions
+            {
+                AdGuardDnsRuleSetUrl = AdGuardDnsRuleSetUrl
+            }),
             Options.Create(new TailscaleOptions()));
 
     private static int FindUdp443RejectIndex(RouteConfig route, string ruleSet) =>

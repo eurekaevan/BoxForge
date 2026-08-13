@@ -2,13 +2,54 @@ using BoxForge.Builders;
 using BoxForge.Builders.Components;
 using BoxForge.Configuration;
 using BoxForge.Models.Singbox;
+using BoxForge.Services;
 using Microsoft.Extensions.Options;
+using System.Text.Json;
 
 namespace BoxForge.Tests;
 
 [TestFixture]
 public sealed class DnsProfileBuilderTests
 {
+    [Test]
+    public void TailscaleAndNodeResolutionPrecedeAdGuardNxDomainRule()
+    {
+        var nodes = new NodeCatalog([], [], ["node.example.com"]);
+        DnsConfig dns = CreateBuilder(tailscaleEnabled: true).Build(nodes);
+
+        int tailscaleIndex = dns.Rules.FindIndex(rule =>
+            rule.PreferredBy?.Contains("tailscale-dns") == true);
+        int nodeResolverIndex = dns.Rules.FindIndex(rule =>
+            rule.Domain?.Contains("node.example.com") == true
+            && rule.Server == SingboxTags.NodeResolverDns);
+        int adGuardIndex = dns.Rules.FindIndex(rule =>
+            rule.RuleSet?.SequenceEqual(
+                [SingboxOptions.AdGuardDnsRuleSetTag]) == true);
+        DnsRule adGuardRule = dns.Rules[adGuardIndex];
+
+        string json = new ConfigSerializer().Serialize(new SingboxConfig
+        {
+            Dns = dns
+        });
+        using JsonDocument document = JsonDocument.Parse(json);
+        JsonElement serializedAdGuardRule = document.RootElement
+            .GetProperty("dns")
+            .GetProperty("rules")[adGuardIndex];
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                new[] { tailscaleIndex, nodeResolverIndex, adGuardIndex },
+                Is.Ordered.And.All.GreaterThanOrEqualTo(0));
+            Assert.That(adGuardRule.Action, Is.EqualTo(DnsRuleAction.Predefined));
+            Assert.That(adGuardRule.Rcode, Is.EqualTo(DnsResponseCode.NameError));
+            Assert.That(
+                serializedAdGuardRule.GetProperty("rcode").GetString(),
+                Is.EqualTo("NXDOMAIN"));
+            Assert.That(json, Does.Not.Contain("geosite-category-ads-all"));
+        });
+    }
+
     [Test]
     public void DomesticRulesAnswerAaaaBeforeOtherAaaaIsBlocked()
     {
@@ -51,8 +92,11 @@ public sealed class DnsProfileBuilderTests
         });
     }
 
-    private static DnsProfileBuilder CreateBuilder() =>
+    private static DnsProfileBuilder CreateBuilder(bool tailscaleEnabled = false) =>
         new(
             Options.Create(new SingboxOptions()),
-            Options.Create(new TailscaleOptions()));
+            Options.Create(new TailscaleOptions
+            {
+                Enabled = tailscaleEnabled
+            }));
 }

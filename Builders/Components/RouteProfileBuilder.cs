@@ -20,7 +20,14 @@ public class RouteProfileBuilder(
         };
 
         route.RuleSet.AddRange([
-            CreateRemoteRuleSet("geosite-category-ads-all", "geosite", "geosite-category-ads-all"),
+            new SingboxRuleSet
+            {
+                Tag = SingboxOptions.AdGuardDnsRuleSetTag,
+                Type = RuleSetType.Remote,
+                Format = RuleSetFormat.Binary,
+                Url = singbox.AdGuardDnsRuleSetUrl,
+                UpdateInterval = "1d"
+            },
             CreateRemoteRuleSet("geosite-category-pt", "geosite", "geosite-category-pt"),
             CreateRemoteRuleSet("geosite-cn", "geosite", "geosite-cn"),
             CreateRemoteRuleSet("geoip-cn", "geoip", "geoip-cn"),
@@ -67,7 +74,7 @@ public class RouteProfileBuilder(
             new() { Port = [3478, 3479, 19302, 19303], Network = ["udp"], Action = RouteRuleAction.Reject },
             CreateSniffRule("tcp", ["http", "tls"]),
             CreateSniffRule("udp", ["quic"]),
-            new() { RuleSet = ["geosite-category-ads-all"], Action = RouteRuleAction.Reject },
+            new() { RuleSet = [SingboxOptions.AdGuardDnsRuleSetTag], Action = RouteRuleAction.Reject },
             CreateDomesticIpv6Udp443RejectRule(),
             CreateDomesticIpv6DirectRule(singbox.Direct),
             new() { IpCidr = ["::/0"], Action = RouteRuleAction.Reject }

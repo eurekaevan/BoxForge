@@ -51,13 +51,6 @@ public class DnsProfileBuilder(
             });
         }
 
-        dns.Rules.Add(new DnsRule
-        {
-            RuleSet = ["geosite-category-ads-all"],
-            Action = DnsRuleAction.Predefined,
-            Rcode = DnsResponseCode.NoError
-        });
-
         if (nodes.ServerDomains.Count > 0)
         {
             dns.Rules.Add(new DnsRule
@@ -69,6 +62,13 @@ public class DnsProfileBuilder(
                 DisableOptimisticCache = true
             });
         }
+
+        dns.Rules.Add(new DnsRule
+        {
+            RuleSet = [SingboxOptions.AdGuardDnsRuleSetTag],
+            Action = DnsRuleAction.Predefined,
+            Rcode = DnsResponseCode.NameError
+        });
 
         AddRace(
             dns.Rules,

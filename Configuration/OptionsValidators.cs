@@ -12,12 +12,34 @@ public sealed class SingboxOptionsValidator : IValidateOptions<SingboxOptions>
             return ValidateOptionsResult.Fail("sing-box 主代理组和直连标签不能为空。");
         }
 
-        return string.Equals(
+        if (string.Equals(
             options.MainProxyGroup,
             options.Direct,
-            StringComparison.Ordinal)
-            ? ValidateOptionsResult.Fail("sing-box 主代理组和直连标签不能相同。")
-            : ValidateOptionsResult.Success;
+            StringComparison.Ordinal))
+        {
+            return ValidateOptionsResult.Fail("sing-box 主代理组和直连标签不能相同。");
+        }
+
+        if (string.IsNullOrWhiteSpace(options.AdGuardDnsRuleSetUrl))
+        {
+            return ValidateOptionsResult.Fail("AdGuard DNS 规则集地址不能为空。");
+        }
+
+        if (!Uri.TryCreate(
+                options.AdGuardDnsRuleSetUrl,
+                UriKind.Absolute,
+                out Uri? ruleSetUri)
+            || string.IsNullOrWhiteSpace(ruleSetUri.Host))
+        {
+            return ValidateOptionsResult.Fail("AdGuard DNS 规则集地址必须是绝对 URL。");
+        }
+
+        return string.Equals(
+            ruleSetUri.Scheme,
+            Uri.UriSchemeHttps,
+            StringComparison.OrdinalIgnoreCase)
+            ? ValidateOptionsResult.Success
+            : ValidateOptionsResult.Fail("AdGuard DNS 规则集地址必须使用 HTTPS。");
     }
 }
 
