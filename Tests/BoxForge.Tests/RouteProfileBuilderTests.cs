@@ -59,16 +59,30 @@ public sealed class RouteProfileBuilderTests
     }
 
     [Test]
-    public void GoogleRoutesBeforeDomesticRulesAndUsesTcpFallback()
+    public void AdsThenAiAndGooglePrecedeDomesticRulesWithTcpFallback()
     {
         RouteConfig route = CreateBuilder().Build();
 
         SingboxRuleSet? googleRuleSet = route.RuleSet.SingleOrDefault(ruleSet =>
             ruleSet.Tag == "geosite-google");
+        int adBlockingIndex = route.Rules.FindIndex(rule =>
+            rule.Action == RouteRuleAction.Reject
+            && rule.RuleSet?.SequenceEqual(
+                [
+                    AdBlockingRuleSets.AntiAdTag,
+                    AdBlockingRuleSets.SagerAdsTag
+                ]) == true);
+        int aiUdp443RejectIndex = route.Rules.FindIndex(rule =>
+            rule.Action == RouteRuleAction.Reject
+            && ContainsUdp443Condition(rule)
+            && rule.RuleSet?.Contains("geosite-category-ai-!cn") == true);
         int googleUdp443RejectIndex = route.Rules.FindIndex(rule =>
             rule.Action == RouteRuleAction.Reject
             && ContainsUdp443Condition(rule)
             && rule.RuleSet?.Contains("geosite-google") == true);
+        int aiRouteIndex = FindRouteRuleIndex(
+            route,
+            "geosite-category-ai-!cn");
         int googleRouteIndex = FindRouteRuleIndex(route, "geosite-google");
         int firstDomesticRuleIndex = route.Rules.FindIndex(rule =>
             ReferencedRuleSets(rule).Contains("geosite-cn"));
@@ -83,11 +97,17 @@ public sealed class RouteProfileBuilderTests
             Assert.That(
                 new[]
                 {
+                    adBlockingIndex,
+                    aiUdp443RejectIndex,
                     googleUdp443RejectIndex,
+                    aiRouteIndex,
                     googleRouteIndex,
                     firstDomesticRuleIndex
                 },
                 Is.Ordered.And.All.GreaterThanOrEqualTo(0));
+            Assert.That(
+                route.Rules[aiRouteIndex].Outbound,
+                Is.EqualTo(ServiceGroupNames.Ai));
             Assert.That(
                 route.Rules[googleRouteIndex].Outbound,
                 Is.EqualTo(ServiceGroupNames.Google));
@@ -116,7 +136,7 @@ public sealed class RouteProfileBuilderTests
         int resolveIndex = FindGeneralResolveIndex(route);
         int geoipDirectIndex = FindRouteRuleIndex(route, "geoip-cn");
 
-        Assert.That(udp443Rejects, Has.Count.EqualTo(2));
+        Assert.That(udp443Rejects, Has.Count.EqualTo(3));
         RouteRule foreignUdp443Reject = route.Rules[foreignUdp443RejectIndex];
         Assert.Multiple(() =>
         {
@@ -221,10 +241,17 @@ public sealed class RouteProfileBuilderTests
             && rule.Port?.Contains(3478) == true);
         int tcpSniffIndex = FindSniffIndex(route, "tcp");
         int udpSniffIndex = FindSniffIndex(route, "udp");
+        int aiUdp443RejectIndex = route.Rules.FindIndex(rule =>
+            rule.Action == RouteRuleAction.Reject
+            && ContainsUdp443Condition(rule)
+            && rule.RuleSet?.Contains("geosite-category-ai-!cn") == true);
         int googleUdp443RejectIndex = route.Rules.FindIndex(rule =>
             rule.Action == RouteRuleAction.Reject
             && ContainsUdp443Condition(rule)
             && rule.RuleSet?.Contains("geosite-google") == true);
+        int aiRouteIndex = FindRouteRuleIndex(
+            route,
+            "geosite-category-ai-!cn");
         int googleRouteIndex = FindRouteRuleIndex(route, "geosite-google");
         int geositeUdpDirectIndex = FindUdp443DirectIndex(route, "geosite-cn");
         int udpResolveIndex = FindUdp443ResolveIndex(route);
@@ -244,7 +271,9 @@ public sealed class RouteProfileBuilderTests
                 stunRejectIndex,
                 tcpSniffIndex,
                 udpSniffIndex,
+                aiUdp443RejectIndex,
                 googleUdp443RejectIndex,
+                aiRouteIndex,
                 googleRouteIndex,
                 geositeUdpDirectIndex,
                 udpResolveIndex,

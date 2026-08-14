@@ -17,13 +17,17 @@ public static partial class ProfileDefinitions
     public static ImmutableArray<ServiceDefinition> Services { get; } =
     [
         new(
+            ServiceGroupNames.Ai,
+            RegionId.UnitedStates,
+            ["geosite-category-ai-!cn"],
+            PrecedesDomesticRoutes: true),
+        new(
             ServiceGroupNames.Google,
             RegionId.UnitedStates,
             ["geosite-google"],
             PrecedesDomesticRoutes: true),
         new(ServiceGroupNames.Spotify, RegionId.UnitedStates, ["geosite-spotify"]),
         new(ServiceGroupNames.Steam, RegionId.HongKong, ["geosite-steam"]),
-        new(ServiceGroupNames.Ai, RegionId.UnitedStates, ["geosite-category-ai-!cn"]),
         new(ServiceGroupNames.Microsoft, RegionId.UnitedStates, ["geosite-microsoft"])
     ];
 

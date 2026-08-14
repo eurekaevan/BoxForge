@@ -56,6 +56,42 @@ public sealed class DnsProfileBuilderTests
     }
 
     [Test]
+    public void GoogleRemoteDnsRacePrecedesDomesticDnsRace()
+    {
+        DnsConfig dns = CreateBuilder().Build(new NodeCatalog([], [], []));
+
+        int adBlockingIndex = dns.Rules.FindIndex(rule =>
+            rule.RuleSet?.Contains(AdBlockingRuleSets.AntiAdTag) == true);
+        int googleFirstIndex = dns.Rules.FindIndex(rule =>
+            rule.Action == DnsRuleAction.Evaluate
+            && rule.Tag == "google-first");
+        int googleLastIndex = dns.Rules.FindLastIndex(rule =>
+            rule.RuleSet?.Contains("geosite-google") == true);
+        int domesticFirstIndex = dns.Rules.FindIndex(rule =>
+            rule.Action == DnsRuleAction.Evaluate
+            && rule.Tag == "cn-first");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                new[]
+                {
+                    adBlockingIndex,
+                    googleFirstIndex,
+                    googleLastIndex,
+                    domesticFirstIndex
+                },
+                Is.Ordered.And.All.GreaterThanOrEqualTo(0));
+            Assert.That(
+                dns.Rules[googleFirstIndex].RuleSet,
+                Is.EqualTo(new[] { "geosite-google" }));
+            Assert.That(
+                dns.Rules[googleFirstIndex].Server,
+                Is.EqualTo(SingboxTags.RemoteGoogleDns));
+        });
+    }
+
+    [Test]
     public void DomesticRulesAnswerAaaaBeforeOtherAaaaIsBlocked()
     {
         var nodes = new NodeCatalog([], [], ["node.example.cn"]);

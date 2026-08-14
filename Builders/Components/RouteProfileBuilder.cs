@@ -85,11 +85,16 @@ public class RouteProfileBuilder(
             }
         ]);
 
-        foreach (var service in ProfileDefinitions.Services.Where(
+        var prioritizedServices = ProfileDefinitions.Services.Where(
             service => service.PrecedesDomesticRoutes
-                && service.RuleSets.Length > 0))
+                && service.RuleSets.Length > 0).ToList();
+        foreach (var service in prioritizedServices)
         {
             rules.Add(CreateUdp443RejectRule([.. service.RuleSets]));
+        }
+
+        foreach (var service in prioritizedServices)
+        {
             rules.Add(CreateServiceRouteRule(service));
         }
 

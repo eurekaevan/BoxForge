@@ -76,6 +76,13 @@ public class DnsProfileBuilder(
 
         AddRace(
             dns.Rules,
+            ["geosite-google"],
+            SingboxTags.RemoteGoogleDns,
+            SingboxTags.RemoteDns,
+            "google");
+
+        AddRace(
+            dns.Rules,
             ["geosite-cn", "geosite-category-pt"],
             SingboxTags.LocalTencentDns,
             SingboxTags.LocalDns,
