@@ -22,11 +22,6 @@ public static class OptionsRegistration
                 "Singbox:Direct",
                 "Direct",
                 "DIRECT");
-            options.AdGuardDnsRuleSetUrl = Read(
-                configuration,
-                "Singbox:AdGuardDnsRuleSetUrl",
-                "AdGuardDnsRuleSetUrl",
-                "");
         });
 
         services.Configure<TailscaleOptions>(options =>

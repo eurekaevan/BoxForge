@@ -39,11 +39,6 @@ public class SingboxConfigBuilder(
                 {
                     Tag = HttpClientTags.RuleSetDirect,
                     Detour = profiles.DirectOutbound.Tag
-                },
-                new HttpClientConfig
-                {
-                    Tag = HttpClientTags.RuleSetProxy,
-                    Detour = profiles.MainOutbound.Tag
                 }
             ],
             Inbounds = InboundBuilder.Build(request.Platform),

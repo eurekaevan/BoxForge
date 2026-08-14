@@ -1,4 +1,3 @@
-using System.Text.Json;
 using BoxForge.Builders;
 using BoxForge.Builders.Components;
 using BoxForge.Configuration;
@@ -12,13 +11,11 @@ namespace BoxForge.Tests;
 [TestFixture]
 public sealed class SingboxConfigBuilderTests
 {
-    private const string AdGuardDnsRuleSetUrl =
-        "https://sublinks.skuld.workers.dev/rules/adguard-dns.srs";
     private const string MainProxyGroup = "custom-main";
     private const string Direct = "custom-direct";
 
     [Test]
-    public void RuleSetsUseDirectAndProxyHttpClientsAsConfigured()
+    public void RuleSetsUseOnlyTheDirectHttpClient()
     {
         SingboxConfig config = CreateBuilder().Build(new SingboxBuildRequest(
             new NodeCatalog([], [], []),
@@ -27,46 +24,24 @@ public sealed class SingboxConfigBuilderTests
 
         HttpClientConfig directClient = config.HttpClients.Single(client =>
             client.Tag == HttpClientTags.RuleSetDirect);
-        HttpClientConfig proxyClient = config.HttpClients.Single(client =>
-            client.Tag == HttpClientTags.RuleSetProxy);
-        SingboxRuleSet adGuardRuleSet = config.Route.RuleSet.Single(ruleSet =>
-            ruleSet.Tag == SingboxOptions.AdGuardDnsRuleSetTag);
-        SingboxRuleSet ordinaryRuleSet = config.Route.RuleSet.First(ruleSet =>
-            ruleSet.Tag != SingboxOptions.AdGuardDnsRuleSetTag);
 
         string json = new ConfigSerializer().Serialize(config);
-        using JsonDocument document = JsonDocument.Parse(json);
-        JsonElement serializedOrdinaryRuleSet = document.RootElement
-            .GetProperty("route")
-            .GetProperty("rule_set")
-            .EnumerateArray()
-            .Single(ruleSet => ruleSet.GetProperty("tag").GetString()
-                == ordinaryRuleSet.Tag);
 
         Assert.Multiple(() =>
         {
-            Assert.That(config.HttpClients, Has.Count.EqualTo(2));
-            Assert.That(
-                config.HttpClients.Select(client => client.Tag),
-                Is.Unique);
+            Assert.That(config.HttpClients, Has.Count.EqualTo(1));
             Assert.That(directClient.Detour, Is.EqualTo(Direct));
-            Assert.That(proxyClient.Detour, Is.EqualTo(MainProxyGroup));
             Assert.That(
                 config.Route.DefaultHttpClient,
                 Is.EqualTo(HttpClientTags.RuleSetDirect));
             Assert.That(
-                adGuardRuleSet.HttpClient,
-                Is.EqualTo(HttpClientTags.RuleSetProxy));
-            Assert.That(
-                config.Route.RuleSet.Where(ruleSet =>
-                    ruleSet.Tag != SingboxOptions.AdGuardDnsRuleSetTag)
-                    .All(ruleSet => ruleSet.HttpClient == null),
+                config.Route.RuleSet.All(ruleSet => ruleSet.HttpClient == null),
                 Is.True);
-            Assert.That(
-                serializedOrdinaryRuleSet.TryGetProperty("http_client", out _),
-                Is.False);
+            Assert.That(json, Does.Not.Contain("\"http_client\":"));
             Assert.That(json, Does.Not.Contain("\"http_client\": null"));
-            Assert.That(json, Does.Not.Contain("geosite-category-ads-all"));
+            Assert.That(json, Does.Contain(AdBlockingRuleSets.AntiAdTag));
+            Assert.That(json, Does.Contain(AdBlockingRuleSets.SagerAdsTag));
+            Assert.That(json, Does.Not.Contain("adguard-dns"));
         });
 
         Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config));
@@ -77,8 +52,7 @@ public sealed class SingboxConfigBuilderTests
         var singboxOptions = Options.Create(new SingboxOptions
         {
             MainProxyGroup = MainProxyGroup,
-            Direct = Direct,
-            AdGuardDnsRuleSetUrl = AdGuardDnsRuleSetUrl
+            Direct = Direct
         });
         var tailscaleOptions = Options.Create(new TailscaleOptions());
 

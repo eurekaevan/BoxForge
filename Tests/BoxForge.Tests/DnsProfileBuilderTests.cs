@@ -12,7 +12,7 @@ namespace BoxForge.Tests;
 public sealed class DnsProfileBuilderTests
 {
     [Test]
-    public void TailscaleAndNodeResolutionPrecedeAdGuardNxDomainRule()
+    public void TailscaleAndNodeResolutionPrecedeAdBlockingNxDomainRule()
     {
         var nodes = new NodeCatalog([], [], ["node.example.com"]);
         DnsConfig dns = CreateBuilder(tailscaleEnabled: true).Build(nodes);
@@ -22,31 +22,36 @@ public sealed class DnsProfileBuilderTests
         int nodeResolverIndex = dns.Rules.FindIndex(rule =>
             rule.Domain?.Contains("node.example.com") == true
             && rule.Server == SingboxTags.NodeResolverDns);
-        int adGuardIndex = dns.Rules.FindIndex(rule =>
+        int adBlockingIndex = dns.Rules.FindIndex(rule =>
             rule.RuleSet?.SequenceEqual(
-                [SingboxOptions.AdGuardDnsRuleSetTag]) == true);
-        DnsRule adGuardRule = dns.Rules[adGuardIndex];
+                [
+                    AdBlockingRuleSets.AntiAdTag,
+                    AdBlockingRuleSets.SagerAdsTag
+                ]) == true);
+        DnsRule adBlockingRule = dns.Rules[adBlockingIndex];
 
         string json = new ConfigSerializer().Serialize(new SingboxConfig
         {
             Dns = dns
         });
         using JsonDocument document = JsonDocument.Parse(json);
-        JsonElement serializedAdGuardRule = document.RootElement
+        JsonElement serializedAdBlockingRule = document.RootElement
             .GetProperty("dns")
-            .GetProperty("rules")[adGuardIndex];
+            .GetProperty("rules")[adBlockingIndex];
 
         Assert.Multiple(() =>
         {
             Assert.That(
-                new[] { tailscaleIndex, nodeResolverIndex, adGuardIndex },
+                new[] { tailscaleIndex, nodeResolverIndex, adBlockingIndex },
                 Is.Ordered.And.All.GreaterThanOrEqualTo(0));
-            Assert.That(adGuardRule.Action, Is.EqualTo(DnsRuleAction.Predefined));
-            Assert.That(adGuardRule.Rcode, Is.EqualTo(DnsResponseCode.NameError));
+            Assert.That(adBlockingRule.Action, Is.EqualTo(DnsRuleAction.Predefined));
+            Assert.That(adBlockingRule.Rcode, Is.EqualTo(DnsResponseCode.NameError));
             Assert.That(
-                serializedAdGuardRule.GetProperty("rcode").GetString(),
+                serializedAdBlockingRule.GetProperty("rcode").GetString(),
                 Is.EqualTo("NXDOMAIN"));
-            Assert.That(json, Does.Not.Contain("geosite-category-ads-all"));
+            Assert.That(json, Does.Contain(AdBlockingRuleSets.AntiAdTag));
+            Assert.That(json, Does.Contain(AdBlockingRuleSets.SagerAdsTag));
+            Assert.That(json, Does.Not.Contain("adguard-dns"));
         });
     }
 

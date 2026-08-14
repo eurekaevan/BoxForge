@@ -83,7 +83,6 @@ dotnet run -- generate \
 
 - `BOXFORGE_MainProxyGroup`
 - `BOXFORGE_Direct`
-- `BOXFORGE_Singbox__AdGuardDnsRuleSetUrl`
 - `BOXFORGE_TailscaleEnabled`
 - `BOXFORGE_TailscaleTag`
 - `BOXFORGE_TailscaleDnsTag`
@@ -123,8 +122,8 @@ dotnet test BoxForge.slnx --no-build
 - TUN 显式使用 `dns_mode: hijack`；代理节点域名和 Tailscale DNS 不返回
   optimistic 过期缓存，避免地址变化后继续使用旧记录。
 - 协议嗅探不限端口，但 TCP 仅启用 HTTP/TLS，UDP 仅启用 QUIC；固定
-  STUN 拒绝位于嗅探之前。命中国内直连规则的 UDP/443 会快速拒绝以促使
-  QUIC 回退 TCP；未命中的国外或最终代理 IPv4 流量继续使用 UDP/443。
+  STUN 拒绝位于嗅探之前。命中国内直连规则的流量允许使用 UDP/443；未命中
+  国内规则的国外或最终代理 IPv4 UDP/443 会快速拒绝，以促使 QUIC 回退 TCP。
 - 国内域名允许 A/AAAA，并将命中 `geosite-cn`、`geosite-category-pt` 或
   `geoip-cn` 的公网 IPv6 直连；其他 AAAA 返回空结果，未命中的公网 IPv6
   仍会拒绝，避免绕过代理策略。全局 DNS 使用 `prefer_ipv4`，保持 IPv4 优先
@@ -138,6 +137,6 @@ dotnet test BoxForge.slnx --no-build
   `optimistic` 缓存（`3d`）并通过 `store_dns` 持久化。
 - `cache_id` 是 YAML `proxies` 列表的规范化 SHA-256；只要核心代理列表相同，
   不同平台或其他配置项就会复用同一缓存身份。
-- 远程 rule-set 默认通过 `rule-set-direct` 使用直连出站下载；
-  `adguard-dns` 显式绑定 `rule-set-proxy`，通过主代理组下载。sing-box 的单个
-  远程 rule-set 只能绑定一个 HTTP client，此配置不提供直连/代理失败自动回退。
+- 远程 rule-set 通过 `rule-set-direct` 使用直连出站下载。广告过滤同时使用
+  anti-AD 的 `anti-ad-sing-box.srs` 与 SagerNet 的
+  `geosite-category-ads-all.srs`，不再依赖自建 AdGuard DNS Filter SRS。

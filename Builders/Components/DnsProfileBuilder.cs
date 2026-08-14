@@ -65,7 +65,11 @@ public class DnsProfileBuilder(
 
         dns.Rules.Add(new DnsRule
         {
-            RuleSet = [SingboxOptions.AdGuardDnsRuleSetTag],
+            RuleSet =
+            [
+                AdBlockingRuleSets.AntiAdTag,
+                AdBlockingRuleSets.SagerAdsTag
+            ],
             Action = DnsRuleAction.Predefined,
             Rcode = DnsResponseCode.NameError
         });
