@@ -124,6 +124,8 @@ dotnet test BoxForge.slnx --no-build
 - 协议嗅探不限端口，但 TCP 仅启用 HTTP/TLS，UDP 仅启用 QUIC；固定
   STUN 拒绝位于嗅探之前。命中国内直连规则的流量允许使用 UDP/443；未命中
   国内规则的国外或最终代理 IPv4 UDP/443 会快速拒绝，以促使 QUIC 回退 TCP。
+- `geosite-google` 默认使用美国组，并优先于所有引用 `geosite-cn` 的规则；
+  Google 的 UDP/443 仍会先拒绝并回退 TCP，再由 Google 服务组分流。
 - 国内域名允许 A/AAAA，并将命中 `geosite-cn`、`geosite-category-pt` 或
   `geoip-cn` 的公网 IPv6 直连；其他 AAAA 返回空结果，未命中的公网 IPv6
   仍会拒绝，避免绕过代理策略。全局 DNS 使用 `prefer_ipv4`，保持 IPv4 优先

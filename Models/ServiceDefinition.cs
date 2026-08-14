@@ -6,7 +6,8 @@ using System.Collections.Immutable;
 public record ServiceDefinition(
     string Name,
     RegionId? DefaultRegion,
-    ImmutableArray<string> RuleSets
+    ImmutableArray<string> RuleSets,
+    bool PrecedesDomesticRoutes = false
 );
 
 public record RegionDefinition(

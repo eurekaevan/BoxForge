@@ -47,6 +47,27 @@ public sealed class SingboxConfigBuilderTests
         Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config));
     }
 
+    [Test]
+    public void GoogleServiceDefaultsToUnitedStatesGroupWhenAvailable()
+    {
+        var planner = new ProfilePlanner(Options.Create(new SingboxOptions()));
+        ProfilePlan plan = planner.Plan(new NodeCatalog(
+            [],
+            ["美国 01", "美国 02"],
+            []));
+
+        SelectorOutbound google = plan.ServiceOutbounds.Single(outbound =>
+            outbound.Tag == ServiceGroupNames.Google);
+        string unitedStates = ProfileDefinitions.Regions.Single(region =>
+            region.Id == RegionId.UnitedStates).DisplayName;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(google.Default, Is.EqualTo(unitedStates));
+            Assert.That(google.Outbounds, Does.Contain(unitedStates));
+        });
+    }
+
     private static SingboxConfigBuilder CreateBuilder()
     {
         var singboxOptions = Options.Create(new SingboxOptions

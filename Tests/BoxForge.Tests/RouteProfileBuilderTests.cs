@@ -8,6 +8,9 @@ namespace BoxForge.Tests;
 [TestFixture]
 public sealed class RouteProfileBuilderTests
 {
+    private const string GoogleRuleSetUrl =
+        "https://fastly.jsdelivr.net/gh/SagerNet/sing-geosite@rule-set/geosite-google.srs";
+
     [Test]
     public void AdBlockingRuleSetsUseFixedRemoteBinaryUrlsAndAreRejected()
     {
@@ -56,7 +59,43 @@ public sealed class RouteProfileBuilderTests
     }
 
     [Test]
-    public void Udp443IsRejectedOnlyAfterDomesticDirectDestinations()
+    public void GoogleRoutesBeforeDomesticRulesAndUsesTcpFallback()
+    {
+        RouteConfig route = CreateBuilder().Build();
+
+        SingboxRuleSet? googleRuleSet = route.RuleSet.SingleOrDefault(ruleSet =>
+            ruleSet.Tag == "geosite-google");
+        int googleUdp443RejectIndex = route.Rules.FindIndex(rule =>
+            rule.Action == RouteRuleAction.Reject
+            && ContainsUdp443Condition(rule)
+            && rule.RuleSet?.Contains("geosite-google") == true);
+        int googleRouteIndex = FindRouteRuleIndex(route, "geosite-google");
+        int firstDomesticRuleIndex = route.Rules.FindIndex(rule =>
+            ReferencedRuleSets(rule).Contains("geosite-cn"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(googleRuleSet, Is.Not.Null);
+            Assert.That(googleRuleSet!.Type, Is.EqualTo(RuleSetType.Remote));
+            Assert.That(googleRuleSet.Format, Is.EqualTo(RuleSetFormat.Binary));
+            Assert.That(googleRuleSet.Url, Is.EqualTo(GoogleRuleSetUrl));
+            Assert.That(googleRuleSet.UpdateInterval, Is.EqualTo("1d"));
+            Assert.That(
+                new[]
+                {
+                    googleUdp443RejectIndex,
+                    googleRouteIndex,
+                    firstDomesticRuleIndex
+                },
+                Is.Ordered.And.All.GreaterThanOrEqualTo(0));
+            Assert.That(
+                route.Rules[googleRouteIndex].Outbound,
+                Is.EqualTo(ServiceGroupNames.Google));
+        });
+    }
+
+    [Test]
+    public void Udp443PolicyAllowsDomesticBeforeTheGeneralForeignReject()
     {
         RouteConfig route = CreateBuilder().Build();
 
@@ -68,32 +107,36 @@ public sealed class RouteProfileBuilderTests
         int geositeUdpDirectIndex = FindUdp443DirectIndex(route, "geosite-cn");
         int udpResolveIndex = FindUdp443ResolveIndex(route);
         int geoipUdpDirectIndex = FindUdp443DirectIndex(route, "geoip-cn");
-        int firstServiceIndex = FindFirstServiceIndex(route);
+        int foreignUdp443RejectIndex = route.Rules.FindIndex(rule =>
+            rule.Action == RouteRuleAction.Reject
+            && ContainsUdp443Condition(rule)
+            && rule.RuleSet == null);
+        int firstStandardServiceIndex = FindFirstStandardServiceIndex(route);
         int geositeDirectIndex = FindRouteRuleIndex(route, "geosite-cn");
         int resolveIndex = FindGeneralResolveIndex(route);
         int geoipDirectIndex = FindRouteRuleIndex(route, "geoip-cn");
 
-        Assert.That(udp443Rejects, Has.Count.EqualTo(1));
-        (RouteRule udp443Reject, int udp443RejectIndex) = udp443Rejects.Single();
+        Assert.That(udp443Rejects, Has.Count.EqualTo(2));
+        RouteRule foreignUdp443Reject = route.Rules[foreignUdp443RejectIndex];
         Assert.Multiple(() =>
         {
-            Assert.That(udp443Reject.Type, Is.Null);
-            Assert.That(udp443Reject.RuleSet, Is.Null);
-            Assert.That(udp443Reject.Inbound, Is.EquivalentTo(new[]
+            Assert.That(foreignUdp443Reject.Type, Is.Null);
+            Assert.That(foreignUdp443Reject.RuleSet, Is.Null);
+            Assert.That(foreignUdp443Reject.Inbound, Is.EquivalentTo(new[]
             {
                 SingboxTags.TunInbound,
                 SingboxTags.MixedInbound
             }));
-            Assert.That(udp443Reject.Port, Is.EqualTo(new[] { 443 }));
-            Assert.That(udp443Reject.Network, Is.EqualTo(new[] { "udp" }));
+            Assert.That(foreignUdp443Reject.Port, Is.EqualTo(new[] { 443 }));
+            Assert.That(foreignUdp443Reject.Network, Is.EqualTo(new[] { "udp" }));
             Assert.That(
                 new[]
                 {
                     geositeUdpDirectIndex,
                     udpResolveIndex,
                     geoipUdpDirectIndex,
-                    udp443RejectIndex,
-                    firstServiceIndex,
+                    foreignUdp443RejectIndex,
+                    firstStandardServiceIndex,
                     geositeDirectIndex,
                     resolveIndex,
                     geoipDirectIndex
@@ -120,7 +163,7 @@ public sealed class RouteProfileBuilderTests
         int publicIpv6RejectIndex = route.Rules.FindIndex(rule =>
             rule.Action == RouteRuleAction.Reject
             && rule.IpCidr?.Contains("::/0") == true);
-        int firstServiceIndex = FindFirstServiceIndex(route);
+        int firstStandardServiceIndex = FindFirstStandardServiceIndex(route);
 
         Assert.Multiple(() =>
         {
@@ -129,7 +172,7 @@ public sealed class RouteProfileBuilderTests
                 {
                     domesticIpv6DirectIndex,
                     publicIpv6RejectIndex,
-                    firstServiceIndex
+                    firstStandardServiceIndex
                 },
                 Is.Ordered.And.All.GreaterThanOrEqualTo(0));
             Assert.That(
@@ -178,13 +221,19 @@ public sealed class RouteProfileBuilderTests
             && rule.Port?.Contains(3478) == true);
         int tcpSniffIndex = FindSniffIndex(route, "tcp");
         int udpSniffIndex = FindSniffIndex(route, "udp");
+        int googleUdp443RejectIndex = route.Rules.FindIndex(rule =>
+            rule.Action == RouteRuleAction.Reject
+            && ContainsUdp443Condition(rule)
+            && rule.RuleSet?.Contains("geosite-google") == true);
+        int googleRouteIndex = FindRouteRuleIndex(route, "geosite-google");
         int geositeUdpDirectIndex = FindUdp443DirectIndex(route, "geosite-cn");
         int udpResolveIndex = FindUdp443ResolveIndex(route);
         int geoipUdpDirectIndex = FindUdp443DirectIndex(route, "geoip-cn");
-        int udp443RejectIndex = route.Rules.FindIndex(rule =>
+        int foreignUdp443RejectIndex = route.Rules.FindIndex(rule =>
             rule.Action == RouteRuleAction.Reject
-            && ContainsUdp443Condition(rule));
-        int firstServiceIndex = FindFirstServiceIndex(route);
+            && ContainsUdp443Condition(rule)
+            && rule.RuleSet == null);
+        int firstStandardServiceIndex = FindFirstStandardServiceIndex(route);
         int geositeDirectIndex = FindRouteRuleIndex(route, "geosite-cn");
         int resolveIndex = FindGeneralResolveIndex(route);
         int geoipDirectIndex = FindRouteRuleIndex(route, "geoip-cn");
@@ -195,11 +244,13 @@ public sealed class RouteProfileBuilderTests
                 stunRejectIndex,
                 tcpSniffIndex,
                 udpSniffIndex,
+                googleUdp443RejectIndex,
+                googleRouteIndex,
                 geositeUdpDirectIndex,
                 udpResolveIndex,
                 geoipUdpDirectIndex,
-                udp443RejectIndex,
-                firstServiceIndex,
+                foreignUdp443RejectIndex,
+                firstStandardServiceIndex,
                 geositeDirectIndex,
                 resolveIndex,
                 geoipDirectIndex
@@ -231,10 +282,12 @@ public sealed class RouteProfileBuilderTests
             Options.Create(new SingboxOptions()),
             Options.Create(new TailscaleOptions()));
 
-    private static int FindFirstServiceIndex(RouteConfig route) =>
+    private static int FindFirstStandardServiceIndex(RouteConfig route) =>
         route.Rules.FindIndex(rule =>
             rule.Action == RouteRuleAction.Route
-            && ProfileDefinitions.Services.Any(service =>
+            && ProfileDefinitions.Services
+                .Where(service => !service.PrecedesDomesticRoutes)
+                .Any(service =>
                 rule.Outbound == service.Name));
 
     private static int FindUdp443DirectIndex(RouteConfig route, string ruleSet) =>

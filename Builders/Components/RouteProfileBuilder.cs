@@ -1,4 +1,5 @@
 using BoxForge.Configuration;
+using BoxForge.Models;
 using BoxForge.Models.Singbox;
 using Microsoft.Extensions.Options;
 
@@ -27,6 +28,7 @@ public class RouteProfileBuilder(
                 AdBlockingRuleSets.SagerAdsTag,
                 AdBlockingRuleSets.SagerAdsUrl),
             CreateRemoteRuleSet("geosite-category-pt", "geosite", "geosite-category-pt"),
+            CreateRemoteRuleSet("geosite-google", "geosite", "geosite-google"),
             CreateRemoteRuleSet("geosite-cn", "geosite", "geosite-cn"),
             CreateRemoteRuleSet("geoip-cn", "geoip", "geoip-cn"),
             CreateRemoteRuleSet("geosite-spotify", "geosite", "geosite-spotify"),
@@ -80,7 +82,18 @@ public class RouteProfileBuilder(
                     AdBlockingRuleSets.SagerAdsTag
                 ],
                 Action = RouteRuleAction.Reject
-            },
+            }
+        ]);
+
+        foreach (var service in ProfileDefinitions.Services.Where(
+            service => service.PrecedesDomesticRoutes
+                && service.RuleSets.Length > 0))
+        {
+            rules.Add(CreateUdp443RejectRule([.. service.RuleSets]));
+            rules.Add(CreateServiceRouteRule(service));
+        }
+
+        rules.AddRange([
             CreateDomesticIpv6DirectRule(singbox.Direct),
             new() { IpCidr = ["::/0"], Action = RouteRuleAction.Reject }
         ]);
@@ -95,20 +108,14 @@ public class RouteProfileBuilder(
                 Action = RouteRuleAction.Resolve
             },
             CreateDomesticUdp443DirectRule(["geoip-cn"], singbox.Direct),
-            CreateForeignUdp443RejectRule()
+            CreateUdp443RejectRule()
         ]);
 
-        foreach (var service in ProfileDefinitions.Services)
+        foreach (var service in ProfileDefinitions.Services.Where(
+            service => !service.PrecedesDomesticRoutes
+                && service.RuleSets.Length > 0))
         {
-            if (service.RuleSets.Length > 0)
-            {
-                rules.Add(new RouteRule
-                {
-                    RuleSet = [.. service.RuleSets],
-                    Action = RouteRuleAction.Route,
-                    Outbound = service.Name
-                });
-            }
+            rules.Add(CreateServiceRouteRule(service));
         }
 
         rules.AddRange([
@@ -161,13 +168,23 @@ public class RouteProfileBuilder(
             Outbound = directOutbound
         };
 
-    private static RouteRule CreateForeignUdp443RejectRule() =>
+    private static RouteRule CreateUdp443RejectRule(
+        List<string>? ruleSets = null) =>
         new()
         {
             Inbound = [SingboxTags.TunInbound, SingboxTags.MixedInbound],
             Port = [443],
             Network = ["udp"],
+            RuleSet = ruleSets,
             Action = RouteRuleAction.Reject
+        };
+
+    private static RouteRule CreateServiceRouteRule(ServiceDefinition service) =>
+        new()
+        {
+            RuleSet = [.. service.RuleSets],
+            Action = RouteRuleAction.Route,
+            Outbound = service.Name
         };
 
     private static SingboxRuleSet CreateRemoteRuleSet(
