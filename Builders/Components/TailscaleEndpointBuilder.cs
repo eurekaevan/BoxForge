@@ -28,7 +28,8 @@ public class TailscaleEndpointBuilder(IOptions<TailscaleOptions> options)
                 ExitNode = NullIfWhiteSpace(tailscaleOptions.ExitNode),
                 ExitNodeAllowLanAccess = string.IsNullOrWhiteSpace(tailscaleOptions.ExitNode)
                     ? null
-                    : tailscaleOptions.ExitNodeAllowLanAccess
+                    : tailscaleOptions.ExitNodeAllowLanAccess,
+                TaildropDirectory = NullIfWhiteSpace(tailscaleOptions.TaildropDirectory)
             }
         ];
     }

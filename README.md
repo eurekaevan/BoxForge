@@ -11,7 +11,7 @@ CLI 负责解析参数、调用本地生成服务并返回退出码，转换与�
   `anytls` 节点
 - 自动生成地区分组、服务分组、DNS、路由规则和远程 rule-set
 - 支持 Windows、Android 和 Linux 平台差异配置
-- 可选 sing-box 内置 Tailscale endpoint，复用已有系统 VPN/TUN
+- 可选 sing-box 内置 Tailscale endpoint，支持 MagicDNS、路由和 Taildrop
 - 输入与平台按固定顺序处理，输出具有确定性
 - 全部转换成功后才原子替换输出目录；失败时保留原输出
 - 每个 YAML 只解析和转换节点一次，再用于所有目标平台
@@ -20,7 +20,7 @@ CLI 负责解析参数、调用本地生成服务并返回退出码，转换与�
 ## 运行环境
 
 - .NET SDK 10.0
-- sing-box 1.14 或更高版本
+- sing-box 1.14.0-beta.15 或更高版本
 - NuGet 依赖：YamlDotNet、Microsoft.Extensions.Configuration 相关包
 
 ## 非交互式生成
@@ -92,6 +92,7 @@ dotnet run -- generate \
 - `BOXFORGE_TailscaleAcceptRoutes`
 - `BOXFORGE_TailscaleExitNode`
 - `BOXFORGE_TailscaleExitNodeAllowLanAccess`
+- `BOXFORGE_TailscaleTaildropDirectory`
 
 也支持分组形式；嵌套键使用双下划线，例如：
 
@@ -103,9 +104,15 @@ dotnet run -- generate --platform Android
 新旧形式同时存在时，分组形式优先。
 
 启用 Tailscale 后，输出包含一个 `tailscale` endpoint。它复用 sing-box 已有的
-系统 VPN/TUN，不创建第二个系统 VPN 接口。Android 上需要 sing-box 1.14 或更高
-版本，并在客户端的“工具 > Endpoints”中完成登录。登录状态保存在
+系统 VPN/TUN，不创建第二个系统 VPN 接口。请使用 sing-box 1.14.0-beta.15 或
+更高版本，并在客户端的“工具 > Endpoints”中完成登录。登录状态保存在
 `TailscaleStateDirectory`，不会写入 `config.json`。
+
+Taildrop 接收目录默认为 `Taildrop`，可通过
+`BOXFORGE_TailscaleTaildropDirectory` 或分组形式
+`BOXFORGE_Tailscale__TaildropDirectory` 覆盖。相对路径以 sing-box 工作目录为基准；
+发送和管理文件需使用 sing-box 图形客户端、Dashboard 或 `sing-box api`，
+并在 Tailscale 管理端启用文件共享。
 
 ## 开发验证
 

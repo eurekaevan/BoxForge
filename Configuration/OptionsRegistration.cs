@@ -71,6 +71,11 @@ public static class OptionsRegistration
                 "Tailscale:ExitNodeAllowLanAccess",
                 "TailscaleExitNodeAllowLanAccess",
                 false);
+            options.TaildropDirectory = Read(
+                configuration,
+                "Tailscale:TaildropDirectory",
+                "TailscaleTaildropDirectory",
+                "Taildrop");
         });
 
         services.AddSingleton<IValidateOptions<SingboxOptions>, SingboxOptionsValidator>();

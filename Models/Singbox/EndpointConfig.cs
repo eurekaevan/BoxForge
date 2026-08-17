@@ -20,4 +20,5 @@ public record TailscaleEndpoint : Endpoint
     [JsonPropertyName("accept_routes")] public bool AcceptRoutes { get; init; }
     [JsonPropertyName("exit_node")] public string? ExitNode { get; init; }
     [JsonPropertyName("exit_node_allow_lan_access")] public bool? ExitNodeAllowLanAccess { get; init; }
+    [JsonPropertyName("taildrop_directory")] public string? TaildropDirectory { get; init; }
 }
