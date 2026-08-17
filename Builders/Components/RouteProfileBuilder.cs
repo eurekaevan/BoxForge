@@ -5,7 +5,7 @@ using Microsoft.Extensions.Options;
 
 namespace BoxForge.Builders.Components;
 
-public class RouteProfileBuilder(
+public sealed class RouteProfileBuilder(
     IOptions<SingboxOptions> singboxOptions,
     IOptions<TailscaleOptions> tailscaleOptions)
 {

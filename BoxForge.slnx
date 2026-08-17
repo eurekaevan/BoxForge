@@ -4,5 +4,6 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
+  <Project Path="BoxForge.csproj" />
   <Project Path="Tests/BoxForge.Tests/BoxForge.Tests.csproj" />
 </Solution>

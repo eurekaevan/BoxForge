@@ -9,7 +9,7 @@ public interface IClashParser
     ClashConfig? Parse(string yamlContent);
 }
 
-public class ClashParser : IClashParser
+public sealed class ClashParser : IClashParser
 {
     public ClashConfig? Parse(string yamlContent)
     {

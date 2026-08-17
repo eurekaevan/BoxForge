@@ -4,7 +4,7 @@ using BoxForge.Models.Singbox;
 
 namespace BoxForge.Builders.Components;
 
-public class TailscaleEndpointBuilder(IOptions<TailscaleOptions> options)
+public sealed class TailscaleEndpointBuilder(IOptions<TailscaleOptions> options)
 {
     private readonly TailscaleOptions tailscaleOptions = options.Value;
 

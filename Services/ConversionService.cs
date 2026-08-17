@@ -7,7 +7,7 @@ using BoxForge.Models.Singbox;
 
 namespace BoxForge.Services;
 
-public class ConversionService(
+public sealed class ConversionService(
     IClashParser clashParser,
     NodeCatalogBuilder nodeCatalogBuilder,
     IProxyCacheIdGenerator proxyCacheIdGenerator,

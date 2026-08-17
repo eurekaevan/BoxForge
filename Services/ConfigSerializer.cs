@@ -13,7 +13,7 @@ public interface IConfigSerializer
     string GetContentHash(string content);
 }
 
-public class ConfigSerializer : IConfigSerializer
+public sealed class ConfigSerializer : IConfigSerializer
 {
     private readonly JsonSerializerOptions _jsonOptions = new()
     {

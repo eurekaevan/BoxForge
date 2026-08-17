@@ -10,7 +10,7 @@ public interface ISingboxConfigBuilder
     SingboxConfig Build(SingboxBuildRequest request);
 }
 
-public class SingboxConfigBuilder(
+public sealed class SingboxConfigBuilder(
     ProfilePlanner profilePlanner,
     TailscaleEndpointBuilder tailscaleEndpointBuilder,
     DnsProfileBuilder dnsProfileBuilder,

@@ -5,7 +5,7 @@ using BoxForge.Models.Singbox;
 
 namespace BoxForge.Builders.Components;
 
-public class ProfilePlanner(IOptions<SingboxOptions> options)
+public sealed class ProfilePlanner(IOptions<SingboxOptions> options)
 {
     private readonly SingboxOptions singboxOptions = options.Value;
 

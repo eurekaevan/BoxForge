@@ -8,7 +8,7 @@ using BoxForge.Models.Singbox;
 
 namespace BoxForge.Builders.Components;
 
-public partial class NodeCatalogBuilder(
+public sealed partial class NodeCatalogBuilder(
     IEnumerable<IProxyConverter> converters,
     ILogger<NodeCatalogBuilder> logger)
 {

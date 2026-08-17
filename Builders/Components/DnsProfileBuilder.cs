@@ -4,7 +4,7 @@ using Microsoft.Extensions.Options;
 
 namespace BoxForge.Builders.Components;
 
-public class DnsProfileBuilder(
+public sealed class DnsProfileBuilder(
     IOptions<SingboxOptions> singboxOptions,
     IOptions<TailscaleOptions> tailscaleOptions)
 {
