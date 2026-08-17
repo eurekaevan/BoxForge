@@ -2,6 +2,11 @@ namespace BoxForge.Configuration;
 
 public static class SingboxTags
 {
+    public const string MainProxyGroup = "🚀 PROXIES";
+    public const string DirectOutbound = "DIRECT";
+    public const string TailscaleEndpoint = "tailscale";
+    public const string TailscaleDns = "tailscale-dns";
+    public const string TailscaleStateDirectory = "tailscale";
     public const string BootstrapDns = "bootstrap";
     public const string NodeResolverDns = "node-resolver";
     public const string LocalTencentDns = "local-tencent";

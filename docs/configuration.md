@@ -1,36 +1,29 @@
 # 配置参考
 
-BoxForge 通过 .NET 环境变量配置提供程序读取 `BOXFORGE_` 前缀的运行时设置。
-推荐使用分组键，环境变量中的 `__` 对应配置路径中的 `:`。为了兼容旧
-部署，所有设置仍接受扁平键；两种写法同时存在时，分组键优先。
+BoxForge 只保留一个运行时设置：是否生成 Tailscale endpoint。使用分组键时，
+环境变量中的 `__` 对应配置路径中的 `:`。
 
 ## 配置表
 
 | 推荐环境变量 | 兼容键 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `BOXFORGE_Singbox__MainProxyGroup` | `BOXFORGE_MainProxyGroup` | `🚀 PROXIES` | 主选择器标签，也是默认最终出站 |
-| `BOXFORGE_Singbox__Direct` | `BOXFORGE_Direct` | `DIRECT` | 直连 outbound 标签 |
 | `BOXFORGE_Tailscale__Enabled` | `BOXFORGE_TailscaleEnabled` | `false` | 是否生成 Tailscale endpoint |
-| `BOXFORGE_Tailscale__Tag` | `BOXFORGE_TailscaleTag` | `tailscale` | Tailscale endpoint 标签 |
-| `BOXFORGE_Tailscale__DnsTag` | `BOXFORGE_TailscaleDnsTag` | `tailscale-dns` | MagicDNS 服务器标签 |
-| `BOXFORGE_Tailscale__StateDirectory` | `BOXFORGE_TailscaleStateDirectory` | `tailscale` | sing-box 保存 Tailscale 登录状态的目录 |
-| `BOXFORGE_Tailscale__ControlUrl` | `BOXFORGE_TailscaleControlUrl` | 空 | 可选的 HTTP(S) 控制平面地址 |
-| `BOXFORGE_Tailscale__Hostname` | `BOXFORGE_TailscaleHostname` | 空 | 可选的 tailnet 设备名 |
-| `BOXFORGE_Tailscale__AcceptRoutes` | `BOXFORGE_TailscaleAcceptRoutes` | `true` | 是否接受 tailnet 通告的子网路由 |
-| `BOXFORGE_Tailscale__ExitNode` | `BOXFORGE_TailscaleExitNode` | 空 | 可选的出口节点 |
-| `BOXFORGE_Tailscale__ExitNodeAllowLanAccess` | `BOXFORGE_TailscaleExitNodeAllowLanAccess` | `false` | 使用出口节点时是否保留本地网访问 |
-| `BOXFORGE_Tailscale__TaildropDirectory` | `BOXFORGE_TailscaleTaildropDirectory` | 按平台 | 覆盖所有平台的 Taildrop 接收目录；空白值表示不写入该字段 |
 
-`Enabled`、`AcceptRoutes` 和 `ExitNodeAllowLanAccess` 只接受 `true` 或 `false`（不区分
-大小写）。无法解析的布尔值会使生成失败，而不会被静默当作默认值。
+`Enabled` 只接受 `true` 或 `false`（不区分大小写）。无法解析的值会使生成失败。
 
-## 校验约束
+## 代码固定值
 
-- `MainProxyGroup` 和 `Direct` 不能为空，也不能相同。
-- 启用 Tailscale 时，`Tag` 和 `DnsTag` 不能为空。
-- Tailscale `Tag` 不能与 `DnsTag`、`MainProxyGroup` 或 `Direct` 相同。
-- 非空 `ControlUrl` 必须是绝对 HTTP(S) URL。
-- 没有配置 `ExitNode` 时，`ExitNodeAllowLanAccess` 不会写入生成的 JSON。
+| 内容 | 固定值 |
+| --- | --- |
+| 主代理组 | `🚀 PROXIES` |
+| 直连 outbound | `DIRECT` |
+| Tailscale endpoint 标签 | `tailscale` |
+| Tailscale DNS 标签 | `tailscale-dns` |
+| Tailscale 状态目录 | `tailscale` |
+| `accept_routes` | `true` |
+
+没有使用值的可选字段（`control_url`、`hostname`、`exit_node` 和
+`exit_node_allow_lan_access`）不写入生成的 JSON，也不提供环境变量入口。
 
 ## Tailscale 运行说明
 
@@ -38,7 +31,7 @@ BoxForge 通过 .NET 环境变量配置提供程序读取 `BOXFORGE_` 前缀的�
 VPN/TUN，不创建第二个系统 VPN 接口。登录状态保存在 `StateDirectory`，
 不会写入 `config.json`。
 
-未配置 `TaildropDirectory` 时，BoxForge 会按目标平台生成：
+`taildrop_directory` 不提供环境变量入口，始终按目标平台生成：
 
 | 平台 | 生成值 | 运行时含义 |
 | --- | --- | --- |
@@ -46,7 +39,7 @@ VPN/TUN，不创建第二个系统 VPN 接口。登录状态保存在 `StateDire
 | Windows | `$USERPROFILE\Downloads\Taildrop` | sing-box 在运行时展开当前进程账户的 `USERPROFILE` |
 | Linux | `$HOME/Downloads/Taildrop` | sing-box 在运行时展开当前进程账户的 `HOME` |
 
-`TaildropDirectory` 使用相对路径时以 sing-box 工作目录为基准。Windows 和
+Android 的相对路径以 sing-box 工作目录为基准。Windows 和
 Linux 的环境变量属于运行 sing-box 的进程账户；由系统服务运行时，
 它们不一定指向桌面登录用户。目标账户必须对展开后的目录具有写权限。
 

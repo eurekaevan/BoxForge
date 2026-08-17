@@ -6,17 +6,15 @@ using Microsoft.Extensions.Options;
 namespace BoxForge.Builders.Components;
 
 public sealed class RouteProfileBuilder(
-    IOptions<SingboxOptions> singboxOptions,
     IOptions<TailscaleOptions> tailscaleOptions)
 {
-    private readonly SingboxOptions singbox = singboxOptions.Value;
     private readonly TailscaleOptions tailscale = tailscaleOptions.Value;
 
     public RouteConfig Build()
     {
         var route = new RouteConfig
         {
-            Final = singbox.MainProxyGroup,
+            Final = SingboxTags.MainProxyGroup,
             DefaultHttpClient = HttpClientTags.RuleSetDirect
         };
 
@@ -62,15 +60,15 @@ public sealed class RouteProfileBuilder(
             rules.Add(new RouteRule
             {
                 Inbound = [SingboxTags.TunInbound, SingboxTags.MixedInbound],
-                PreferredBy = [tailscale.Tag],
+                PreferredBy = [SingboxTags.TailscaleEndpoint],
                 Action = RouteRuleAction.Route,
-                Outbound = tailscale.Tag
+                Outbound = SingboxTags.TailscaleEndpoint
             });
         }
 
         rules.AddRange([
-            new RouteRule { IpIsPrivate = true, Action = RouteRuleAction.Route, Outbound = singbox.Direct },
-            new() { IpCidr = ["223.5.5.5/32"], Action = RouteRuleAction.Route, Outbound = singbox.Direct },
+            new RouteRule { IpIsPrivate = true, Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound },
+            new() { IpCidr = ["223.5.5.5/32"], Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound },
             new() { Port = [3478, 3479, 19302, 19303], Network = ["udp"], Action = RouteRuleAction.Reject },
             CreateSniffRule("tcp", ["http", "tls"]),
             CreateSniffRule("udp", ["quic"]),
@@ -99,12 +97,12 @@ public sealed class RouteProfileBuilder(
         }
 
         rules.AddRange([
-            CreateDomesticIpv6DirectRule(singbox.Direct),
+            CreateDomesticIpv6DirectRule(SingboxTags.DirectOutbound),
             new() { IpCidr = ["::/0"], Action = RouteRuleAction.Reject }
         ]);
 
         rules.AddRange([
-            CreateDomesticUdp443DirectRule(["geosite-cn", "geosite-category-pt"], singbox.Direct),
+            CreateDomesticUdp443DirectRule(["geosite-cn", "geosite-category-pt"], SingboxTags.DirectOutbound),
             new RouteRule
             {
                 Inbound = [SingboxTags.MixedInbound],
@@ -112,7 +110,7 @@ public sealed class RouteProfileBuilder(
                 Network = ["udp"],
                 Action = RouteRuleAction.Resolve
             },
-            CreateDomesticUdp443DirectRule(["geoip-cn"], singbox.Direct),
+            CreateDomesticUdp443DirectRule(["geoip-cn"], SingboxTags.DirectOutbound),
             CreateUdp443RejectRule()
         ]);
 
@@ -124,9 +122,9 @@ public sealed class RouteProfileBuilder(
         }
 
         rules.AddRange([
-            new RouteRule { RuleSet = ["geosite-cn", "geosite-category-pt"], Action = RouteRuleAction.Route, Outbound = singbox.Direct },
+            new RouteRule { RuleSet = ["geosite-cn", "geosite-category-pt"], Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound },
             new RouteRule { Inbound = [SingboxTags.MixedInbound], Action = RouteRuleAction.Resolve },
-            new RouteRule { RuleSet = ["geoip-cn"], Action = RouteRuleAction.Route, Outbound = singbox.Direct }
+            new RouteRule { RuleSet = ["geoip-cn"], Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound }
         ]);
 
         route.Rules.AddRange(rules);

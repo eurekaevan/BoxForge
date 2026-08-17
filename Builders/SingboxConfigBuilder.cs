@@ -11,14 +11,13 @@ public interface ISingboxConfigBuilder
 }
 
 public sealed class SingboxConfigBuilder(
-    ProfilePlanner profilePlanner,
     TailscaleEndpointBuilder tailscaleEndpointBuilder,
     DnsProfileBuilder dnsProfileBuilder,
     RouteProfileBuilder routeProfileBuilder) : ISingboxConfigBuilder
 {
     public SingboxConfig Build(SingboxBuildRequest request)
     {
-        var profiles = profilePlanner.Plan(request.Nodes);
+        var profiles = ProfilePlanner.Plan(request.Nodes);
         var endpoints = tailscaleEndpointBuilder.Build(request.Platform);
 
         var orderedOutbounds = new List<Outbound>();

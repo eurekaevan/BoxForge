@@ -1,15 +1,12 @@
-using Microsoft.Extensions.Options;
 using BoxForge.Configuration;
 using BoxForge.Models;
 using BoxForge.Models.Singbox;
 
 namespace BoxForge.Builders.Components;
 
-public sealed class ProfilePlanner(IOptions<SingboxOptions> options)
+public static class ProfilePlanner
 {
-    private readonly SingboxOptions singboxOptions = options.Value;
-
-    public ProfilePlan Plan(NodeCatalog nodes)
+    public static ProfilePlan Plan(NodeCatalog nodes)
     {
         var generatedRegions = new Dictionary<RegionId, string>();
         var regionOutbounds = BuildRegionOutbounds(nodes, generatedRegions);
@@ -17,7 +14,7 @@ public sealed class ProfilePlanner(IOptions<SingboxOptions> options)
         var serviceOutbounds = BuildServiceOutbounds(nodes, generatedRegions);
         var directOutbound = new DirectOutbound
         {
-            Tag = singboxOptions.Direct,
+            Tag = SingboxTags.DirectOutbound,
             DomainResolver = SingboxTags.LocalDns
         };
 
@@ -58,7 +55,7 @@ public sealed class ProfilePlanner(IOptions<SingboxOptions> options)
         return outbounds;
     }
 
-    private SelectorOutbound BuildMainOutbound(
+    private static SelectorOutbound BuildMainOutbound(
         NodeCatalog nodes,
         List<SelectorOutbound> regionOutbounds)
     {
@@ -66,34 +63,34 @@ public sealed class ProfilePlanner(IOptions<SingboxOptions> options)
             .Select(outbound => outbound.Tag)
             .ToList();
         groupOptions.AddRange(nodes.Names);
-        groupOptions.Add(singboxOptions.Direct);
+        groupOptions.Add(SingboxTags.DirectOutbound);
 
         return new SelectorOutbound
         {
-            Tag = singboxOptions.MainProxyGroup,
+            Tag = SingboxTags.MainProxyGroup,
             Outbounds = groupOptions,
             Default = regionOutbounds.Count > 0
                 ? regionOutbounds[0].Tag
                 : nodes.Names.Count > 0
                     ? nodes.Names[0]
-                    : singboxOptions.Direct,
+                    : SingboxTags.DirectOutbound,
             InterruptExistConnections = true
         };
     }
 
-    private List<SelectorOutbound> BuildServiceOutbounds(
+    private static List<SelectorOutbound> BuildServiceOutbounds(
         NodeCatalog nodes,
         Dictionary<RegionId, string> generatedRegions)
     {
-        var groupOptions = new List<string> { singboxOptions.MainProxyGroup };
+        var groupOptions = new List<string> { SingboxTags.MainProxyGroup };
         groupOptions.AddRange(generatedRegions.Values);
         groupOptions.AddRange(nodes.Names);
-        groupOptions.Add(singboxOptions.Direct);
+        groupOptions.Add(SingboxTags.DirectOutbound);
 
         var outbounds = new List<SelectorOutbound>();
         foreach (var service in ProfileDefinitions.Services)
         {
-            var defaultSelection = singboxOptions.MainProxyGroup;
+            var defaultSelection = SingboxTags.MainProxyGroup;
             if (service.DefaultRegion.HasValue
                 && generatedRegions.TryGetValue(
                     service.DefaultRegion.Value,

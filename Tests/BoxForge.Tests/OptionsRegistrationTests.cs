@@ -9,56 +9,34 @@ namespace BoxForge.Tests;
 public sealed class OptionsRegistrationTests
 {
     [Test]
-    public void NestedKeysTakePriorityOverLegacyKeys()
+    public void NestedEnabledKeyTakesPriorityOverLegacyKey()
     {
         using ServiceProvider provider = CreateProvider(new Dictionary<string, string?>
         {
-            ["Singbox:MainProxyGroup"] = "nested-main",
-            ["MainProxyGroup"] = "legacy-main",
             ["Tailscale:Enabled"] = "true",
-            ["TailscaleEnabled"] = "false",
-            ["Tailscale:Tag"] = "nested-tailnet",
-            ["TailscaleTag"] = "legacy-tailnet"
+            ["TailscaleEnabled"] = "false"
         });
 
-        SingboxOptions singbox = provider
-            .GetRequiredService<IOptions<SingboxOptions>>()
-            .Value;
         TailscaleOptions tailscale = provider
             .GetRequiredService<IOptions<TailscaleOptions>>()
             .Value;
 
-        Assert.Multiple(() =>
-        {
-            Assert.That(singbox.MainProxyGroup, Is.EqualTo("nested-main"));
-            Assert.That(tailscale.Enabled, Is.True);
-            Assert.That(tailscale.Tag, Is.EqualTo("nested-tailnet"));
-        });
+        Assert.That(tailscale.Enabled, Is.True);
     }
 
     [Test]
-    public void LegacyKeysRemainSupported()
+    public void LegacyEnabledKeyRemainsSupported()
     {
         using ServiceProvider provider = CreateProvider(new Dictionary<string, string?>
         {
-            ["Direct"] = "legacy-direct",
-            ["TailscaleEnabled"] = "true",
-            ["TailscaleTaildropDirectory"] = "Received"
+            ["TailscaleEnabled"] = "true"
         });
 
-        SingboxOptions singbox = provider
-            .GetRequiredService<IOptions<SingboxOptions>>()
-            .Value;
         TailscaleOptions tailscale = provider
             .GetRequiredService<IOptions<TailscaleOptions>>()
             .Value;
 
-        Assert.Multiple(() =>
-        {
-            Assert.That(singbox.Direct, Is.EqualTo("legacy-direct"));
-            Assert.That(tailscale.Enabled, Is.True);
-            Assert.That(tailscale.TaildropDirectory, Is.EqualTo("Received"));
-        });
+        Assert.That(tailscale.Enabled, Is.True);
     }
 
     [Test]

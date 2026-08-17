@@ -67,17 +67,14 @@ singboxConfigs/
 
 ## 运行时配置
 
-运行时设置通过 `BOXFORGE_` 前缀的环境变量传入。推荐使用分组键，
-嵌套层级用双下划线表示：
+Tailscale endpoint 默认不生成。需要启用时设置：
 
 ```bash
-BOXFORGE_Singbox__MainProxyGroup='PROXY' \
 BOXFORGE_Tailscale__Enabled=true \
-BOXFORGE_Tailscale__TaildropDirectory='Received' \
 dotnet run -- generate --platform Android
 ```
 
-完整的配置表、默认值、旧键兼容关系和 Tailscale 约束见
+其余标签、目录及 endpoint 字段均由代码固定或按目标平台生成，见
 [配置参考](docs/configuration.md)。
 
 ## 文档

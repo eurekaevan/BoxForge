@@ -20,37 +20,21 @@ public sealed class TailscaleEndpointBuilder(IOptions<TailscaleOptions> options)
         [
             new TailscaleEndpoint
             {
-                Tag = tailscaleOptions.Tag,
+                Tag = SingboxTags.TailscaleEndpoint,
                 DomainResolver = SingboxTags.BootstrapDns,
-                StateDirectory = NullIfWhiteSpace(tailscaleOptions.StateDirectory),
-                ControlUrl = NullIfWhiteSpace(tailscaleOptions.ControlUrl),
-                Hostname = NullIfWhiteSpace(tailscaleOptions.Hostname),
-                AcceptRoutes = tailscaleOptions.AcceptRoutes,
-                ExitNode = NullIfWhiteSpace(tailscaleOptions.ExitNode),
-                ExitNodeAllowLanAccess = string.IsNullOrWhiteSpace(tailscaleOptions.ExitNode)
-                    ? null
-                    : tailscaleOptions.ExitNodeAllowLanAccess,
-                TaildropDirectory = ResolveTaildropDirectory(platform)
+                StateDirectory = SingboxTags.TailscaleStateDirectory,
+                AcceptRoutes = true,
+                TaildropDirectory = GetTaildropDirectory(platform)
             }
         ];
     }
 
-    private string? ResolveTaildropDirectory(TargetPlatform platform)
-    {
-        if (tailscaleOptions.TaildropDirectory is not null)
-        {
-            return NullIfWhiteSpace(tailscaleOptions.TaildropDirectory);
-        }
-
-        return platform switch
+    private static string GetTaildropDirectory(TargetPlatform platform) =>
+        platform switch
         {
             TargetPlatform.Android => "Taildrop",
             TargetPlatform.Windows => "$USERPROFILE\\Downloads\\Taildrop",
             TargetPlatform.Linux => "$HOME/Downloads/Taildrop",
             _ => throw new ArgumentOutOfRangeException(nameof(platform), platform, null)
         };
-    }
-
-    private static string? NullIfWhiteSpace(string value) =>
-        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }

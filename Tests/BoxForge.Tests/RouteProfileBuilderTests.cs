@@ -172,7 +172,7 @@ public sealed class RouteProfileBuilderTests
 
         int domesticIpv6DirectIndex = route.Rules.FindIndex(rule =>
             rule.Action == RouteRuleAction.Route
-            && rule.Outbound == new SingboxOptions().Direct
+            && rule.Outbound == SingboxTags.DirectOutbound
             && ContainsIpv6Condition(rule)
             && ReferencedRuleSets(rule).ToHashSet().SetEquals(new[]
             {
@@ -308,7 +308,6 @@ public sealed class RouteProfileBuilderTests
 
     private static RouteProfileBuilder CreateBuilder() =>
         new(
-            Options.Create(new SingboxOptions()),
             Options.Create(new TailscaleOptions()));
 
     private static int FindFirstStandardServiceIndex(RouteConfig route) =>

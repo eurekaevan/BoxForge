@@ -11,9 +11,6 @@ namespace BoxForge.Tests;
 [TestFixture]
 public sealed class SingboxConfigBuilderTests
 {
-    private const string MainProxyGroup = "custom-main";
-    private const string Direct = "custom-direct";
-
     [Test]
     public void RuleSetsUseOnlyTheDirectHttpClient()
     {
@@ -30,7 +27,7 @@ public sealed class SingboxConfigBuilderTests
         Assert.Multiple(() =>
         {
             Assert.That(config.HttpClients, Has.Count.EqualTo(1));
-            Assert.That(directClient.Detour, Is.EqualTo(Direct));
+            Assert.That(directClient.Detour, Is.EqualTo(SingboxTags.DirectOutbound));
             Assert.That(
                 config.Route.DefaultHttpClient,
                 Is.EqualTo(HttpClientTags.RuleSetDirect));
@@ -50,8 +47,7 @@ public sealed class SingboxConfigBuilderTests
     [Test]
     public void GoogleServiceDefaultsToUnitedStatesGroupWhenAvailable()
     {
-        var planner = new ProfilePlanner(Options.Create(new SingboxOptions()));
-        ProfilePlan plan = planner.Plan(new NodeCatalog(
+        ProfilePlan plan = ProfilePlanner.Plan(new NodeCatalog(
             [],
             ["美国 01", "美国 02"],
             []));
@@ -70,17 +66,11 @@ public sealed class SingboxConfigBuilderTests
 
     private static SingboxConfigBuilder CreateBuilder()
     {
-        var singboxOptions = Options.Create(new SingboxOptions
-        {
-            MainProxyGroup = MainProxyGroup,
-            Direct = Direct
-        });
         var tailscaleOptions = Options.Create(new TailscaleOptions());
 
         return new SingboxConfigBuilder(
-            new ProfilePlanner(singboxOptions),
             new TailscaleEndpointBuilder(tailscaleOptions),
-            new DnsProfileBuilder(singboxOptions, tailscaleOptions),
-            new RouteProfileBuilder(singboxOptions, tailscaleOptions));
+            new DnsProfileBuilder(tailscaleOptions),
+            new RouteProfileBuilder(tailscaleOptions));
     }
 }

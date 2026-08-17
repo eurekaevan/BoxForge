@@ -135,7 +135,6 @@ public sealed class DnsProfileBuilderTests
 
     private static DnsProfileBuilder CreateBuilder(bool tailscaleEnabled = false) =>
         new(
-            Options.Create(new SingboxOptions()),
             Options.Create(new TailscaleOptions
             {
                 Enabled = tailscaleEnabled

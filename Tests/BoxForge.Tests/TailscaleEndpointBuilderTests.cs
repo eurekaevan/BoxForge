@@ -29,44 +29,17 @@ public sealed class TailscaleEndpointBuilderTests
 
         Assert.Multiple(() =>
         {
+            Assert.That(endpoint.Tag, Is.EqualTo(SingboxTags.TailscaleEndpoint));
+            Assert.That(
+                endpoint.StateDirectory,
+                Is.EqualTo(SingboxTags.TailscaleStateDirectory));
+            Assert.That(endpoint.AcceptRoutes, Is.True);
             Assert.That(endpoint.TaildropDirectory, Is.EqualTo(expectedDirectory));
             Assert.That(json, Does.Contain("\"taildrop_directory\":"));
             Assert.That(json, Does.Contain(expectedDirectory.Replace("\\", "\\\\")));
-        });
-    }
-
-    [Test]
-    public void CustomTaildropDirectoryIsTrimmed()
-    {
-        TailscaleEndpoint endpoint = BuildEndpoint(new TailscaleOptions
-        {
-            Enabled = true,
-            TaildropDirectory = "  /var/lib/sing-box/taildrop  "
-        }, TargetPlatform.Android);
-
-        Assert.That(
-            endpoint.TaildropDirectory,
-            Is.EqualTo("/var/lib/sing-box/taildrop"));
-    }
-
-    [Test]
-    public void EmptyTaildropDirectoryIsOmittedToUseTheSingboxDefault()
-    {
-        TailscaleEndpoint endpoint = BuildEndpoint(new TailscaleOptions
-        {
-            Enabled = true,
-            TaildropDirectory = "   "
-        }, TargetPlatform.Android);
-
-        string json = new ConfigSerializer().Serialize(new SingboxConfig
-        {
-            Endpoints = [endpoint]
-        });
-
-        Assert.Multiple(() =>
-        {
-            Assert.That(endpoint.TaildropDirectory, Is.Null);
-            Assert.That(json, Does.Not.Contain("taildrop_directory"));
+            Assert.That(json, Does.Not.Contain("control_url"));
+            Assert.That(json, Does.Not.Contain("hostname"));
+            Assert.That(json, Does.Not.Contain("exit_node"));
         });
     }
 

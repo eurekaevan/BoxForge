@@ -5,10 +5,8 @@ using Microsoft.Extensions.Options;
 namespace BoxForge.Builders.Components;
 
 public sealed class DnsProfileBuilder(
-    IOptions<SingboxOptions> singboxOptions,
     IOptions<TailscaleOptions> tailscaleOptions)
 {
-    private readonly SingboxOptions singbox = singboxOptions.Value;
     private readonly TailscaleOptions tailscale = tailscaleOptions.Value;
 
     public DnsConfig Build(NodeCatalog nodes)
@@ -24,29 +22,29 @@ public sealed class DnsProfileBuilder(
                 SingboxTags.RemoteGoogleDns,
                 "8.8.8.8",
                 "dns.google",
-                singbox.MainProxyGroup),
+                SingboxTags.MainProxyGroup),
             CreateHttpsServer(
                 SingboxTags.RemoteDns,
                 "1.1.1.1",
                 "cloudflare-dns.com",
-                singbox.MainProxyGroup)
+                SingboxTags.MainProxyGroup)
         ]);
 
         if (tailscale.Enabled)
         {
             dns.Servers.Add(new TailscaleDnsServer
             {
-                Tag = tailscale.DnsTag,
-                EndpointTag = tailscale.Tag,
+                Tag = SingboxTags.TailscaleDns,
+                EndpointTag = SingboxTags.TailscaleEndpoint,
                 AcceptDefaultResolversValue = false
             });
 
             // sing-box 1.14 直接根据 Tailscale 的 MagicDNS 域名与分流后缀匹配。
             dns.Rules.Add(new DnsRule
             {
-                PreferredBy = [tailscale.DnsTag],
+                PreferredBy = [SingboxTags.TailscaleDns],
                 Action = DnsRuleAction.Route,
-                Server = tailscale.DnsTag,
+                Server = SingboxTags.TailscaleDns,
                 DisableOptimisticCache = true
             });
         }

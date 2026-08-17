@@ -29,7 +29,6 @@ public static class ServiceRegistration
         services.AddTransient<IProxyConverter, AnyTlsConverter>();
 
         services.AddTransient<NodeCatalogBuilder>();
-        services.AddTransient<ProfilePlanner>();
         services.AddTransient<TailscaleEndpointBuilder>();
         services.AddTransient<DnsProfileBuilder>();
         services.AddTransient<RouteProfileBuilder>();
