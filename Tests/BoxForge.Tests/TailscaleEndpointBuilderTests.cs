@@ -1,5 +1,6 @@
 using BoxForge.Builders.Components;
 using BoxForge.Configuration;
+using BoxForge.Models;
 using BoxForge.Models.Singbox;
 using BoxForge.Services;
 using Microsoft.Extensions.Options;
@@ -9,13 +10,17 @@ namespace BoxForge.Tests;
 [TestFixture]
 public sealed class TailscaleEndpointBuilderTests
 {
-    [Test]
-    public void EnabledEndpointUsesTheSingboxTaildropDefaultDirectory()
+    [TestCase(TargetPlatform.Android, "Taildrop")]
+    [TestCase(TargetPlatform.Windows, "$USERPROFILE\\Downloads\\Taildrop")]
+    [TestCase(TargetPlatform.Linux, "$HOME/Downloads/Taildrop")]
+    public void EnabledEndpointUsesThePlatformTaildropDirectory(
+        TargetPlatform platform,
+        string expectedDirectory)
     {
         TailscaleEndpoint endpoint = BuildEndpoint(new TailscaleOptions
         {
             Enabled = true
-        });
+        }, platform);
 
         string json = new ConfigSerializer().Serialize(new SingboxConfig
         {
@@ -24,8 +29,9 @@ public sealed class TailscaleEndpointBuilderTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(endpoint.TaildropDirectory, Is.EqualTo("Taildrop"));
-            Assert.That(json, Does.Contain("\"taildrop_directory\": \"Taildrop\""));
+            Assert.That(endpoint.TaildropDirectory, Is.EqualTo(expectedDirectory));
+            Assert.That(json, Does.Contain("\"taildrop_directory\":"));
+            Assert.That(json, Does.Contain(expectedDirectory.Replace("\\", "\\\\")));
         });
     }
 
@@ -36,7 +42,7 @@ public sealed class TailscaleEndpointBuilderTests
         {
             Enabled = true,
             TaildropDirectory = "  /var/lib/sing-box/taildrop  "
-        });
+        }, TargetPlatform.Android);
 
         Assert.That(
             endpoint.TaildropDirectory,
@@ -50,7 +56,7 @@ public sealed class TailscaleEndpointBuilderTests
         {
             Enabled = true,
             TaildropDirectory = "   "
-        });
+        }, TargetPlatform.Android);
 
         string json = new ConfigSerializer().Serialize(new SingboxConfig
         {
@@ -64,8 +70,10 @@ public sealed class TailscaleEndpointBuilderTests
         });
     }
 
-    private static TailscaleEndpoint BuildEndpoint(TailscaleOptions options) =>
+    private static TailscaleEndpoint BuildEndpoint(
+        TailscaleOptions options,
+        TargetPlatform platform) =>
         (TailscaleEndpoint)new TailscaleEndpointBuilder(Options.Create(options))
-            .Build()
+            .Build(platform)
             .Single();
 }

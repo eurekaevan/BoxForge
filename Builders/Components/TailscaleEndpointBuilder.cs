@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Options;
 using BoxForge.Configuration;
+using BoxForge.Models;
 using BoxForge.Models.Singbox;
 
 namespace BoxForge.Builders.Components;
@@ -8,7 +9,7 @@ public sealed class TailscaleEndpointBuilder(IOptions<TailscaleOptions> options)
 {
     private readonly TailscaleOptions tailscaleOptions = options.Value;
 
-    public List<Endpoint> Build()
+    public List<Endpoint> Build(TargetPlatform platform)
     {
         if (!tailscaleOptions.Enabled)
         {
@@ -29,9 +30,25 @@ public sealed class TailscaleEndpointBuilder(IOptions<TailscaleOptions> options)
                 ExitNodeAllowLanAccess = string.IsNullOrWhiteSpace(tailscaleOptions.ExitNode)
                     ? null
                     : tailscaleOptions.ExitNodeAllowLanAccess,
-                TaildropDirectory = NullIfWhiteSpace(tailscaleOptions.TaildropDirectory)
+                TaildropDirectory = ResolveTaildropDirectory(platform)
             }
         ];
+    }
+
+    private string? ResolveTaildropDirectory(TargetPlatform platform)
+    {
+        if (tailscaleOptions.TaildropDirectory is not null)
+        {
+            return NullIfWhiteSpace(tailscaleOptions.TaildropDirectory);
+        }
+
+        return platform switch
+        {
+            TargetPlatform.Android => "Taildrop",
+            TargetPlatform.Windows => "$USERPROFILE\\Downloads\\Taildrop",
+            TargetPlatform.Linux => "$HOME/Downloads/Taildrop",
+            _ => throw new ArgumentOutOfRangeException(nameof(platform), platform, null)
+        };
     }
 
     private static string? NullIfWhiteSpace(string value) =>

@@ -71,11 +71,10 @@ public static class OptionsRegistration
                 "Tailscale:ExitNodeAllowLanAccess",
                 "TailscaleExitNodeAllowLanAccess",
                 false);
-            options.TaildropDirectory = Read(
+            options.TaildropDirectory = ReadOptional(
                 configuration,
                 "Tailscale:TaildropDirectory",
-                "TailscaleTaildropDirectory",
-                "Taildrop");
+                "TailscaleTaildropDirectory");
         });
 
         services.AddSingleton<IValidateOptions<SingboxOptions>, SingboxOptionsValidator>();
@@ -115,4 +114,10 @@ public static class OptionsRegistration
         throw new FormatException(
             $"配置项 '{nestedKey}' 必须是 true 或 false。");
     }
+
+    private static string? ReadOptional(
+        IConfiguration configuration,
+        string nestedKey,
+        string legacyKey) =>
+        configuration[nestedKey] ?? configuration[legacyKey];
 }

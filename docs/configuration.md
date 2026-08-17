@@ -19,7 +19,7 @@ BoxForge 通过 .NET 环境变量配置提供程序读取 `BOXFORGE_` 前缀的�
 | `BOXFORGE_Tailscale__AcceptRoutes` | `BOXFORGE_TailscaleAcceptRoutes` | `true` | 是否接受 tailnet 通告的子网路由 |
 | `BOXFORGE_Tailscale__ExitNode` | `BOXFORGE_TailscaleExitNode` | 空 | 可选的出口节点 |
 | `BOXFORGE_Tailscale__ExitNodeAllowLanAccess` | `BOXFORGE_TailscaleExitNodeAllowLanAccess` | `false` | 使用出口节点时是否保留本地网访问 |
-| `BOXFORGE_Tailscale__TaildropDirectory` | `BOXFORGE_TailscaleTaildropDirectory` | `Taildrop` | Taildrop 接收目录 |
+| `BOXFORGE_Tailscale__TaildropDirectory` | `BOXFORGE_TailscaleTaildropDirectory` | 按平台 | 覆盖所有平台的 Taildrop 接收目录；空白值表示不写入该字段 |
 
 `Enabled`、`AcceptRoutes` 和 `ExitNodeAllowLanAccess` 只接受 `true` 或 `false`（不区分
 大小写）。无法解析的布尔值会使生成失败，而不会被静默当作默认值。
@@ -38,8 +38,19 @@ BoxForge 通过 .NET 环境变量配置提供程序读取 `BOXFORGE_` 前缀的�
 VPN/TUN，不创建第二个系统 VPN 接口。登录状态保存在 `StateDirectory`，
 不会写入 `config.json`。
 
-`TaildropDirectory` 的相对路径以 sing-box 工作目录为基准。发送和管理文件需使用
-sing-box 图形客户端、Dashboard 或 `sing-box api`，并在 Tailscale 管理端启用
-文件共享。
+未配置 `TaildropDirectory` 时，BoxForge 会按目标平台生成：
+
+| 平台 | 生成值 | 运行时含义 |
+| --- | --- | --- |
+| Android | `Taildrop` | SFA 工作目录下的 `Taildrop`；不直接写入公共 Download 目录 |
+| Windows | `$USERPROFILE\Downloads\Taildrop` | sing-box 在运行时展开当前进程账户的 `USERPROFILE` |
+| Linux | `$HOME/Downloads/Taildrop` | sing-box 在运行时展开当前进程账户的 `HOME` |
+
+`TaildropDirectory` 使用相对路径时以 sing-box 工作目录为基准。Windows 和
+Linux 的环境变量属于运行 sing-box 的进程账户；由系统服务运行时，
+它们不一定指向桌面登录用户。目标账户必须对展开后的目录具有写权限。
+
+发送和管理文件需使用 sing-box 图形客户端、Dashboard 或 `sing-box api`，
+并在 Tailscale 管理端启用文件共享。
 
 [返回 README](../README.md)

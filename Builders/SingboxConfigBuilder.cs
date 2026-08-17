@@ -19,7 +19,7 @@ public sealed class SingboxConfigBuilder(
     public SingboxConfig Build(SingboxBuildRequest request)
     {
         var profiles = profilePlanner.Plan(request.Nodes);
-        var endpoints = tailscaleEndpointBuilder.Build();
+        var endpoints = tailscaleEndpointBuilder.Build(request.Platform);
 
         var orderedOutbounds = new List<Outbound>();
         orderedOutbounds.Add(profiles.MainOutbound);

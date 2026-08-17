@@ -11,5 +11,5 @@ public sealed class TailscaleOptions
     public bool AcceptRoutes { get; set; } = true;
     public string ExitNode { get; set; } = "";
     public bool ExitNodeAllowLanAccess { get; set; }
-    public string TaildropDirectory { get; set; } = "Taildrop";
+    public string? TaildropDirectory { get; set; }
 }

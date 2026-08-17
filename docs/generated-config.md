@@ -13,6 +13,11 @@ TUN 固定启用 `auto_route`、`strict_route` 和 `dns_mode: hijack`，平台�
 | Linux | `system` | `auto_redirect: true`；代理出站使用 `tcp_keep_alive: 1m` 和 `tcp_keep_alive_interval: 30s` |
 | Windows | `mixed` | 代理出站使用 `tcp_keep_alive: 1m` 和 `tcp_keep_alive_interval: 30s` |
 
+启用 Tailscale 且未设置全局 `TaildropDirectory` 覆盖时，Android 使用
+SFA 工作目录下的 `Taildrop`，Windows 使用
+`$USERPROFILE\Downloads\Taildrop`，Linux 使用 `$HOME/Downloads/Taildrop`。环境
+变量由目标机器上的 sing-box 在运行时展开。
+
 ## DNS 与持久化缓存
 
 - 生成配置包含官方 `$schema`。
