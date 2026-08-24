@@ -8,6 +8,7 @@ sing-box 1.14 `config.json`。它会为 Windows、Android 和 Linux 生成平台
 
 - 支持 `trojan`、`vless`、`hysteria2`、`shadowsocks` (`ss`) 和 `anytls`
 - 自动生成地区分组、服务分组、DNS、路由规则和远程 rule-set
+- 强制代理节点与代理业务使用 IPv4，仅允许命中 `geoip-cn` 的公网 IPv6 直连
 - 可选 sing-box 内置 Tailscale endpoint，支持 MagicDNS、子网路由和 Taildrop
 - 每个 YAML 只解析和转换节点一次，再复用于所有目标平台
 - 输入与平台按固定顺序处理，生成结果具有确定性

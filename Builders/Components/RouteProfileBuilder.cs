@@ -83,6 +83,19 @@ public sealed class RouteProfileBuilder(
             }
         ]);
 
+        List<string> proxyServiceRuleSets =
+        [
+            .. ProfileDefinitions.Services
+                .SelectMany(service => service.RuleSets)
+                .Distinct(StringComparer.Ordinal)
+        ];
+        rules.Add(CreateMixedResolveRule(
+            proxyServiceRuleSets,
+            DnsStrategy.Ipv4Only));
+        rules.Add(CreateMixedResolveRule(
+            ["geosite-cn", "geosite-category-pt"],
+            DnsStrategy.PreferIpv4));
+
         var prioritizedServices = ProfileDefinitions.Services.Where(
             service => service.PrecedesDomesticRoutes
                 && service.RuleSets.Length > 0).ToList();
@@ -91,15 +104,15 @@ public sealed class RouteProfileBuilder(
             rules.Add(CreateUdp443RejectRule([.. service.RuleSets]));
         }
 
-        foreach (var service in prioritizedServices)
-        {
-            rules.Add(CreateServiceRouteRule(service));
-        }
-
         rules.AddRange([
             CreateDomesticIpv6DirectRule(SingboxTags.DirectOutbound),
             new() { IpCidr = ["::/0"], Action = RouteRuleAction.Reject }
         ]);
+
+        foreach (var service in prioritizedServices)
+        {
+            rules.Add(CreateServiceRouteRule(service));
+        }
 
         rules.AddRange([
             CreateDomesticUdp443DirectRule(["geosite-cn", "geosite-category-pt"], SingboxTags.DirectOutbound),
@@ -108,7 +121,8 @@ public sealed class RouteProfileBuilder(
                 Inbound = [SingboxTags.MixedInbound],
                 Port = [443],
                 Network = ["udp"],
-                Action = RouteRuleAction.Resolve
+                Action = RouteRuleAction.Resolve,
+                Strategy = DnsStrategy.Ipv4Only
             },
             CreateDomesticUdp443DirectRule(["geoip-cn"], SingboxTags.DirectOutbound),
             CreateUdp443RejectRule()
@@ -123,7 +137,12 @@ public sealed class RouteProfileBuilder(
 
         rules.AddRange([
             new RouteRule { RuleSet = ["geosite-cn", "geosite-category-pt"], Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound },
-            new RouteRule { Inbound = [SingboxTags.MixedInbound], Action = RouteRuleAction.Resolve },
+            new RouteRule
+            {
+                Inbound = [SingboxTags.MixedInbound],
+                Action = RouteRuleAction.Resolve,
+                Strategy = DnsStrategy.Ipv4Only
+            },
             new RouteRule { RuleSet = ["geoip-cn"], Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound }
         ]);
 
@@ -151,11 +170,22 @@ public sealed class RouteProfileBuilder(
                 new RouteRule { IpCidr = ["::/0"] },
                 new RouteRule
                 {
-                    RuleSet = ["geosite-cn", "geosite-category-pt", "geoip-cn"]
+                    RuleSet = ["geoip-cn"]
                 }
             ],
             Action = RouteRuleAction.Route,
             Outbound = directOutbound
+        };
+
+    private static RouteRule CreateMixedResolveRule(
+        List<string> ruleSets,
+        DnsStrategy strategy) =>
+        new()
+        {
+            Inbound = [SingboxTags.MixedInbound],
+            RuleSet = ruleSets,
+            Action = RouteRuleAction.Resolve,
+            Strategy = strategy
         };
 
     private static RouteRule CreateDomesticUdp443DirectRule(

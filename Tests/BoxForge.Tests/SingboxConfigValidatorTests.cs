@@ -83,6 +83,42 @@ public sealed class SingboxConfigValidatorTests
     }
 
     [Test]
+    public void ProxyServersMustUseIpv4OnlyResolutionAndRejectIpv6Literals()
+    {
+        SingboxConfig valid = CreateValidConfig();
+        SingboxConfig config = valid with
+        {
+            Outbounds =
+            [
+                .. valid.Outbounds,
+                new VlessOutbound
+                {
+                    Tag = "ipv6-proxy",
+                    Server = "2001:db8::1",
+                    ServerPort = 443,
+                    DomainResolver = new DnsResolverOptions
+                    {
+                        Server = "dns",
+                        Strategy = DnsStrategy.PreferIpv4
+                    },
+                    Uuid = "00000000-0000-4000-8000-000000000001"
+                }
+            ]
+        };
+
+        AssertDiagnostics(
+            config,
+            new ConfigDiagnostic(
+                "SB061",
+                "outbounds[2].domain_resolver.strategy",
+                "代理节点域名必须使用 ipv4_only 解析策略。"),
+            new ConfigDiagnostic(
+                "SB062",
+                "outbounds[2].server",
+                "代理节点不能使用 IPv6 字面量地址。"));
+    }
+
+    [Test]
     public void ModuleDiagnosticsPreserveCodesPathsMessagesAndOrder()
     {
         SingboxConfig config = CreateValidConfig() with
@@ -102,7 +138,11 @@ public sealed class SingboxConfigValidatorTests
                     Tag = "proxy",
                     Server = "",
                     ServerPort = 0,
-                    DomainResolver = "missing-dns",
+                    DomainResolver = new DnsResolverOptions
+                    {
+                        Server = "missing-dns",
+                        Strategy = DnsStrategy.Ipv4Only
+                    },
                     Uuid = "",
                     Tls = new OutboundTls
                     {
@@ -189,7 +229,7 @@ public sealed class SingboxConfigValidatorTests
             new("SB015", "http_clients[0].detour", "引用了不存在的 outbound 或 endpoint。"),
             new("SB019", "outbounds[0].server", "代理服务器地址不能为空。"),
             new("SB020", "outbounds[0].server_port", "代理节点必须配置有效端口。"),
-            new("SB004", "outbounds[0].domain_resolver", "引用了不存在的 DNS server。"),
+            new("SB004", "outbounds[0].domain_resolver.server", "引用了不存在的 DNS server。"),
             new("SB044", "outbounds[0].tls.server_name", "TLS server_name 不能为空。"),
             new("SB045", "outbounds[0].uuid", "VLESS UUID 不能为空。"),
             new("SB022", "inbounds[0].listen_port", "inbound 监听端口必须在 1-65535 之间。"),

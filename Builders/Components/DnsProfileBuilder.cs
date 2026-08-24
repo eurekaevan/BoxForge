@@ -72,6 +72,21 @@ public sealed class DnsProfileBuilder(
             Rcode = DnsResponseCode.NameError
         });
 
+        // 所有代理服务域名都禁止 AAAA。Google 等服务规则必须位于国内
+        // DNS 之前，避免被 geosite-cn 的交集提前返回 IPv6。
+        dns.Rules.Add(new DnsRule
+        {
+            RuleSet =
+            [
+                .. ProfileDefinitions.Services
+                    .SelectMany(service => service.RuleSets)
+                    .Distinct(StringComparer.Ordinal)
+            ],
+            QueryType = ["AAAA"],
+            Action = DnsRuleAction.Predefined,
+            Rcode = DnsResponseCode.NoError
+        });
+
         AddRace(
             dns.Rules,
             ["geosite-google"],

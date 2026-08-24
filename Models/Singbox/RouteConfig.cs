@@ -38,4 +38,5 @@ public record RouteRule
     [JsonPropertyName("outbound")] public string? Outbound { get; init; }
     [JsonPropertyName("sniffer")] public List<string>? Sniffer { get; init; }
     [JsonPropertyName("timeout")] public string? Timeout { get; init; }
+    [JsonPropertyName("strategy")] public DnsStrategy? Strategy { get; init; }
 }

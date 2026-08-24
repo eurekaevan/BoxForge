@@ -23,8 +23,12 @@ SFA 工作目录下的 `Taildrop`，Windows 使用
 - 生成配置包含官方 `$schema`。
 - DNS 默认使用 `prefer_ipv4`，缓存容量为 `4096`，并启用超时为 `3d` 的
   optimistic 缓存和 reverse mapping。
+- 代理节点域名固定通过 `node-resolver` 以 `ipv4_only` 解析；所有代理出站的
+  `domain_resolver` 也显式指定 `ipv4_only`。IPv6 字面量代理节点会在生成时
+  被校验器拒绝。
 - 代理节点域名与 Tailscale DNS 显式禁用 optimistic 过期缓存，避免地址
   变更后继续使用旧记录。
+- 代理服务域名的 AAAA 查询返回空 `NOERROR`；国内 DNS 规则仍允许 A/AAAA。
 - `experimental.cache_file` 使用 `cache.db`，并通过 `store_dns` 持久化 DNS 缓存。
 - `cache_id` 是 YAML `proxies` 列表的规范化 SHA-256；字段顺序不影响身份。
   只要核心代理列表相同，不同平台或其他 Clash 配置项会复用同一缓存身份。
@@ -33,10 +37,15 @@ SFA 工作目录下的 `Taildrop`，Windows 使用
 
 - Hysteria2 出站使用 `hop_interval: 30s`、`hop_interval_max: 60s` 和
   `bbr_profile: standard`。
-- 远程 rule-set 每天更新，通过默认 HTTP client `rule-set-direct` 使用
-  直连 outbound 下载。
+- 远程 rule-set 每天更新，通过默认 HTTP client `rule-set-direct` 直接拨号下载；
+  该 HTTP client 使用本地 DNS 的 `ipv4_only` 解析，不经 `DIRECT` outbound
+  二次解析。
 - 广告过滤同时使用 anti-AD 的 `anti-ad-sing-box.srs` 和 SagerNet 的
   `geosite-category-ads-all.srs`。
+- mixed inbound 的代理业务域名和最终代理回退域名在路由前执行
+  `resolve` + `ipv4_only`。公网 IPv6 只有命中 `geoip-cn` 时才进入 `DIRECT`；
+  其他公网 IPv6 在所有代理业务路由之前被拒绝。私网和 Tailscale 路径不受
+  这条公网限制影响。
 
 ## 节点与分组
 

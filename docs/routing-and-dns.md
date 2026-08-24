@@ -12,23 +12,28 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
 3. 直连私网地址和本地 DNS bootstrap 地址。
 4. 拒绝固定 STUN UDP 端口，然后分别嗅探 TCP HTTP/TLS 与 UDP QUIC。
 5. 拒绝 anti-AD 和 `geosite-category-ads-all`。
-6. 按服务定义顺序拒绝 AI、Google 的 UDP/443，促使 QUIC 回退 TCP。
-7. 将 AI 路由到 `AI`，再将 Google 路由到 `Google`。
-8. 直连命中国内 rule-set 的 IPv6，然后拒绝其他公网 IPv6。
-9. 放行国内域名的 UDP/443；mixed inbound 先解析目标后再放行 `geoip-cn`，
+6. mixed inbound 对所有代理服务域名执行 `resolve` + `ipv4_only`；对国内域名
+   执行 `resolve` + `prefer_ipv4`，以便后续按实际 IP 执行 IPv6 总闸门。
+7. 按服务定义顺序拒绝 AI、Google 的 UDP/443，促使 QUIC 回退 TCP。
+8. 仅直连命中 `geoip-cn` 的公网 IPv6，然后拒绝其他公网 IPv6。
+9. 将 AI 路由到 `AI`，再将 Google 路由到 `Google`。它们位于公网 IPv6
+   拒绝规则之后，因此即使应用直接提供 IPv6 地址也不会经代理出站。
+10. 放行国内域名的 UDP/443；mixed inbound 先以 `ipv4_only` 解析目标后再放行 `geoip-cn`，
    其他 UDP/443 全部拒绝。
-10. 生成其他服务分流，当前为 Spotify、Steam 和 Microsoft。
-11. 直连 `geosite-cn`/`geosite-category-pt`；mixed inbound 解析后再直连 `geoip-cn`。
-12. 未命中规则的流量使用主代理组。
+11. 生成其他服务分流，当前为 Spotify、Steam 和 Microsoft。
+12. 直连 `geosite-cn`/`geosite-category-pt`；mixed inbound 对剩余目标执行
+    `resolve` + `ipv4_only`，再按 `geoip-cn` 直连。
+13. 未命中规则的流量使用主代理组。
 
 对业务分流而言，核心优先级是：
 
 ```text
-广告拒绝 → AI → Google → 国内直连 → 最终代理
+广告拒绝 → 域名解析 → 国内 IPv6 / 其他 IPv6 拒绝 → 代理服务 → 国内 IPv4 → 最终代理
 ```
 
-AI 和 Google 必须位于所有引用 `geosite-cn` 的国内规则之前，因为
-`geosite-cn` 可能同时包含 Google 相关域名。
+代理服务的 `ipv4_only` 解析规则必须位于国内域名解析之前，因为
+`geosite-cn` 可能与 Google 等业务 rule-set 相交。所有代理服务路由则必须
+位于公网 IPv6 拒绝之后，确保服务分流只处理 IPv4 目标。
 
 ## DNS 规则顺序
 
@@ -38,13 +43,17 @@ AI 和 Google 必须位于所有引用 `geosite-cn` 的国内规则之前，因�
    optimistic 过期缓存。
 2. 代理节点域名使用专用本地解析器，仅请求 A 记录，并禁用 optimistic 缓存。
 3. 广告域名直接返回 `NXDOMAIN`。
-4. `geosite-google` 先并发评估 Google DNS 和 Cloudflare DNS，两者都通过主代理组。
-5. `geosite-cn` 和 `geosite-category-pt` 并发评估 Tencent DNS 和 AliDNS。
-6. 未命中上述国内规则的 AAAA 请求返回空 `NOERROR`。
-7. 其他查询并发评估 Google DNS 和 Cloudflare DNS。
+4. 所有代理服务 rule-set 的 AAAA 请求返回空 `NOERROR`。这条规则位于
+   Google 和国内 DNS 规则之前，避免 rule-set 交集返回代理业务 IPv6。
+5. `geosite-google` 的非 AAAA 查询并发评估 Google DNS 和 Cloudflare DNS，
+   两者都通过主代理组。
+6. `geosite-cn` 和 `geosite-category-pt` 并发评估 Tencent DNS 和 AliDNS。
+7. 未命中上述国内规则的 AAAA 请求返回空 `NOERROR`。
+8. 其他查询并发评估 Google DNS 和 Cloudflare DNS。
 
-这保证 Google 域名优先使用远程 DNS，不会先命中国内 DNS 规则。国内域名允许
-A/AAAA；其他 AAAA 被空答复，避免非国内公网 IPv6 绕过后续代理策略。
+这保证 Google 以及其他代理业务不会先命中国内 DNS 规则而获得 AAAA。
+国内域名仍允许 A/AAAA；其他 AAAA 被空答复，路由层再拒绝应用内置 DoH、
+缓存或硬编码地址带来的非国内公网 IPv6。
 
 ## DNS 并发评估语义
 

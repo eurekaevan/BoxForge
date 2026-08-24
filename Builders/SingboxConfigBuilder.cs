@@ -37,7 +37,11 @@ public sealed class SingboxConfigBuilder(
                 new HttpClientConfig
                 {
                     Tag = HttpClientTags.RuleSetDirect,
-                    Detour = profiles.DirectOutbound.Tag
+                    DomainResolver = new DnsResolverOptions
+                    {
+                        Server = SingboxTags.LocalDns,
+                        Strategy = DnsStrategy.Ipv4Only
+                    }
                 }
             ],
             Inbounds = InboundBuilder.Build(request.Platform),

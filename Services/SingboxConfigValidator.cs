@@ -1,3 +1,5 @@
+using System.Net;
+using System.Net.Sockets;
 using BoxForge.Exceptions;
 using BoxForge.Models;
 using BoxForge.Models.Singbox;
@@ -113,6 +115,13 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
                 $"http_clients[{index}].detour",
                 "引用了不存在的 outbound 或 endpoint。",
                 context.Diagnostics);
+            ValidateReference(
+                clients[index].DomainResolver?.Server,
+                context.DnsTags,
+                "SB060",
+                $"http_clients[{index}].domain_resolver.server",
+                "引用了不存在的 DNS server。",
+                context.Diagnostics);
         }
     }
 
@@ -200,12 +209,29 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
         }
 
         ValidateReference(
-            proxy.DomainResolver,
+            proxy.DomainResolver.Server,
             context.DnsTags,
             "SB004",
-            $"outbounds[{index}].domain_resolver",
+            $"outbounds[{index}].domain_resolver.server",
             "引用了不存在的 DNS server。",
             context.Diagnostics);
+        if (proxy.DomainResolver.Strategy != DnsStrategy.Ipv4Only)
+        {
+            context.Diagnostics.Add(new ConfigDiagnostic(
+                "SB061",
+                $"outbounds[{index}].domain_resolver.strategy",
+                "代理节点域名必须使用 ipv4_only 解析策略。"));
+        }
+
+        if (IPAddress.TryParse(proxy.Server, out IPAddress? serverAddress)
+            && serverAddress.AddressFamily == AddressFamily.InterNetworkV6)
+        {
+            context.Diagnostics.Add(new ConfigDiagnostic(
+                "SB062",
+                $"outbounds[{index}].server",
+                "代理节点不能使用 IPv6 字面量地址。"));
+        }
+
         ValidateOutboundTls(proxy, index, context.Diagnostics);
         ValidateProtocolCredentials(proxy, index, context.Diagnostics);
     }
@@ -590,6 +616,15 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
                 "SB037",
                 $"{path}.outbound",
                 "只有 route 动作可以指定 outbound。"));
+        }
+
+        if (rule.Strategy.HasValue
+            && rule.Action != RouteRuleAction.Resolve)
+        {
+            diagnostics.Add(new ConfigDiagnostic(
+                "SB063",
+                $"{path}.strategy",
+                "只有 resolve 动作可以指定 DNS strategy。"));
         }
 
         if (rule.Rules == null)

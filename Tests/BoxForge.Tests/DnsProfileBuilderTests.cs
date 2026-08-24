@@ -62,6 +62,10 @@ public sealed class DnsProfileBuilderTests
 
         int adBlockingIndex = dns.Rules.FindIndex(rule =>
             rule.RuleSet?.Contains(AdBlockingRuleSets.AntiAdTag) == true);
+        int serviceAaaaBlockIndex = dns.Rules.FindIndex(rule =>
+            rule.QueryType?.Contains("AAAA") == true
+            && rule.RuleSet?.Contains("geosite-google") == true
+            && rule.Action == DnsRuleAction.Predefined);
         int googleFirstIndex = dns.Rules.FindIndex(rule =>
             rule.Action == DnsRuleAction.Evaluate
             && rule.Tag == "google-first");
@@ -77,6 +81,7 @@ public sealed class DnsProfileBuilderTests
                 new[]
                 {
                     adBlockingIndex,
+                    serviceAaaaBlockIndex,
                     googleFirstIndex,
                     googleLastIndex,
                     domesticFirstIndex
@@ -88,6 +93,11 @@ public sealed class DnsProfileBuilderTests
             Assert.That(
                 dns.Rules[googleFirstIndex].Server,
                 Is.EqualTo(SingboxTags.RemoteGoogleDns));
+            Assert.That(
+                dns.Rules[serviceAaaaBlockIndex].RuleSet,
+                Is.EquivalentTo(ProfileDefinitions.Services
+                    .SelectMany(service => service.RuleSets)
+                    .Distinct(StringComparer.Ordinal)));
         });
     }
 
@@ -106,7 +116,12 @@ public sealed class DnsProfileBuilderTests
             rule.RuleSet?.Contains("geosite-cn") == true);
         int otherAaaaBlockIndex = dns.Rules.FindIndex(rule =>
             rule.QueryType?.Contains("AAAA") == true
-            && rule.Action == DnsRuleAction.Predefined);
+            && rule.Action == DnsRuleAction.Predefined
+            && rule.RuleSet == null);
+        int serviceAaaaBlockIndex = dns.Rules.FindIndex(rule =>
+            rule.QueryType?.Contains("AAAA") == true
+            && rule.Action == DnsRuleAction.Predefined
+            && rule.RuleSet != null);
         int globalFirstIndex = dns.Rules.FindIndex(rule =>
             rule.Action == DnsRuleAction.Evaluate
             && rule.Tag == "global-first");
@@ -118,6 +133,7 @@ public sealed class DnsProfileBuilderTests
                 new[]
                 {
                     nodeAResolverIndex,
+                    serviceAaaaBlockIndex,
                     domesticFirstIndex,
                     domesticLastIndex,
                     otherAaaaBlockIndex,
@@ -129,7 +145,7 @@ public sealed class DnsProfileBuilderTests
                 dns.Rules.Count(rule =>
                     rule.QueryType?.Contains("AAAA") == true
                     && rule.Action == DnsRuleAction.Predefined),
-                Is.EqualTo(1));
+                Is.EqualTo(2));
         });
     }
 

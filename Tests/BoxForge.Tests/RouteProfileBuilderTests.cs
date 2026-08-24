@@ -59,7 +59,7 @@ public sealed class RouteProfileBuilderTests
     }
 
     [Test]
-    public void AdsThenAiAndGooglePrecedeDomesticRulesWithTcpFallback()
+    public void Ipv6GatePrecedesProxyServicesAndDomesticIpv4Fallback()
     {
         RouteConfig route = CreateBuilder().Build();
 
@@ -80,12 +80,26 @@ public sealed class RouteProfileBuilderTests
             rule.Action == RouteRuleAction.Reject
             && ContainsUdp443Condition(rule)
             && rule.RuleSet?.Contains("geosite-google") == true);
+        int serviceResolveIndex = route.Rules.FindIndex(rule =>
+            rule.Action == RouteRuleAction.Resolve
+            && rule.Strategy == DnsStrategy.Ipv4Only
+            && rule.RuleSet?.Contains("geosite-google") == true);
+        int domesticResolveIndex = route.Rules.FindIndex(rule =>
+            rule.Action == RouteRuleAction.Resolve
+            && rule.Strategy == DnsStrategy.PreferIpv4
+            && rule.RuleSet?.Contains("geosite-cn") == true);
+        int domesticIpv6DirectIndex = route.Rules.FindIndex(rule =>
+            rule.Action == RouteRuleAction.Route
+            && rule.Outbound == SingboxTags.DirectOutbound
+            && ContainsIpv6Condition(rule));
+        int publicIpv6RejectIndex = route.Rules.FindIndex(rule =>
+            rule.Action == RouteRuleAction.Reject
+            && rule.IpCidr?.Contains("::/0") == true);
         int aiRouteIndex = FindRouteRuleIndex(
             route,
             "geosite-category-ai-!cn");
         int googleRouteIndex = FindRouteRuleIndex(route, "geosite-google");
-        int firstDomesticRuleIndex = route.Rules.FindIndex(rule =>
-            ReferencedRuleSets(rule).Contains("geosite-cn"));
+        int firstDomesticIpv4RuleIndex = FindRouteRuleIndex(route, "geosite-cn");
 
         Assert.Multiple(() =>
         {
@@ -98,11 +112,15 @@ public sealed class RouteProfileBuilderTests
                 new[]
                 {
                     adBlockingIndex,
+                    serviceResolveIndex,
+                    domesticResolveIndex,
                     aiUdp443RejectIndex,
                     googleUdp443RejectIndex,
+                    domesticIpv6DirectIndex,
+                    publicIpv6RejectIndex,
                     aiRouteIndex,
                     googleRouteIndex,
-                    firstDomesticRuleIndex
+                    firstDomesticIpv4RuleIndex
                 },
                 Is.Ordered.And.All.GreaterThanOrEqualTo(0));
             Assert.That(
@@ -174,27 +192,29 @@ public sealed class RouteProfileBuilderTests
             rule.Action == RouteRuleAction.Route
             && rule.Outbound == SingboxTags.DirectOutbound
             && ContainsIpv6Condition(rule)
-            && ReferencedRuleSets(rule).ToHashSet().SetEquals(new[]
-            {
-                "geosite-cn",
-                "geosite-category-pt",
-                "geoip-cn"
-            }));
+            && ReferencedRuleSets(rule).SequenceEqual(["geoip-cn"]));
         int publicIpv6RejectIndex = route.Rules.FindIndex(rule =>
             rule.Action == RouteRuleAction.Reject
             && rule.IpCidr?.Contains("::/0") == true);
-        int firstStandardServiceIndex = FindFirstStandardServiceIndex(route);
+        List<int> proxyServiceRouteIndexes = route.Rules
+            .Select((rule, index) => (Rule: rule, Index: index))
+            .Where(item => item.Rule.Action == RouteRuleAction.Route
+                && item.Rule.Outbound != null
+                && ProfileDefinitions.Services.Any(service =>
+                    service.Name == item.Rule.Outbound))
+            .Select(item => item.Index)
+            .ToList();
 
         Assert.Multiple(() =>
         {
             Assert.That(
-                new[]
-                {
-                    domesticIpv6DirectIndex,
-                    publicIpv6RejectIndex,
-                    firstStandardServiceIndex
-                },
+                new[] { domesticIpv6DirectIndex, publicIpv6RejectIndex },
                 Is.Ordered.And.All.GreaterThanOrEqualTo(0));
+            Assert.That(proxyServiceRouteIndexes, Is.Not.Empty);
+            Assert.That(
+                proxyServiceRouteIndexes,
+                Is.All.GreaterThan(publicIpv6RejectIndex),
+                "Every proxy service route must be behind the public IPv6 gate.");
             Assert.That(
                 route.Rules[domesticIpv6DirectIndex].Type,
                 Is.EqualTo(RouteRuleType.Logical));
@@ -206,6 +226,43 @@ public sealed class RouteProfileBuilderTests
                     && ContainsUdp443Condition(rule)),
                 Is.False,
                 "Domestic IPv6 UDP/443 must be routed directly, not rejected.");
+        });
+    }
+
+    [Test]
+    public void MixedInboundResolvesProxyDomainsAsIpv4BeforeRouting()
+    {
+        RouteConfig route = CreateBuilder().Build();
+        string[] expectedProxyRuleSets =
+        [
+            .. ProfileDefinitions.Services
+                .SelectMany(service => service.RuleSets)
+                .Distinct(StringComparer.Ordinal)
+        ];
+
+        RouteRule serviceResolve = route.Rules.Single(rule =>
+            rule.Action == RouteRuleAction.Resolve
+            && rule.Strategy == DnsStrategy.Ipv4Only
+            && rule.RuleSet?.SequenceEqual(expectedProxyRuleSets) == true);
+        RouteRule domesticResolve = route.Rules.Single(rule =>
+            rule.Action == RouteRuleAction.Resolve
+            && rule.Strategy == DnsStrategy.PreferIpv4
+            && rule.RuleSet?.SequenceEqual(
+                ["geosite-cn", "geosite-category-pt"]) == true);
+        RouteRule generalResolve = route.Rules.Single(rule =>
+            rule.Action == RouteRuleAction.Resolve
+            && !ContainsUdp443Condition(rule)
+            && rule.RuleSet == null);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(serviceResolve.Inbound, Is.EqualTo(
+                new[] { SingboxTags.MixedInbound }));
+            Assert.That(domesticResolve.Inbound, Is.EqualTo(
+                new[] { SingboxTags.MixedInbound }));
+            Assert.That(generalResolve.Inbound, Is.EqualTo(
+                new[] { SingboxTags.MixedInbound }));
+            Assert.That(generalResolve.Strategy, Is.EqualTo(DnsStrategy.Ipv4Only));
         });
     }
 
@@ -332,7 +389,8 @@ public sealed class RouteProfileBuilderTests
     private static int FindGeneralResolveIndex(RouteConfig route) =>
         route.Rules.FindIndex(rule =>
             rule.Action == RouteRuleAction.Resolve
-            && !ContainsUdp443Condition(rule));
+            && !ContainsUdp443Condition(rule)
+            && rule.RuleSet == null);
 
     private static int FindSniffIndex(RouteConfig route, string network) =>
         route.Rules.FindIndex(rule =>
@@ -343,6 +401,7 @@ public sealed class RouteProfileBuilderTests
         route.Rules.FindIndex(rule =>
             rule.Action == RouteRuleAction.Route
             && !ContainsUdp443Condition(rule)
+            && !ContainsIpv6Condition(rule)
             && rule.RuleSet?.Contains(ruleSet) == true);
 
     private static bool ContainsUdp443Condition(RouteRule rule) =>

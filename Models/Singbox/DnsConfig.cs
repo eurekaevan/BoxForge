@@ -20,6 +20,12 @@ public record DnsOptimisticConfig
     [JsonPropertyName("timeout")] public string Timeout { get; init; } = "3d";
 }
 
+public record DnsResolverOptions
+{
+    [JsonPropertyName("server")] public required string Server { get; init; }
+    [JsonPropertyName("strategy")] public DnsStrategy? Strategy { get; init; }
+}
+
 public abstract record DnsServer
 {
     [JsonPropertyName("tag")] public string? Tag { get; init; }
