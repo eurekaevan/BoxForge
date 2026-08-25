@@ -143,6 +143,13 @@ public sealed class RouteProfileBuilder(
                 Action = RouteRuleAction.Resolve,
                 Strategy = DnsStrategy.Ipv4Only
             },
+            new RouteRule
+            {
+                Inbound = [SingboxTags.MixedInbound],
+                IpIsPrivate = true,
+                Action = RouteRuleAction.Route,
+                Outbound = SingboxTags.DirectOutbound
+            },
             new RouteRule { RuleSet = ["geoip-cn"], Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound }
         ]);
 

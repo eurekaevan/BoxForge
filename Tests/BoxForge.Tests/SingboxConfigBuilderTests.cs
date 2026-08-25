@@ -11,6 +11,39 @@ namespace BoxForge.Tests;
 [TestFixture]
 public sealed class SingboxConfigBuilderTests
 {
+    [TestCase(TargetPlatform.Android)]
+    [TestCase(TargetPlatform.Linux)]
+    [TestCase(TargetPlatform.Windows)]
+    public void AllPlatformsEnableTunSystemHttpProxy(TargetPlatform platform)
+    {
+        SingboxConfig config = CreateBuilder().Build(new SingboxBuildRequest(
+            new NodeCatalog([], [], []),
+            platform,
+            new string('a', 64)));
+
+        Inbound tunInbound = config.Inbounds.Single(inbound =>
+            inbound.Tag == SingboxTags.TunInbound);
+        Inbound mixedInbound = config.Inbounds.Single(inbound =>
+            inbound.Tag == SingboxTags.MixedInbound);
+        string json = new ConfigSerializer().Serialize(config);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(tunInbound.Platform?.HttpProxy.Enabled, Is.True);
+            Assert.That(
+                tunInbound.Platform?.HttpProxy.Server,
+                Is.EqualTo(mixedInbound.Listen));
+            Assert.That(
+                tunInbound.Platform?.HttpProxy.ServerPort,
+                Is.EqualTo(mixedInbound.ListenPort));
+            Assert.That(json, Does.Contain("\"platform\": {"));
+            Assert.That(json, Does.Contain("\"http_proxy\": {"));
+            Assert.That(json, Does.Contain("\"enabled\": true"));
+        });
+
+        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config));
+    }
+
     [Test]
     public void RuleSetsUseAnIpv4OnlyDirectHttpClient()
     {

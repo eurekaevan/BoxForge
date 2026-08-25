@@ -6,6 +6,9 @@ namespace BoxForge.Builders.Components;
 
 public static class InboundBuilder
 {
+    private const string MixedListenAddress = "127.0.0.1";
+    private const int MixedListenPort = 8848;
+
     public static List<Inbound> Build(TargetPlatform platform)
     {
         return
@@ -20,14 +23,23 @@ public static class InboundBuilder
                 AutoRedirect = platform == TargetPlatform.Linux ? true : null,
                 StrictRoute = true,
                 Stack = platform == TargetPlatform.Windows ? "mixed" : "system",
-                Mtu = platform == TargetPlatform.Android ? 1400 : null
+                Mtu = platform == TargetPlatform.Android ? 1400 : null,
+                Platform = new TunPlatformOptions
+                {
+                    HttpProxy = new TunHttpProxyOptions
+                    {
+                        Enabled = true,
+                        Server = MixedListenAddress,
+                        ServerPort = MixedListenPort
+                    }
+                }
             },
             new Inbound
             {
                 Type = "mixed",
                 Tag = SingboxTags.MixedInbound,
-                Listen = "127.0.0.1",
-                ListenPort = 8848
+                Listen = MixedListenAddress,
+                ListenPort = MixedListenPort
             }
         ];
     }

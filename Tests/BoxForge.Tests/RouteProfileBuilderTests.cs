@@ -267,6 +267,35 @@ public sealed class RouteProfileBuilderTests
     }
 
     [Test]
+    public void MixedInboundRoutesPrivateAddressesDirectlyAfterGeneralResolution()
+    {
+        RouteConfig route = CreateBuilder().Build();
+
+        int earlyPrivateDirectIndex = route.Rules.FindIndex(rule =>
+            rule.Inbound == null
+            && rule.IpIsPrivate == true
+            && rule.Action == RouteRuleAction.Route
+            && rule.Outbound == SingboxTags.DirectOutbound);
+        int generalResolveIndex = FindGeneralResolveIndex(route);
+        int mixedPrivateDirectIndex = route.Rules.FindIndex(rule =>
+            rule.Inbound?.SequenceEqual([SingboxTags.MixedInbound]) == true
+            && rule.IpIsPrivate == true
+            && rule.Action == RouteRuleAction.Route
+            && rule.Outbound == SingboxTags.DirectOutbound);
+        int geoipDirectIndex = FindRouteRuleIndex(route, "geoip-cn");
+
+        Assert.That(
+            new[]
+            {
+                earlyPrivateDirectIndex,
+                generalResolveIndex,
+                mixedPrivateDirectIndex,
+                geoipDirectIndex
+            },
+            Is.Ordered.And.All.GreaterThanOrEqualTo(0));
+    }
+
+    [Test]
     public void SniffingUsesOnlyWebAndQuicAcrossAllPorts()
     {
         RouteConfig route = CreateBuilder().Build();

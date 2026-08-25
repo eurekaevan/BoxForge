@@ -22,7 +22,8 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
    其他 UDP/443 全部拒绝。
 11. 生成其他服务分流，当前为 Spotify、Steam 和 Microsoft。
 12. 直连 `geosite-cn`/`geosite-category-pt`；mixed inbound 对剩余目标执行
-    `resolve` + `ipv4_only`，再按 `geoip-cn` 直连。
+    `resolve` + `ipv4_only`，解析后先复检并直连私网地址，再按 `geoip-cn`
+    直连。
 13. 未命中规则的流量使用主代理组。
 
 对业务分流而言，核心优先级是：

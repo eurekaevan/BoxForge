@@ -6,6 +6,8 @@
 
 每个平台都包含一个 TUN inbound 和一个仅监听 `127.0.0.1:8848` 的 mixed inbound。
 TUN 固定启用 `auto_route`、`strict_route` 和 `dns_mode: hijack`，平台差异如下：
+全平台同时启用 `platform.http_proxy`，并将系统 HTTP 代理指向同一配置中的
+`127.0.0.1:8848` mixed inbound，形成 TUN + system HTTP proxy 模型。
 
 | 平台 | TUN stack | 其他差异 |
 | --- | --- | --- |
