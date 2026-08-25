@@ -12,6 +12,49 @@ namespace BoxForge.Tests;
 public sealed class DnsProfileBuilderTests
 {
     [Test]
+    public void BootstrapUsesDirectHttpsWithoutTheSystemResolver()
+    {
+        DnsConfig dns = CreateBuilder(tailscaleEnabled: true).Build(
+            new NodeCatalog([], [], []));
+
+        HttpsDnsServer bootstrap = dns.Servers
+            .OfType<HttpsDnsServer>()
+            .Single(server => server.Tag == SingboxTags.BootstrapDns);
+        string json = new ConfigSerializer().Serialize(new SingboxConfig
+        {
+            Dns = dns
+        });
+        using JsonDocument document = JsonDocument.Parse(json);
+        JsonElement serializedBootstrap = document.RootElement
+            .GetProperty("dns")
+            .GetProperty("servers")
+            .EnumerateArray()
+            .Single(server => server.GetProperty("tag").GetString()
+                == SingboxTags.BootstrapDns);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(bootstrap.Type, Is.EqualTo("https"));
+            Assert.That(bootstrap.Server, Is.EqualTo("223.5.5.5"));
+            Assert.That(bootstrap.Tls?.Enabled, Is.True);
+            Assert.That(
+                bootstrap.Tls?.ServerName,
+                Is.EqualTo("dns.alidns.com"));
+            Assert.That(bootstrap.Detour, Is.Null);
+            Assert.That(
+                dns.Servers.OfType<LocalDnsServer>()
+                    .Any(server => server.Tag == SingboxTags.BootstrapDns),
+                Is.False);
+            Assert.That(
+                serializedBootstrap.GetProperty("type").GetString(),
+                Is.EqualTo("https"));
+            Assert.That(
+                serializedBootstrap.TryGetProperty("detour", out _),
+                Is.False);
+        });
+    }
+
+    [Test]
     public void TailscaleAndNodeResolutionPrecedeAdBlockingNxDomainRule()
     {
         var nodes = new NodeCatalog([], [], ["node.example.com"]);

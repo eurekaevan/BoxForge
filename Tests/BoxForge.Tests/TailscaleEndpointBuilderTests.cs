@@ -31,6 +31,9 @@ public sealed class TailscaleEndpointBuilderTests
         {
             Assert.That(endpoint.Tag, Is.EqualTo(SingboxTags.TailscaleEndpoint));
             Assert.That(
+                endpoint.DomainResolver,
+                Is.EqualTo(SingboxTags.BootstrapDns));
+            Assert.That(
                 endpoint.StateDirectory,
                 Is.EqualTo(SingboxTags.TailscaleStateDirectory));
             Assert.That(endpoint.AcceptRoutes, Is.True);

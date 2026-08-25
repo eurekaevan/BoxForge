@@ -31,6 +31,11 @@ BoxForge 只保留一个运行时设置：是否生成 Tailscale endpoint。使�
 VPN/TUN，不创建第二个系统 VPN 接口。登录状态保存在 `StateDirectory`，
 不会写入 `config.json`。
 
+Tailscale 控制平面域名通过 `bootstrap` 解析器建立初始连接。该解析器
+固定以 IP 字面量 `223.5.5.5` 直连 AliDNS DoH，TLS `server_name` 为
+`dns.alidns.com`；它不调用系统解析器，也不经主代理组，避免明文
+DNS 和冷启动循环依赖。
+
 `taildrop_directory` 不提供环境变量入口，始终按目标平台生成：
 
 | 平台 | 生成值 | 运行时含义 |

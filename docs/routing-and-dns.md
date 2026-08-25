@@ -9,7 +9,7 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
 
 1. 劫持 TUN 和 mixed inbound 的 DNS 流量。
 2. 启用 Tailscale 时，先路由 Tailscale endpoint 声明为首选的目标。
-3. 直连私网地址和本地 DNS bootstrap 地址。
+3. 直连私网地址和 DoH bootstrap 的 IP 地址。
 4. 拒绝固定 STUN UDP 端口，然后分别嗅探 TCP HTTP/TLS 与 UDP QUIC。
 5. 拒绝 anti-AD 和 `geosite-category-ads-all`。
 6. mixed inbound 对所有代理服务域名执行 `resolve` + `ipv4_only`；对国内域名

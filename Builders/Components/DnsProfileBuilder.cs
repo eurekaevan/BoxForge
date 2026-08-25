@@ -14,7 +14,7 @@ public sealed class DnsProfileBuilder(
         var dns = new DnsConfig();
 
         dns.Servers.AddRange([
-            new LocalDnsServer { Tag = SingboxTags.BootstrapDns },
+            CreateHttpsServer(SingboxTags.BootstrapDns, "223.5.5.5", "dns.alidns.com"),
             CreateHttpsServer(SingboxTags.NodeResolverDns, "223.5.5.5", "dns.alidns.com"),
             CreateHttpsServer(SingboxTags.LocalTencentDns, "119.29.29.29", "doh.pub"),
             CreateHttpsServer(SingboxTags.LocalDns, "223.5.5.5", "dns.alidns.com"),
