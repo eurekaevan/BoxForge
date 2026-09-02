@@ -1,15 +1,19 @@
 # 配置参考
 
-BoxForge 只保留一个运行时设置：是否生成 Tailscale endpoint。使用分组键时，
-环境变量中的 `__` 对应配置路径中的 `:`。
+BoxForge 保留两个 Tailscale 运行时设置，分别控制桌面端和 Android。
+使用分组键时，环境变量中的 `__` 对应配置路径中的 `:`。
 
 ## 配置表
 
 | 推荐环境变量 | 兼容键 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `BOXFORGE_Tailscale__Enabled` | `BOXFORGE_TailscaleEnabled` | `false` | 是否生成 Tailscale endpoint |
+| `BOXFORGE_Tailscale__Enabled` | `BOXFORGE_TailscaleEnabled` | `false` | 是否在 Linux 和 Windows 生成 Tailscale endpoint |
+| `BOXFORGE_Tailscale__AndroidEnabled` | `BOXFORGE_TailscaleAndroidEnabled` | `false` | 是否在 Android 生成 Tailscale endpoint |
 
-`Enabled` 只接受 `true` 或 `false`（不区分大小写）。无法解析的值会使生成失败。
+`Enabled` 和 `AndroidEnabled` 只接受 `true` 或 `false`（不区分大小写）。
+无法解析的值会使生成失败。Android 不继承桌面端的 `Enabled`：
+即使 `Enabled=true`，只要未显式设置 `AndroidEnabled=true`，Android 产物仍不会
+包含 Tailscale endpoint、Tailscale DNS 或对应路由。
 
 ## 代码固定值
 
@@ -27,7 +31,7 @@ BoxForge 只保留一个运行时设置：是否生成 Tailscale endpoint。使�
 
 ## Tailscale 运行说明
 
-启用后，生成配置包含一个 Tailscale endpoint。它复用 sing-box 已有的系统
+在目标平台启用后，生成配置包含一个 Tailscale endpoint。它复用 sing-box 已有的系统
 VPN/TUN，不创建第二个系统 VPN 接口。登录状态保存在 `StateDirectory`，
 不会写入 `config.json`。
 

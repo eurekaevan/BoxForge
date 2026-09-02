@@ -19,7 +19,8 @@ public sealed class TailscaleEndpointBuilderTests
     {
         TailscaleEndpoint endpoint = BuildEndpoint(new TailscaleOptions
         {
-            Enabled = true
+            Enabled = true,
+            AndroidEnabled = true
         }, platform);
 
         string json = new ConfigSerializer().Serialize(new SingboxConfig

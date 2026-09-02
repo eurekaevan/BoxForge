@@ -68,12 +68,16 @@ singboxConfigs/
 
 ## 运行时配置
 
-Tailscale endpoint 默认不生成。需要启用时设置：
+Tailscale endpoint 默认不生成。Linux 和 Windows 需要启用时设置：
 
 ```bash
 BOXFORGE_Tailscale__Enabled=true \
-dotnet run -- generate --platform Android
+dotnet run -- generate --platform Linux
 ```
+
+即使开启上述通用开关，Android 配置仍默认关闭 Tailscale。需要在
+Android 端使用时，单独设置
+`BOXFORGE_Tailscale__AndroidEnabled=true`。
 
 其余标签、目录及 endpoint 字段均由代码固定或按目标平台生成，见
 [配置参考](docs/configuration.md)。

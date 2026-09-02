@@ -31,7 +31,7 @@ public sealed class SingboxConfigBuilder(
         return new SingboxConfig
         {
             Log = new LogConfig(),
-            Dns = dnsProfileBuilder.Build(request.Nodes),
+            Dns = dnsProfileBuilder.Build(request.Nodes, request.Platform),
             HttpClients =
             [
                 new HttpClientConfig
@@ -47,7 +47,7 @@ public sealed class SingboxConfigBuilder(
             Inbounds = InboundBuilder.Build(request.Platform),
             Endpoints = endpoints.Count > 0 ? endpoints : null,
             Outbounds = orderedOutbounds,
-            Route = routeProfileBuilder.Build(),
+            Route = routeProfileBuilder.Build(request.Platform),
             Experimental = ExperimentalBuilder.Build(request.CacheId)
         };
     }

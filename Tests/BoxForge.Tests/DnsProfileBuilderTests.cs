@@ -1,6 +1,7 @@
 using BoxForge.Builders;
 using BoxForge.Builders.Components;
 using BoxForge.Configuration;
+using BoxForge.Models;
 using BoxForge.Models.Singbox;
 using BoxForge.Services;
 using Microsoft.Extensions.Options;
@@ -15,7 +16,8 @@ public sealed class DnsProfileBuilderTests
     public void BootstrapUsesDirectHttpsWithoutTheSystemResolver()
     {
         DnsConfig dns = CreateBuilder(tailscaleEnabled: true).Build(
-            new NodeCatalog([], [], []));
+            new NodeCatalog([], [], []),
+            TargetPlatform.Linux);
 
         HttpsDnsServer bootstrap = dns.Servers
             .OfType<HttpsDnsServer>()
@@ -58,7 +60,9 @@ public sealed class DnsProfileBuilderTests
     public void TailscaleAndNodeResolutionPrecedeAdBlockingNxDomainRule()
     {
         var nodes = new NodeCatalog([], [], ["node.example.com"]);
-        DnsConfig dns = CreateBuilder(tailscaleEnabled: true).Build(nodes);
+        DnsConfig dns = CreateBuilder(tailscaleEnabled: true).Build(
+            nodes,
+            TargetPlatform.Linux);
 
         int tailscaleIndex = dns.Rules.FindIndex(rule =>
             rule.PreferredBy?.Contains("tailscale-dns") == true);
@@ -101,7 +105,9 @@ public sealed class DnsProfileBuilderTests
     [Test]
     public void GoogleRemoteDnsRacePrecedesDomesticDnsRace()
     {
-        DnsConfig dns = CreateBuilder().Build(new NodeCatalog([], [], []));
+        DnsConfig dns = CreateBuilder().Build(
+            new NodeCatalog([], [], []),
+            TargetPlatform.Linux);
 
         int adBlockingIndex = dns.Rules.FindIndex(rule =>
             rule.RuleSet?.Contains(AdBlockingRuleSets.AntiAdTag) == true);
@@ -148,7 +154,7 @@ public sealed class DnsProfileBuilderTests
     public void DomesticRulesAnswerAaaaBeforeOtherAaaaIsBlocked()
     {
         var nodes = new NodeCatalog([], [], ["node.example.cn"]);
-        DnsConfig dns = CreateBuilder().Build(nodes);
+        DnsConfig dns = CreateBuilder().Build(nodes, TargetPlatform.Linux);
 
         int nodeAResolverIndex = dns.Rules.FindIndex(rule =>
             rule.Domain?.Contains("node.example.cn") == true);

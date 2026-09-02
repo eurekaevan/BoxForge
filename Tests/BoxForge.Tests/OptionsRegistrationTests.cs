@@ -9,6 +9,23 @@ namespace BoxForge.Tests;
 public sealed class OptionsRegistrationTests
 {
     [Test]
+    public void TailscaleIsDisabledByDefaultOnEveryPlatform()
+    {
+        using ServiceProvider provider = CreateProvider(
+            new Dictionary<string, string?>());
+
+        TailscaleOptions tailscale = provider
+            .GetRequiredService<IOptions<TailscaleOptions>>()
+            .Value;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(tailscale.Enabled, Is.False);
+            Assert.That(tailscale.AndroidEnabled, Is.False);
+        });
+    }
+
+    [Test]
     public void NestedEnabledKeyTakesPriorityOverLegacyKey()
     {
         using ServiceProvider provider = CreateProvider(new Dictionary<string, string?>
@@ -37,6 +54,27 @@ public sealed class OptionsRegistrationTests
             .Value;
 
         Assert.That(tailscale.Enabled, Is.True);
+    }
+
+    [Test]
+    public void AndroidEnabledUsesItsOwnPlatformSetting()
+    {
+        using ServiceProvider provider = CreateProvider(new Dictionary<string, string?>
+        {
+            ["Tailscale:Enabled"] = "true",
+            ["Tailscale:AndroidEnabled"] = "false",
+            ["TailscaleAndroidEnabled"] = "true"
+        });
+
+        TailscaleOptions tailscale = provider
+            .GetRequiredService<IOptions<TailscaleOptions>>()
+            .Value;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(tailscale.Enabled, Is.True);
+            Assert.That(tailscale.AndroidEnabled, Is.False);
+        });
     }
 
     [Test]

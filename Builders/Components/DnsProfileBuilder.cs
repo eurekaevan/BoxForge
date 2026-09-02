@@ -1,4 +1,5 @@
 using BoxForge.Configuration;
+using BoxForge.Models;
 using BoxForge.Models.Singbox;
 using Microsoft.Extensions.Options;
 
@@ -9,7 +10,7 @@ public sealed class DnsProfileBuilder(
 {
     private readonly TailscaleOptions tailscale = tailscaleOptions.Value;
 
-    public DnsConfig Build(NodeCatalog nodes)
+    public DnsConfig Build(NodeCatalog nodes, TargetPlatform platform)
     {
         var dns = new DnsConfig();
 
@@ -30,7 +31,7 @@ public sealed class DnsProfileBuilder(
                 SingboxTags.MainProxyGroup)
         ]);
 
-        if (tailscale.Enabled)
+        if (tailscale.IsEnabled(platform))
         {
             dns.Servers.Add(new TailscaleDnsServer
             {

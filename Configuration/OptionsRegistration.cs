@@ -16,6 +16,11 @@ public static class OptionsRegistration
                 "Tailscale:Enabled",
                 "TailscaleEnabled",
                 false);
+            options.AndroidEnabled = ReadBool(
+                configuration,
+                "Tailscale:AndroidEnabled",
+                "TailscaleAndroidEnabled",
+                false);
         });
 
         return services;

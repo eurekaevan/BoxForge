@@ -10,7 +10,7 @@ public sealed class RouteProfileBuilder(
 {
     private readonly TailscaleOptions tailscale = tailscaleOptions.Value;
 
-    public RouteConfig Build()
+    public RouteConfig Build(TargetPlatform platform)
     {
         var route = new RouteConfig
         {
@@ -54,7 +54,7 @@ public sealed class RouteProfileBuilder(
             }
         };
 
-        if (tailscale.Enabled)
+        if (tailscale.IsEnabled(platform))
         {
             // 必须位于私网直连规则之前，才能覆盖 tailnet 通告的私有子网路由。
             rules.Add(new RouteRule

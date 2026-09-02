@@ -44,6 +44,73 @@ public sealed class SingboxConfigBuilderTests
         Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config));
     }
 
+    [TestCase(TargetPlatform.Android, false)]
+    [TestCase(TargetPlatform.Linux, true)]
+    [TestCase(TargetPlatform.Windows, true)]
+    public void GeneralTailscaleSettingLeavesAndroidDisabledByDefault(
+        TargetPlatform platform,
+        bool expectedEnabled)
+    {
+        SingboxConfig config = CreateBuilder(new TailscaleOptions
+        {
+            Enabled = true
+        }).Build(new SingboxBuildRequest(
+            new NodeCatalog([], [], []),
+            platform,
+            new string('b', 64)));
+
+        bool hasEndpoint = config.Endpoints?
+            .OfType<TailscaleEndpoint>()
+            .Any() == true;
+        bool hasDnsServer = config.Dns.Servers
+            .OfType<TailscaleDnsServer>()
+            .Any();
+        bool hasRoute = config.Route.Rules.Any(rule =>
+            rule.PreferredBy?.Contains(SingboxTags.TailscaleEndpoint) == true);
+        string json = new ConfigSerializer().Serialize(config);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(hasEndpoint, Is.EqualTo(expectedEnabled));
+            Assert.That(hasDnsServer, Is.EqualTo(expectedEnabled));
+            Assert.That(hasRoute, Is.EqualTo(expectedEnabled));
+            Assert.That(
+                json.Contains("\"tailscale\"", StringComparison.Ordinal),
+                Is.EqualTo(expectedEnabled));
+        });
+
+        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config));
+    }
+
+    [Test]
+    public void AndroidTailscaleCanBeEnabledExplicitly()
+    {
+        SingboxConfig config = CreateBuilder(new TailscaleOptions
+        {
+            AndroidEnabled = true
+        }).Build(new SingboxBuildRequest(
+            new NodeCatalog([], [], []),
+            TargetPlatform.Android,
+            new string('c', 64)));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                config.Endpoints?.OfType<TailscaleEndpoint>().Count(),
+                Is.EqualTo(1));
+            Assert.That(
+                config.Dns.Servers.OfType<TailscaleDnsServer>().Count(),
+                Is.EqualTo(1));
+            Assert.That(
+                config.Route.Rules.Any(rule =>
+                    rule.PreferredBy?.Contains(
+                        SingboxTags.TailscaleEndpoint) == true),
+                Is.True);
+        });
+
+        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config));
+    }
+
     [Test]
     public void RuleSetsUseAnIpv4OnlyDirectHttpClient()
     {
@@ -138,9 +205,10 @@ public sealed class SingboxConfigBuilderTests
         });
     }
 
-    private static SingboxConfigBuilder CreateBuilder()
+    private static SingboxConfigBuilder CreateBuilder(
+        TailscaleOptions? options = null)
     {
-        var tailscaleOptions = Options.Create(new TailscaleOptions());
+        var tailscaleOptions = Options.Create(options ?? new TailscaleOptions());
 
         return new SingboxConfigBuilder(
             new TailscaleEndpointBuilder(tailscaleOptions),

@@ -11,7 +11,7 @@ public sealed class TailscaleEndpointBuilder(IOptions<TailscaleOptions> options)
 
     public List<Endpoint> Build(TargetPlatform platform)
     {
-        if (!tailscaleOptions.Enabled)
+        if (!tailscaleOptions.IsEnabled(platform))
         {
             return [];
         }

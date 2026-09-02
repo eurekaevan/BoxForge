@@ -1,5 +1,6 @@
 using BoxForge.Builders.Components;
 using BoxForge.Configuration;
+using BoxForge.Models;
 using BoxForge.Models.Singbox;
 using Microsoft.Extensions.Options;
 
@@ -14,7 +15,7 @@ public sealed class RouteProfileBuilderTests
     [Test]
     public void AdBlockingRuleSetsUseFixedRemoteBinaryUrlsAndAreRejected()
     {
-        RouteConfig route = CreateBuilder().Build();
+        RouteConfig route = CreateBuilder().Build(TargetPlatform.Linux);
         var expectedRuleSets = new Dictionary<string, string>
         {
             [AdBlockingRuleSets.AntiAdTag] = AdBlockingRuleSets.AntiAdUrl,
@@ -61,7 +62,7 @@ public sealed class RouteProfileBuilderTests
     [Test]
     public void Ipv6GatePrecedesProxyServicesAndDomesticIpv4Fallback()
     {
-        RouteConfig route = CreateBuilder().Build();
+        RouteConfig route = CreateBuilder().Build(TargetPlatform.Linux);
 
         SingboxRuleSet? googleRuleSet = route.RuleSet.SingleOrDefault(ruleSet =>
             ruleSet.Tag == "geosite-google");
@@ -135,7 +136,7 @@ public sealed class RouteProfileBuilderTests
     [Test]
     public void Udp443PolicyAllowsDomesticBeforeTheGeneralForeignReject()
     {
-        RouteConfig route = CreateBuilder().Build();
+        RouteConfig route = CreateBuilder().Build(TargetPlatform.Linux);
 
         List<(RouteRule Rule, int Index)> udp443Rejects = route.Rules
             .Select((rule, index) => (Rule: rule, Index: index))
@@ -186,7 +187,7 @@ public sealed class RouteProfileBuilderTests
     [Test]
     public void DomesticIpv6IsDirectBeforeOtherPublicIpv6IsRejected()
     {
-        RouteConfig route = CreateBuilder().Build();
+        RouteConfig route = CreateBuilder().Build(TargetPlatform.Linux);
 
         int domesticIpv6DirectIndex = route.Rules.FindIndex(rule =>
             rule.Action == RouteRuleAction.Route
@@ -232,7 +233,7 @@ public sealed class RouteProfileBuilderTests
     [Test]
     public void MixedInboundResolvesProxyDomainsAsIpv4BeforeRouting()
     {
-        RouteConfig route = CreateBuilder().Build();
+        RouteConfig route = CreateBuilder().Build(TargetPlatform.Linux);
         string[] expectedProxyRuleSets =
         [
             .. ProfileDefinitions.Services
@@ -269,7 +270,7 @@ public sealed class RouteProfileBuilderTests
     [Test]
     public void MixedInboundRoutesPrivateAddressesDirectlyAfterGeneralResolution()
     {
-        RouteConfig route = CreateBuilder().Build();
+        RouteConfig route = CreateBuilder().Build(TargetPlatform.Linux);
 
         int earlyPrivateDirectIndex = route.Rules.FindIndex(rule =>
             rule.Inbound == null
@@ -298,7 +299,7 @@ public sealed class RouteProfileBuilderTests
     [Test]
     public void SniffingUsesOnlyWebAndQuicAcrossAllPorts()
     {
-        RouteConfig route = CreateBuilder().Build();
+        RouteConfig route = CreateBuilder().Build(TargetPlatform.Linux);
 
         List<RouteRule> sniffRules = route.Rules
             .Where(rule => rule.Action == RouteRuleAction.Sniff)
@@ -319,7 +320,7 @@ public sealed class RouteProfileBuilderTests
     [Test]
     public void FixedStunRejectPrecedesSniffAndForeignUdp443Policy()
     {
-        RouteConfig route = CreateBuilder().Build();
+        RouteConfig route = CreateBuilder().Build(TargetPlatform.Linux);
 
         int stunRejectIndex = route.Rules.FindIndex(rule =>
             rule.Action == RouteRuleAction.Reject
