@@ -1,11 +1,12 @@
 using Microsoft.Extensions.Logging;
+using BoxForge.Engine;
+using BoxForge.Exceptions;
 using BoxForge.Models;
-using BoxForge.Services;
 
 namespace BoxForge.Workflows;
 
 public sealed partial class LocalGenerationWorkflow(
-    ConversionService conversionService,
+    IBoxForgeEngine engine,
     ILogger<LocalGenerationWorkflow> logger) : ILocalGenerationWorkflow
 {
     private static readonly string[] SupportedExtensions = [".yaml", ".yml"];
@@ -114,6 +115,16 @@ public sealed partial class LocalGenerationWorkflow(
                         inputFile,
                         cancellationToken);
                 }
+                catch (BoxForgePlatformConversionException ex)
+                {
+                    failed += request.Platforms.Count;
+                    LogGenerationFailure(
+                        logger,
+                        ex.InnerException ?? ex,
+                        configName,
+                        ex.Platform);
+                    continue;
+                }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     LogReadFailure(logger, ex, inputFile);
@@ -121,12 +132,15 @@ public sealed partial class LocalGenerationWorkflow(
                     continue;
                 }
 
-                PreparedConversion prepared;
+                ConversionBundle bundle;
                 try
                 {
-                    prepared = conversionService.Prepare(
-                        yamlContent,
-                        strictNodeValidation: true);
+                    bundle = await engine.ConvertAsync(
+                        new ConversionRequest(
+                            configName,
+                            yamlContent,
+                            request.Platforms),
+                        cancellationToken);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -135,9 +149,10 @@ public sealed partial class LocalGenerationWorkflow(
                     continue;
                 }
 
-                foreach (var platform in request.Platforms)
+                foreach (ConversionArtifact artifact in bundle.Artifacts)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
+                    TargetPlatform platform = artifact.Platform;
                     string relativePath = Path.Combine(
                         configName,
                         platform.ToString(),
@@ -151,19 +166,16 @@ public sealed partial class LocalGenerationWorkflow(
 
                     try
                     {
-                        string jsonContent = conversionService.Convert(
-                            prepared,
-                            platform);
                         Directory.CreateDirectory(
                             Path.GetDirectoryName(stagedFile)!);
                         await File.WriteAllTextAsync(
                             stagedFile,
-                            jsonContent,
+                            artifact.Content,
                             cancellationToken);
 
                         if (await HasSameContentAsync(
                             existingFile,
-                            jsonContent,
+                            artifact.Content,
                             cancellationToken))
                         {
                             skipped++;

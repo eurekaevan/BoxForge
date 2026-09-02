@@ -1,8 +1,8 @@
 # BoxForge
 
-BoxForge 是一个无交互命令行工具，用于将 Clash YAML 批量转换为
-sing-box 1.14 `config.json`。它会为 Windows、Android 和 Linux 生成平台化
-配置，并在整批成功后一次性替换输出目录。
+BoxForge 用于将 Clash YAML 转换为 sing-box 1.14 `config.json`。
+CLI 会为 Windows、Android 和 Linux 批量生成平台化配置，并在
+整批成功后一次性替换输出目录；Server 则提供无状态的内存转换 API。
 
 ## 特性
 
@@ -10,10 +10,12 @@ sing-box 1.14 `config.json`。它会为 Windows、Android 和 Linux 生成平台
 - 自动生成地区分组、服务分组、DNS、路由规则和远程 rule-set
 - 强制代理节点与代理业务使用 IPv4，仅允许命中 `geoip-cn` 的公网 IPv6 直连
 - 可选 sing-box 内置 Tailscale endpoint，支持 MagicDNS、子网路由和 Taildrop
+- 提供不依赖文件系统的 `IBoxForgeEngine` 内存转换边界
 - 每个 YAML 只解析和转换节点一次，再复用于所有目标平台
 - 输入与平台按固定顺序处理，生成结果具有确定性
 - 生成内容未变时跳过；任意项失败时回滚整批输出
 - 稳定的退出码，可直接用于 CI 或其他自动化脚本
+- 提供最小化 ASP.NET Core HTTP API，请求和结果均不落盘
 
 ## 快速开始
 
@@ -21,7 +23,7 @@ sing-box 1.14 `config.json`。它会为 Windows、Android 和 Linux 生成平台
 时需要 sing-box 1.14.0-beta.15 或更高版本。
 
 ```bash
-dotnet run -- generate \
+dotnet run --project src/BoxForge.Cli -- generate \
   --input-dir clashConfigs \
   --output-dir singboxConfigs \
   --platform all
@@ -30,8 +32,11 @@ dotnet run -- generate \
 三个选项都有默认值，因此也可以直接运行：
 
 ```bash
-dotnet run -- generate
+dotnet run --project src/BoxForge.Cli -- generate
 ```
+
+如果当前目录是 `src/BoxForge.Cli`，仍可直接使用
+`dotnet run -- generate`。`generate` 及其所有参数、默认值和退出码保持不变。
 
 | 选项 | 默认值 | 说明 |
 | --- | --- | --- |
@@ -41,6 +46,60 @@ dotnet run -- generate
 
 BoxForge 只接受 `generate` 子命令。缺少子命令、传入未知选项或重复
 选项时，程序会输出用法并立即结束，不会读取 stdin。
+
+## 无状态 HTTP API
+
+启动 Server：
+
+```bash
+dotnet run --project src/BoxForge.Server --urls http://127.0.0.1:5080
+```
+
+健康检查：
+
+```bash
+curl http://127.0.0.1:5080/healthz
+```
+
+将请求保存为 `request.json`：
+
+```json
+{
+  "name": "example",
+  "yaml": "proxies:\n  - name: test\n    type: ss\n    server: node.example.com\n    port: 443\n    cipher: aes-128-gcm\n    password: test-only",
+  "platforms": ["Android", "Linux", "Windows"]
+}
+```
+
+然后调用转换端点：
+
+```bash
+curl --request POST http://127.0.0.1:5080/api/v1/convert \
+  --header 'Content-Type: application/json' \
+  --data-binary @request.json
+```
+
+API 只接收配置名、Clash YAML 原文和目标平台，不读写本地配置
+目录，不接收订阅 URL，也不保存请求或结果。当前没有鉴权、限流
+和 SSRF 防护，因此尚不应直接暴露到公网。
+
+打开 `http://127.0.0.1:5080/` 可使用 Server 自带的上传页面。页面会将
+单个 `.yaml` 或 `.yml` 文件发送到同源的
+`POST /api/v1/export`，并下载内存中生成的
+`boxforge-output.zip`。也可直接调用该端点：
+
+```bash
+curl --request POST http://127.0.0.1:5080/api/v1/export \
+  --form 'file=@clashConfigs/example.yaml' \
+  --form 'name=example' \
+  --form 'platforms=Android' \
+  --form 'platforms=Linux' \
+  --form 'platforms=Windows' \
+  --output boxforge-output.zip
+```
+
+无论选择一个还是多个平台，`/api/v1/export` 都返回 ZIP。
+上传文件上限为 2 MiB，整个请求体上限为 4 MiB。
 
 ## 输出与事务语义
 
@@ -72,7 +131,7 @@ Tailscale endpoint 默认不生成。Linux 和 Windows 需要启用时设置：
 
 ```bash
 BOXFORGE_Tailscale__Enabled=true \
-dotnet run -- generate --platform Linux
+dotnet run --project src/BoxForge.Cli -- generate --platform Linux
 ```
 
 即使开启上述通用开关，Android 配置仍默认关闭 Tailscale。需要在

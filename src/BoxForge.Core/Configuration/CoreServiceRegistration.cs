@@ -1,18 +1,17 @@
-using BoxForge.App;
 using BoxForge.Builders;
 using BoxForge.Builders.Components;
 using BoxForge.Converters;
+using BoxForge.Engine;
 using BoxForge.Parsers;
 using BoxForge.Services;
-using BoxForge.Workflows;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace BoxForge.Configuration;
 
-public static class ServiceRegistration
+public static class CoreServiceRegistration
 {
-    public static IServiceCollection AddBoxForge(
+    public static IServiceCollection AddBoxForgeCore(
         this IServiceCollection services,
         IConfiguration configuration)
     {
@@ -35,8 +34,7 @@ public static class ServiceRegistration
 
         services.AddTransient<ISingboxConfigBuilder, SingboxConfigBuilder>();
         services.AddTransient<ConversionService>();
-        services.AddTransient<ILocalGenerationWorkflow, LocalGenerationWorkflow>();
-        services.AddTransient<GenerateCommandRunner>();
+        services.AddTransient<IBoxForgeEngine, BoxForgeEngine>();
 
         return services;
     }

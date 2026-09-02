@@ -1,0 +1,239 @@
+:root {
+  color-scheme: light dark;
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+  background: Canvas;
+  color: CanvasText;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.shell {
+  width: min(46rem, calc(100% - 2rem));
+  margin: 0 auto;
+  padding: 4rem 0;
+}
+
+header {
+  margin-bottom: 2rem;
+}
+
+.eyebrow {
+  margin: 0 0 0.5rem;
+  color: #3268c8;
+  font-size: 0.8rem;
+  font-weight: 750;
+  letter-spacing: 0.14em;
+}
+
+h1,
+h2,
+p {
+  margin-top: 0;
+}
+
+h1 {
+  margin-bottom: 0.75rem;
+  font-size: clamp(2rem, 6vw, 3.35rem);
+  line-height: 1.05;
+  letter-spacing: -0.035em;
+}
+
+.intro,
+.section-heading p,
+.file-note {
+  color: GrayText;
+}
+
+.intro {
+  max-width: 40rem;
+  margin-bottom: 0;
+  font-size: 1.05rem;
+  line-height: 1.65;
+}
+
+form {
+  border: 1px solid color-mix(in srgb, CanvasText 18%, transparent);
+  border-radius: 1rem;
+  overflow: hidden;
+}
+
+.section {
+  padding: 1.5rem;
+}
+
+.section + .section {
+  border-top: 1px solid color-mix(in srgb, CanvasText 14%, transparent);
+}
+
+.section-heading {
+  display: flex;
+  gap: 0.9rem;
+  align-items: flex-start;
+  margin-bottom: 1.25rem;
+}
+
+.section-heading h2 {
+  margin-bottom: 0.2rem;
+  font-size: 1.1rem;
+}
+
+.section-heading p {
+  margin-bottom: 0;
+  font-size: 0.9rem;
+}
+
+.step {
+  display: grid;
+  flex: 0 0 2rem;
+  width: 2rem;
+  height: 2rem;
+  place-items: center;
+  border-radius: 50%;
+  background: #3268c8;
+  color: white;
+  font-weight: 700;
+}
+
+.drop-zone {
+  padding: 1.4rem;
+  border: 2px dashed color-mix(in srgb, CanvasText 26%, transparent);
+  border-radius: 0.75rem;
+  text-align: center;
+}
+
+.drop-zone.is-over {
+  border-color: #3268c8;
+  background: color-mix(in srgb, #3268c8 9%, Canvas);
+}
+
+.drop-zone label {
+  display: block;
+  margin-bottom: 0.9rem;
+  font-weight: 650;
+}
+
+.drop-zone input {
+  max-width: 100%;
+}
+
+.file-note {
+  margin: 0.75rem 0 0;
+  font-size: 0.88rem;
+}
+
+.field {
+  display: grid;
+  gap: 0.45rem;
+  margin-bottom: 1.25rem;
+  font-weight: 650;
+}
+
+.field input {
+  width: 100%;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid color-mix(in srgb, CanvasText 24%, transparent);
+  border-radius: 0.5rem;
+  background: Canvas;
+  color: CanvasText;
+}
+
+fieldset {
+  padding: 0;
+  border: 0;
+}
+
+legend {
+  margin-bottom: 0.65rem;
+  font-weight: 650;
+}
+
+.platforms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.platforms label {
+  display: flex;
+  gap: 0.45rem;
+  align-items: center;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
+  border-radius: 0.5rem;
+}
+
+.actions {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.25rem 1.5rem;
+  border-top: 1px solid color-mix(in srgb, CanvasText 14%, transparent);
+  background: color-mix(in srgb, CanvasText 4%, Canvas);
+}
+
+button {
+  padding: 0.75rem 1.1rem;
+  border: 0;
+  border-radius: 0.55rem;
+  background: #3268c8;
+  color: white;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #2858ac;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+button:focus-visible,
+input:focus-visible {
+  outline: 3px solid color-mix(in srgb, #3268c8 55%, transparent);
+  outline-offset: 3px;
+}
+
+.status {
+  margin: 0;
+  text-align: right;
+}
+
+.status[data-state="error"] {
+  color: #c63838;
+}
+
+.status[data-state="success"] {
+  color: #16834b;
+}
+
+@media (max-width: 36rem) {
+  .shell {
+    padding: 2rem 0;
+  }
+
+  .actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .status {
+    text-align: left;
+  }
+}
