@@ -144,6 +144,7 @@ Android 端使用时，单独设置
 ## 文档
 
 - [架构与扩展](docs/architecture.md)：处理流程、目录职责、原子替换和校验边界
+- [HTTP API](docs/http-api.md)：JSON 转换、YAML/ZIP 导出、错误契约和安全边界
 - [配置参考](docs/configuration.md)：所有环境变量、默认值与 Tailscale 行为
 - [生成配置约定](docs/generated-config.md)：平台差异、缓存、节点和 rule-set 行为
 - [DNS 与路由优先级](docs/routing-and-dns.md)：实际生成顺序和设计意图

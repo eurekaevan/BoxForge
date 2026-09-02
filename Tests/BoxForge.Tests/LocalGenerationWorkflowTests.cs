@@ -1,6 +1,8 @@
 using BoxForge.Engine;
+using BoxForge.Exceptions;
 using BoxForge.Models;
 using BoxForge.Workflows;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace BoxForge.Tests;
@@ -147,6 +149,44 @@ public sealed class LocalGenerationWorkflowTests
         });
     }
 
+    [Test]
+    public async Task PlatformFailureUsesPlatformSpecificLogEvent()
+    {
+        string inputDirectory = CreateDirectory("input");
+        string outputDirectory = System.IO.Path.Combine(
+            temporaryDirectory,
+            "output");
+        await File.WriteAllTextAsync(
+            System.IO.Path.Combine(inputDirectory, "sample.yaml"),
+            "input");
+        var engine = new RecordingEngine(_ =>
+            throw new BoxForgePlatformConversionException(
+                TargetPlatform.Linux,
+                new InvalidOperationException("simulated platform failure")));
+        var logger = new RecordingLogger<LocalGenerationWorkflow>();
+        var workflow = new LocalGenerationWorkflow(engine, logger);
+
+        LocalGenerationSummary summary = await workflow.GenerateAsync(
+            new LocalGenerationRequest(
+                inputDirectory,
+                outputDirectory,
+                [TargetPlatform.Android, TargetPlatform.Linux]));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(summary.Failed, Is.EqualTo(2));
+            Assert.That(
+                logger.Entries.Select(entry => entry.EventId.Id),
+                Does.Contain(13));
+            Assert.That(
+                logger.Entries.Select(entry => entry.EventId.Id),
+                Does.Not.Contain(11));
+            Assert.That(
+                logger.Entries.Single(entry => entry.EventId.Id == 13).Message,
+                Does.Contain("[Linux]"));
+        });
+    }
+
     private string CreateDirectory(string name)
     {
         string path = System.IO.Path.Combine(temporaryDirectory, name);
@@ -184,4 +224,28 @@ public sealed class LocalGenerationWorkflowTests
             return Task.FromResult(convert(request));
         }
     }
+
+    private sealed class RecordingLogger<T> : ILogger<T>
+    {
+        public List<LogEntry> Entries { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            Entries.Add(new LogEntry(
+                eventId,
+                formatter(state, exception)));
+        }
+    }
+
+    private sealed record LogEntry(EventId EventId, string Message);
 }

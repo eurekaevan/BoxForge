@@ -1,9 +1,7 @@
-using System.Buffers;
-using System.IO.Compression;
 using System.Text;
 using BoxForge.Engine;
 using BoxForge.Exceptions;
-using BoxForge.Models;
+using Microsoft.Net.Http.Headers;
 
 namespace BoxForge.Server.Api;
 
@@ -96,7 +94,7 @@ internal static class ExportApi
         byte[]? yamlBytes;
         await using (Stream upload = file.OpenReadStream())
         {
-            yamlBytes = await ReadUpToLimitAsync(
+            yamlBytes = await BoundedStreamReader.ReadAsync(
                 upload,
                 ApiLimits.MaxYamlBytes,
                 cancellationToken);
@@ -129,7 +127,7 @@ internal static class ExportApi
             ConversionBundle bundle = await engine.ConvertAsync(
                 new ConversionRequest(name, yaml, platforms),
                 cancellationToken);
-            byte[] archive = await CreateArchiveAsync(
+            byte[] archive = await ConversionZipBuilder.BuildAsync(
                 name,
                 platforms,
                 bundle,
@@ -154,9 +152,10 @@ internal static class ExportApi
     }
 
     private static bool IsMultipartFormData(string? contentType) =>
-        contentType?.StartsWith(
+        MediaTypeHeaderValue.TryParse(contentType, out var parsed)
+        && parsed.MediaType.Equals(
             "multipart/form-data",
-            StringComparison.OrdinalIgnoreCase) == true;
+            StringComparison.OrdinalIgnoreCase);
 
     private static bool IsAllowedFormField(string key) =>
         string.Equals(key, "name", StringComparison.Ordinal)
@@ -214,103 +213,4 @@ internal static class ExportApi
 
         return ApiRequestValidation.IsValidConfigurationName(name);
     }
-
-    private static async Task<byte[]?> ReadUpToLimitAsync(
-        Stream source,
-        int limit,
-        CancellationToken cancellationToken)
-    {
-        using var content = new MemoryStream();
-        byte[] buffer = ArrayPool<byte>.Shared.Rent(81920);
-        try
-        {
-            while (content.Length <= limit)
-            {
-                int remaining = checked(limit + 1 - (int)content.Length);
-                int read = await source.ReadAsync(
-                    buffer.AsMemory(0, Math.Min(buffer.Length, remaining)),
-                    cancellationToken);
-                if (read == 0)
-                {
-                    break;
-                }
-
-                await content.WriteAsync(
-                    buffer.AsMemory(0, read),
-                    cancellationToken);
-            }
-
-            return content.Length > limit ? null : content.ToArray();
-        }
-        finally
-        {
-            ArrayPool<byte>.Shared.Return(buffer, clearArray: true);
-        }
-    }
-
-    private static async Task<byte[]> CreateArchiveAsync(
-        string name,
-        IReadOnlyList<TargetPlatform> requestedPlatforms,
-        ConversionBundle bundle,
-        CancellationToken cancellationToken)
-    {
-        IReadOnlyList<ConversionArtifact> artifacts =
-        [
-            .. bundle.Artifacts.OrderBy(artifact =>
-                GetPlatformOrder(artifact.Platform))
-        ];
-        var expectedPlatforms = requestedPlatforms.ToHashSet();
-        if (artifacts.Count != expectedPlatforms.Count
-            || artifacts.Select(artifact => artifact.Platform)
-                .Distinct()
-                .Count() != artifacts.Count
-            || !expectedPlatforms.SetEquals(
-                artifacts.Select(artifact => artifact.Platform)))
-        {
-            throw new InvalidOperationException(
-                "The conversion bundle does not match the request.");
-        }
-
-        using var output = new MemoryStream();
-        using (var archive = new ZipArchive(
-                   output,
-                   ZipArchiveMode.Create,
-                   leaveOpen: true))
-        {
-            foreach (ConversionArtifact artifact in artifacts)
-            {
-                string entryName =
-                    $"{name}/{artifact.Platform}/config.json";
-                ZipArchiveEntry entry = archive.CreateEntry(
-                    entryName,
-                    CompressionLevel.Optimal);
-                entry.LastWriteTime = new DateTimeOffset(
-                    1980,
-                    1,
-                    1,
-                    0,
-                    0,
-                    0,
-                    TimeSpan.Zero);
-
-                byte[] content = Encoding.UTF8.GetBytes(artifact.Content);
-                await using Stream destination = entry.Open();
-                await destination.WriteAsync(content, cancellationToken);
-            }
-        }
-
-        return output.ToArray();
-    }
-
-    private static int GetPlatformOrder(TargetPlatform platform) =>
-        platform switch
-        {
-            TargetPlatform.Android => 0,
-            TargetPlatform.Linux => 1,
-            TargetPlatform.Windows => 2,
-            _ => throw new ArgumentOutOfRangeException(
-                nameof(platform),
-                platform,
-                "Unknown target platform.")
-        };
 }

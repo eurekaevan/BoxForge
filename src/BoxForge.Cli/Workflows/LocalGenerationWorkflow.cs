@@ -115,16 +115,6 @@ public sealed partial class LocalGenerationWorkflow(
                         inputFile,
                         cancellationToken);
                 }
-                catch (BoxForgePlatformConversionException ex)
-                {
-                    failed += request.Platforms.Count;
-                    LogGenerationFailure(
-                        logger,
-                        ex.InnerException ?? ex,
-                        configName,
-                        ex.Platform);
-                    continue;
-                }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     LogReadFailure(logger, ex, inputFile);
@@ -141,6 +131,16 @@ public sealed partial class LocalGenerationWorkflow(
                             yamlContent,
                             request.Platforms),
                         cancellationToken);
+                }
+                catch (BoxForgePlatformConversionException ex)
+                {
+                    failed += request.Platforms.Count;
+                    LogGenerationFailure(
+                        logger,
+                        ex.InnerException ?? ex,
+                        configName,
+                        ex.Platform);
+                    continue;
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {

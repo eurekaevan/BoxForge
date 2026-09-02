@@ -1,4 +1,3 @@
-using System.Buffers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -48,8 +47,9 @@ internal static class ConversionApi
         byte[]? body;
         try
         {
-            body = await ReadRequestBodyAsync(
+            body = await BoundedStreamReader.ReadAsync(
                 context.Request.Body,
+                ApiLimits.MaxRequestBodyBytes,
                 cancellationToken);
         }
         catch (BadHttpRequestException exception)
@@ -131,41 +131,6 @@ internal static class ConversionApi
         catch (Exception) when (!cancellationToken.IsCancellationRequested)
         {
             return ApiProblems.UnexpectedError();
-        }
-    }
-
-    private static async Task<byte[]?> ReadRequestBodyAsync(
-        Stream body,
-        CancellationToken cancellationToken)
-    {
-        using var content = new MemoryStream();
-        byte[] buffer = ArrayPool<byte>.Shared.Rent(81920);
-        try
-        {
-            while (content.Length <= ApiLimits.MaxRequestBodyBytes)
-            {
-                int remaining = checked(
-                    ApiLimits.MaxRequestBodyBytes + 1 - (int)content.Length);
-                int read = await body.ReadAsync(
-                    buffer.AsMemory(0, Math.Min(buffer.Length, remaining)),
-                    cancellationToken);
-                if (read == 0)
-                {
-                    break;
-                }
-
-                await content.WriteAsync(
-                    buffer.AsMemory(0, read),
-                    cancellationToken);
-            }
-
-            return content.Length > ApiLimits.MaxRequestBodyBytes
-                ? null
-                : content.ToArray();
-        }
-        finally
-        {
-            ArrayPool<byte>.Shared.Return(buffer, clearArray: true);
         }
     }
 }

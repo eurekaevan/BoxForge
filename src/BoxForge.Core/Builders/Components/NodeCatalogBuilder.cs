@@ -49,12 +49,12 @@ public sealed partial class NodeCatalogBuilder(
             var result = converter.Convert(proxy);
             if (result is InvalidNode invalidNode)
             {
-                LogInvalidNode(logger, invalidNode.ErrorMessage);
                 if (strictNodeValidation)
                 {
                     throw new NodeParseException(invalidNode.ErrorMessage);
                 }
 
+                LogInvalidNode(logger, invalidNode.ErrorMessage);
                 continue;
             }
 

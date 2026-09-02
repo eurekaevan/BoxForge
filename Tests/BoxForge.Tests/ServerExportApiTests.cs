@@ -179,6 +179,56 @@ public sealed class ServerExportApiTests
     }
 
     [Test]
+    public async Task RejectsNonYamlFileExtension()
+    {
+        using HttpClient client = factory.CreateClient();
+
+        using HttpResponseMessage response = await PostExportAsync(
+            client,
+            Encoding.UTF8.GetBytes(ValidYaml),
+            "config.txt",
+            name: null,
+            ["Android"]);
+
+        await AssertProblemAsync(response, HttpStatusCode.BadRequest);
+    }
+
+    [Test]
+    public async Task RejectsUnsupportedFormFields()
+    {
+        using HttpClient client = factory.CreateClient();
+        using var form = CreateExportForm(
+            Encoding.UTF8.GetBytes(ValidYaml),
+            "config.yaml",
+            name: null,
+            ["Android"]);
+        form.Add(
+            new StringContent("https://example.com/subscription"),
+            "subscriptionUrl");
+
+        using HttpResponseMessage response = await client.PostAsync(
+            "/api/v1/export",
+            form);
+
+        await AssertProblemAsync(response, HttpStatusCode.BadRequest);
+    }
+
+    [Test]
+    public async Task RejectsMultipartPrefixThatIsNotMultipartMediaType()
+    {
+        using HttpClient client = factory.CreateClient();
+        using var content = new StringContent("not a multipart request");
+        content.Headers.ContentType = new MediaTypeHeaderValue(
+            "multipart/form-data-invalid");
+
+        using HttpResponseMessage response = await client.PostAsync(
+            "/api/v1/export",
+            content);
+
+        await AssertProblemAsync(response, HttpStatusCode.BadRequest);
+    }
+
+    [Test]
     public async Task RejectsFileOverTwoMiB()
     {
         using HttpClient client = factory.CreateClient();

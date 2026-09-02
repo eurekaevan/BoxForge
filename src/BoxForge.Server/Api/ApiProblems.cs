@@ -10,7 +10,7 @@ internal static class ApiProblems
     public static IResult RequestTooLarge() => Results.Problem(
         statusCode: StatusCodes.Status413PayloadTooLarge,
         title: "请求过大",
-        detail: "请求体不能超过 4 MiB，yaml 不能超过 2 MiB。");
+        detail: "请求体不能超过 4 MiB，YAML 内容不能超过 2 MiB。");
 
     public static IResult ConversionFailed() => Results.Problem(
         statusCode: StatusCodes.Status422UnprocessableEntity,

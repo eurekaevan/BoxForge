@@ -69,6 +69,9 @@ BoxForge.Tests  ──→ BoxForge.Cli, BoxForge.Server, BoxForge.Core
   外部资源的 CSP、`nosniff` 和 `no-referrer`。
 - 当前 API 没有鉴权、限流和 SSRF 防护，尚不应直接暴露到公网。
 
+完整的请求、响应、ZIP、大小限制和错误码契约见
+[HTTP API](http-api.md)。
+
 ## 扩展代理协议
 
 1. 在 `src/BoxForge.Core/Converters/` 实现 `IProxyConverter`，使
