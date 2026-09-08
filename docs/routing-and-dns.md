@@ -42,7 +42,9 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
 
 1. 启用 Tailscale 时，将 MagicDNS 和分流后缀交给 Tailscale DNS，并禁用
    optimistic 过期缓存。
-2. 代理节点域名使用专用本地解析器，仅请求 A 记录，并禁用 optimistic 缓存。
+2. 普通 DNS 查询命中代理节点域名时，使用专用本地解析器，仅请求 A 记录，
+   并禁用 optimistic 过期缓存。代理出站解析自己的服务器域名时不会经过这条
+   规则，而由各出站的 `domain_resolver` 独立施加同样约束。
 3. 广告域名直接返回 `NXDOMAIN`。
 4. 所有代理服务 rule-set 的 AAAA 请求返回空 `NOERROR`。这条规则位于
    Google 和国内 DNS 规则之前，避免 rule-set 交集返回代理业务 IPv6。

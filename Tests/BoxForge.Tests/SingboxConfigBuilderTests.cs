@@ -65,6 +65,8 @@ public sealed class SingboxConfigBuilderTests
         bool hasDnsServer = config.Dns.Servers
             .OfType<TailscaleDnsServer>()
             .Any();
+        bool hasBootstrap = config.Dns.Servers.Any(server =>
+            server.Tag == SingboxTags.BootstrapDns);
         bool hasRoute = config.Route.Rules.Any(rule =>
             rule.PreferredBy?.Contains(SingboxTags.TailscaleEndpoint) == true);
         string json = new ConfigSerializer().Serialize(config);
@@ -73,6 +75,7 @@ public sealed class SingboxConfigBuilderTests
         {
             Assert.That(hasEndpoint, Is.EqualTo(expectedEnabled));
             Assert.That(hasDnsServer, Is.EqualTo(expectedEnabled));
+            Assert.That(hasBootstrap, Is.EqualTo(expectedEnabled));
             Assert.That(hasRoute, Is.EqualTo(expectedEnabled));
             Assert.That(
                 json.Contains("\"tailscale\"", StringComparison.Ordinal),
@@ -151,7 +154,7 @@ public sealed class SingboxConfigBuilderTests
     }
 
     [Test]
-    public void ProxyServerDomainsUseIpv4OnlyResolverObjects()
+    public void ProxyServerDomainsUseFreshIpv4OnlyResolverObjects()
     {
         var proxy = new VlessOutbound
         {
@@ -178,8 +181,14 @@ public sealed class SingboxConfigBuilderTests
             Assert.That(
                 generated.DomainResolver.Strategy,
                 Is.EqualTo(DnsStrategy.Ipv4Only));
+            Assert.That(
+                generated.DomainResolver.DisableOptimisticCache,
+                Is.True);
             Assert.That(json, Does.Contain("\"domain_resolver\": {"));
             Assert.That(json, Does.Contain("\"strategy\": \"ipv4_only\""));
+            Assert.That(
+                json,
+                Does.Contain("\"disable_optimistic_cache\": true"));
         });
 
         Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config));

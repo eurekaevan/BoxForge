@@ -15,7 +15,6 @@ public sealed class DnsProfileBuilder(
         var dns = new DnsConfig();
 
         dns.Servers.AddRange([
-            CreateHttpsServer(SingboxTags.BootstrapDns, "223.5.5.5", "dns.alidns.com"),
             CreateHttpsServer(SingboxTags.NodeResolverDns, "223.5.5.5", "dns.alidns.com"),
             CreateHttpsServer(SingboxTags.LocalTencentDns, "119.29.29.29", "doh.pub"),
             CreateHttpsServer(SingboxTags.LocalDns, "223.5.5.5", "dns.alidns.com"),
@@ -33,6 +32,12 @@ public sealed class DnsProfileBuilder(
 
         if (tailscale.IsEnabled(platform))
         {
+            dns.Servers.Insert(
+                0,
+                CreateHttpsServer(
+                    SingboxTags.BootstrapDns,
+                    "223.5.5.5",
+                    "dns.alidns.com"));
             dns.Servers.Add(new TailscaleDnsServer
             {
                 Tag = SingboxTags.TailscaleDns,

@@ -24,6 +24,8 @@ public record DnsResolverOptions
 {
     [JsonPropertyName("server")] public required string Server { get; init; }
     [JsonPropertyName("strategy")] public DnsStrategy? Strategy { get; init; }
+    [JsonPropertyName("disable_optimistic_cache")]
+    public bool? DisableOptimisticCache { get; init; }
 }
 
 public abstract record DnsServer

@@ -13,6 +13,18 @@ namespace BoxForge.Tests;
 public sealed class DnsProfileBuilderTests
 {
     [Test]
+    public void BootstrapIsOmittedWithoutATailscaleEndpoint()
+    {
+        DnsConfig dns = CreateBuilder().Build(
+            new NodeCatalog([], [], []),
+            TargetPlatform.Linux);
+
+        Assert.That(
+            dns.Servers.Any(server => server.Tag == SingboxTags.BootstrapDns),
+            Is.False);
+    }
+
+    [Test]
     public void BootstrapUsesDirectHttpsWithoutTheSystemResolver()
     {
         DnsConfig dns = CreateBuilder(tailscaleEnabled: true).Build(

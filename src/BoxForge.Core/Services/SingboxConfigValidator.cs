@@ -222,6 +222,13 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
                 $"outbounds[{index}].domain_resolver.strategy",
                 "代理节点域名必须使用 ipv4_only 解析策略。"));
         }
+        if (proxy.DomainResolver.DisableOptimisticCache != true)
+        {
+            context.Diagnostics.Add(new ConfigDiagnostic(
+                "SB064",
+                $"outbounds[{index}].domain_resolver.disable_optimistic_cache",
+                "代理节点域名解析必须禁用 optimistic 过期缓存。"));
+        }
 
         if (IPAddress.TryParse(proxy.Server, out IPAddress? serverAddress)
             && serverAddress.AddressFamily == AddressFamily.InterNetworkV6)

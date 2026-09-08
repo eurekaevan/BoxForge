@@ -113,6 +113,10 @@ public sealed class SingboxConfigValidatorTests
                 "outbounds[2].domain_resolver.strategy",
                 "代理节点域名必须使用 ipv4_only 解析策略。"),
             new ConfigDiagnostic(
+                "SB064",
+                "outbounds[2].domain_resolver.disable_optimistic_cache",
+                "代理节点域名解析必须禁用 optimistic 过期缓存。"),
+            new ConfigDiagnostic(
                 "SB062",
                 "outbounds[2].server",
                 "代理节点不能使用 IPv6 字面量地址。"));
@@ -230,6 +234,7 @@ public sealed class SingboxConfigValidatorTests
             new("SB019", "outbounds[0].server", "代理服务器地址不能为空。"),
             new("SB020", "outbounds[0].server_port", "代理节点必须配置有效端口。"),
             new("SB004", "outbounds[0].domain_resolver.server", "引用了不存在的 DNS server。"),
+            new("SB064", "outbounds[0].domain_resolver.disable_optimistic_cache", "代理节点域名解析必须禁用 optimistic 过期缓存。"),
             new("SB044", "outbounds[0].tls.server_name", "TLS server_name 不能为空。"),
             new("SB045", "outbounds[0].uuid", "VLESS UUID 不能为空。"),
             new("SB022", "inbounds[0].listen_port", "inbound 监听端口必须在 1-65535 之间。"),

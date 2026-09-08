@@ -26,10 +26,13 @@ SFA 工作目录下的 `Taildrop`，Windows 使用
 - DNS 默认使用 `prefer_ipv4`，缓存容量为 `4096`，并启用超时为 `3d` 的
   optimistic 缓存和 reverse mapping。
 - 代理节点域名固定通过 `node-resolver` 以 `ipv4_only` 解析；所有代理出站的
-  `domain_resolver` 也显式指定 `ipv4_only`。IPv6 字面量代理节点会在生成时
-  被校验器拒绝。
-- 代理节点域名与 Tailscale DNS 显式禁用 optimistic 过期缓存，避免地址
-  变更后继续使用旧记录。
+  `domain_resolver` 也显式指定 `ipv4_only` 并禁用 optimistic 过期缓存。
+  代理出站的内部解析不会经过普通 DNS 规则，因此该约束直接写在每个出站上；
+  IPv6 字面量代理节点会在生成时被校验器拒绝。
+- 普通 DNS 查询命中代理节点域名时同样禁用 optimistic 过期缓存；Tailscale DNS
+  查询也显式禁用它，避免地址变更后继续使用旧记录。
+- `bootstrap` 仅在目标平台启用 Tailscale endpoint 时生成；它是 endpoint 的
+  独立直连 DoH 启动解析器，不会在未启用 Tailscale 的配置中占位。
 - 代理服务域名的 AAAA 查询返回空 `NOERROR`；国内 DNS 规则仍允许 A/AAAA。
 - `experimental.cache_file` 使用 `cache.db`，并通过 `store_dns` 持久化 DNS 缓存。
 - `cache_id` 是 YAML `proxies` 列表的规范化 SHA-256；字段顺序不影响身份。

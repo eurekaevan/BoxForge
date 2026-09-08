@@ -37,7 +37,8 @@ public abstract record ProxyOutbound : Outbound
     public DnsResolverOptions DomainResolver { get; init; } = new()
     {
         Server = SingboxTags.NodeResolverDns,
-        Strategy = DnsStrategy.Ipv4Only
+        Strategy = DnsStrategy.Ipv4Only,
+        DisableOptimisticCache = true
     };
     [JsonPropertyName("connect_timeout")] public string ConnectTimeout { get; init; } = "5s";
     [JsonPropertyName("tcp_keep_alive")] public string? TcpKeepAlive { get; init; }
