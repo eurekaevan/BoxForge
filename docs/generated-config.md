@@ -16,15 +16,20 @@ sing-box 自动修改系统 HTTP 代理设置。
 | Linux | `system` | `auto_redirect: true`；生成 `bridge-out` L3 直连和 kernel-level `bypass`；代理出站使用 `tcp_keep_alive: 1m` 和 `tcp_keep_alive_interval: 30s` |
 | Windows | `mixed` | 生成 `bridge-out` L3 直连；代理出站使用 `tcp_keep_alive: 1m` 和 `tcp_keep_alive_interval: 30s` |
 
-Linux 和 Windows 额外生成 sing-box 1.14 `bridge` outbound。仅对首个 `sniff`
-之前可安全预匹配的私网地址和 `223.5.5.5` 直连规则，保留原 `DIRECT` 作为 L4
-回退，并在它前面增加带 `preferred_by: bridge-out` 门控的 L3 route。Linux
-还会再优先生成无 `outbound` 的 `bypass` 动作，使 `auto_redirect` 流量在相同
-条件下从内核层直接绕过 sing-box；该动作在其他上下文会被跳过。
+Linux 和 Windows 额外生成 sing-box 1.14 `bridge` outbound，并按规则可判定的
+阶段生成两类 L3 forwarding 层：
 
-依赖嗅探、域名或后续服务优先级才能确定的国内直连规则不会提前，仍使用原
-`DIRECT` 路径。仅属于 `mixed-in` 的规则也不参与 L3/bypass 扩展，保留的
-loopback mixed 入站与 DIRECT 分流范围保持不变。
+- 私网地址和 `223.5.5.5` 在首个 `sniff` 之前预匹配；原 `DIRECT` 前增加带
+  `preferred_by: bridge-out` 门控的 L3 route。
+- 国内 IPv6、国内 UDP/443、`geosite-cn`/`geosite-category-pt` 和 `geoip-cn`
+  在 UDP sniff 之后、各自原始规则所在位置增加仅匹配 `tun-in` + UDP 的 L3
+  route。它们不会被搬到 sniff 之前，因此仍保留原有服务优先级和域名嗅探语义。
+
+Linux 在每条上述 L3 route 之前再生成无 `outbound` 的 `bypass` 动作，使
+`auto_redirect` 流量在相同条件下从内核层直接绕过 sing-box；该动作在其他
+上下文会被跳过。每条原 `DIRECT` 都原位保留作为 correctness fallback，覆盖
+TCP 和 UDP 无法完成 sniff 等不能使用 L3 forwarding 的情况。仅属于 `mixed-in`
+的规则不参与 L3/bypass 扩展，loopback mixed 入站与 DIRECT 分流范围保持不变。
 
 `bridge` 需要系统权限；Windows 依赖 WinDivert，Linux 的 `bypass` 依赖已启用的
 `auto_redirect`。Android 不生成这些字段。
@@ -71,11 +76,13 @@ SFA 工作目录下的 `Taildrop`，Windows 使用
   模板合并声明；各 DNS 和路由规则仍按原 tag 单独引用。
 - mixed inbound 的代理业务域名和最终代理回退域名在路由前执行
   `resolve` + `ipv4_only`。公网 IPv6 只有命中 `geoip-cn` 时才进入 `DIRECT`；
-  其他公网 IPv6 在所有代理业务路由之前被拒绝。私网和 Tailscale 路径不受
-  这条公网限制影响。
+  其他公网 IPv6 使用原生 `ip_version: 6` 匹配并在所有代理业务路由之前被
+  拒绝。私网和 Tailscale 路径不受这条公网限制影响。
 - 未被前置 Tailscale、私网或 bootstrap 直连规则处理的 UDP 流量会同时嗅探
   QUIC 和 STUN，并拒绝识别出的 STUN 协议；不再根据 3478、3479、19302 或
   19303 等固定端口拒绝普通 UDP 流量。
+- AI、Google 和最终兜底的 UDP/443 拒绝规则写入 `no_drop: true`，持续返回拒绝
+  响应以促使 QUIC 回退 TCP；STUN、广告和 IPv6 拒绝不启用该字段。
 
 ## sing-box API
 

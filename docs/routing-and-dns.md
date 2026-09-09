@@ -7,11 +7,11 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
 
 `RouteProfileBuilder` 按以下顺序生成顶层规则：
 
-在首个 `sniff` 之前，私网地址和 `223.5.5.5` 两条 `DIRECT` 规则会在非
-Android 平台先尝试 `bridge-out` L3 forwarding，再以原 `DIRECT` 作为 L4
-回退；Linux 还会更早尝试 `auto_redirect` kernel-level `bypass`。这些层仅限
-`tun-in` 并复用原目标条件。依赖嗅探或后续服务优先级的国内直连规则，以及
-仅针对 `mixed-in` 的直连规则，不会提前或添加无效的 L3/bypass 层。
+非 Android 平台使用显式阶段扩展 `DIRECT` 规则。私网地址和 `223.5.5.5` 在
+首个 `sniff` 前加入 `bridge-out` L3 forwarding；Linux 还先尝试
+`auto_redirect` kernel-level `bypass`。需要嗅探或后续优先级才能判定的国内
+直连规则保持原位，只在 UDP sniff 后加入 `tun-in` + UDP 限定的 bridge/bypass
+伴随规则。每条原 `DIRECT` 都保留为回退，仅针对 `mixed-in` 的直连规则不扩展。
 
 1. 劫持 TUN 和 mixed inbound 的 DNS 流量。
 2. 启用 Tailscale 时，先路由 Tailscale endpoint 声明为首选的目标。
@@ -20,8 +20,10 @@ Android 平台先尝试 `bridge-out` L3 forwarding，再以原 `DIRECT` 作为 L
 5. 拒绝识别出的 STUN 协议，然后拒绝 `geosite-category-ads-all`。
 6. mixed inbound 对所有代理服务域名执行 `resolve` + `ipv4_only`；对国内域名
    执行 `resolve` + `prefer_ipv4`，以便后续按实际 IP 执行 IPv6 总闸门。
-7. 按服务定义顺序拒绝 AI、Google 的 UDP/443，促使 QUIC 回退 TCP。
-8. 仅直连命中 `geoip-cn` 的公网 IPv6，然后拒绝其他公网 IPv6。
+7. 按服务定义顺序拒绝 AI、Google 的 UDP/443，促使 QUIC 回退 TCP；这两条及
+   后续 UDP/443 兜底拒绝均设置 `no_drop: true`，不因触发频率切换为静默丢弃。
+8. 仅直连命中 `geoip-cn` 的公网 IPv6，然后通过 `ip_version: 6` 拒绝其他公网
+   IPv6。
 9. 将 AI 路由到 `AI`，再将 Google 路由到 `Google`。它们位于公网 IPv6
    拒绝规则之后，因此即使应用直接提供 IPv6 地址也不会经代理出站。
 10. 放行国内域名的 UDP/443；mixed inbound 先以 `ipv4_only` 解析目标后再放行 `geoip-cn`，
@@ -31,6 +33,11 @@ Android 平台先尝试 `bridge-out` L3 forwarding，再以原 `DIRECT` 作为 L
     `resolve` + `ipv4_only`，解析后先复检并直连私网地址，再按 `geoip-cn`
     直连。
 13. 未命中规则的流量使用主代理组。
+
+第 8、10、12 步中的国内 `DIRECT` 在 Linux/Windows 会紧邻原规则之前生成 L3
+伴随规则：Windows 为 bridge，Linux 为 bypass 后接 bridge。伴随规则仅匹配
+`tun-in` UDP，原规则的 rule-set、端口、IPv6 与服务顺序条件不变；TCP 在 sniff
+后不会尝试这些 L3 层，仍由原 `DIRECT` 处理。Android 不生成伴随规则。
 
 对业务分流而言，核心优先级是：
 

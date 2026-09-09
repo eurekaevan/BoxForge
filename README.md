@@ -9,8 +9,8 @@ CLI 会为 Windows、Android 和 Linux 批量生成平台化配置，并在
 - 支持 `trojan`、`vless`、`hysteria2`、`shadowsocks` (`ss`) 和 `anytls`
 - 自动生成地区分组、服务分组、DNS、路由规则和远程 rule-set
 - 强制代理节点与代理业务使用 IPv4，仅允许命中 `geoip-cn` 的公网 IPv6 直连
-- Linux/Windows 为预匹配可安全判断的直连流量提供 `bridge` L3 forwarding，
-  Linux 优先使用 `auto_redirect` kernel-level `bypass`
+- Linux/Windows 为 sniff 前快路径及 sniff 后 UDP 国内直连提供 `bridge` L3
+  forwarding，Linux 优先使用 `auto_redirect` kernel-level `bypass`
 - 可选 sing-box 内置 Tailscale endpoint，支持 MagicDNS、子网路由和 Taildrop
 - 可选仅监听本机的 sing-box 1.14 API 与 Dashboard，默认不生成
 - 提供不依赖文件系统的 `IBoxForgeEngine` 内存转换边界

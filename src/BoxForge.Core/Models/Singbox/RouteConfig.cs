@@ -29,6 +29,7 @@ public record RouteRule
     [JsonPropertyName("mode")] public RouteLogicalMode? Mode { get; init; }
     [JsonPropertyName("rules")] public List<RouteRule>? Rules { get; init; }
     [JsonPropertyName("inbound")] public List<string>? Inbound { get; init; }
+    [JsonPropertyName("ip_version")] public int? IpVersion { get; init; }
     [JsonPropertyName("protocol")] public List<string>? Protocol { get; init; }
     [JsonPropertyName("port")] public List<int>? Port { get; init; }
     [JsonPropertyName("network")] public List<string>? Network { get; init; }
@@ -37,7 +38,9 @@ public record RouteRule
     [JsonPropertyName("ip_cidr")] public List<string>? IpCidr { get; init; }
     [JsonPropertyName("ip_is_private")] public bool? IpIsPrivate { get; init; }
     [JsonPropertyName("preferred_by")] public List<string>? PreferredBy { get; init; }
+    [JsonPropertyName("invert")] public bool? Invert { get; init; }
     [JsonPropertyName("outbound")] public string? Outbound { get; init; }
+    [JsonPropertyName("no_drop")] public bool? NoDrop { get; init; }
     [JsonPropertyName("sniffer")] public List<string>? Sniffer { get; init; }
     [JsonPropertyName("timeout")] public string? Timeout { get; init; }
     [JsonPropertyName("strategy")] public DnsStrategy? Strategy { get; init; }

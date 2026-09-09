@@ -177,6 +177,30 @@ public sealed class SingboxConfigBuilderTests
         Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config));
     }
 
+    [Test]
+    public void RouteUsesNativeIpVersionAndKeepsQuicRejectResponsesEnabled()
+    {
+        SingboxConfig config = CreateBuilder().Build(new SingboxBuildRequest(
+            new NodeCatalog([], [], []),
+            TargetPlatform.Linux,
+            new string('a', 64)));
+
+        string json = new ConfigSerializer().Serialize(config);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(json, Does.Contain("\"ip_version\": 6"));
+            Assert.That(json, Does.Not.Contain("::/0"));
+            Assert.That(
+                json.Split("\"no_drop\": true", StringSplitOptions.None).Length - 1,
+                Is.EqualTo(3));
+            Assert.That(json, Does.Not.Contain("\"no_drop\": false"));
+            Assert.That(json, Does.Not.Contain("\"invert\""));
+        });
+
+        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config));
+    }
+
     [TestCase(TargetPlatform.Android)]
     [TestCase(TargetPlatform.Linux)]
     [TestCase(TargetPlatform.Windows)]

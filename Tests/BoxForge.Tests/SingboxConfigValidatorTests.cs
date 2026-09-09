@@ -242,6 +242,34 @@ public sealed class SingboxConfigValidatorTests
     }
 
     [Test]
+    public void RouteIpVersionAndNoDropMustUseSupportedSemantics()
+    {
+        SingboxConfig valid = CreateValidConfig();
+        SingboxConfig config = valid with
+        {
+            Route = valid.Route with
+            {
+                Rules =
+                [
+                    .. valid.Route.Rules,
+                    new RouteRule
+                    {
+                        IpVersion = 5,
+                        NoDrop = true,
+                        Action = RouteRuleAction.Route,
+                        Outbound = "direct"
+                    }
+                ]
+            }
+        };
+
+        AssertDiagnostics(
+            config,
+            new("SB073", "route.rules[1].ip_version", "ip_version 只能是 4 或 6。"),
+            new("SB074", "route.rules[1].no_drop", "只有 reject 动作可以指定 no_drop。"));
+    }
+
+    [Test]
     public void ProxyServersMustUseIpv4OnlyResolutionAndRejectIpv6Literals()
     {
         SingboxConfig valid = CreateValidConfig();

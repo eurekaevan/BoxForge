@@ -776,6 +776,23 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
                 "只有 resolve 动作可以指定 DNS strategy。"));
         }
 
+        if (rule.IpVersion is not (null or 4 or 6))
+        {
+            diagnostics.Add(new ConfigDiagnostic(
+                "SB073",
+                $"{path}.ip_version",
+                "ip_version 只能是 4 或 6。"));
+        }
+
+        if (rule.NoDrop.HasValue
+            && rule.Action != RouteRuleAction.Reject)
+        {
+            diagnostics.Add(new ConfigDiagnostic(
+                "SB074",
+                $"{path}.no_drop",
+                "只有 reject 动作可以指定 no_drop。"));
+        }
+
         if (rule.Rules == null)
         {
             return;

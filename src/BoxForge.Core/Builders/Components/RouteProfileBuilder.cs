@@ -12,6 +12,16 @@ public sealed class RouteProfileBuilder(
 
     public RouteConfig Build(TargetPlatform platform)
     {
+        var directForwardingModes = new Dictionary<RouteRule, DirectForwardingMode>(
+            ReferenceEqualityComparer.Instance);
+        RouteRule MarkDirectForwarding(
+            RouteRule rule,
+            DirectForwardingMode mode)
+        {
+            directForwardingModes.Add(rule, mode);
+            return rule;
+        }
+
         var route = new RouteConfig
         {
             Final = SingboxTags.MainProxyGroup,
@@ -66,8 +76,12 @@ public sealed class RouteProfileBuilder(
         }
 
         rules.AddRange([
-            new RouteRule { IpIsPrivate = true, Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound },
-            new() { IpCidr = ["223.5.5.5/32"], Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound },
+            MarkDirectForwarding(
+                new RouteRule { IpIsPrivate = true, Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound },
+                DirectForwardingMode.PreSniff),
+            MarkDirectForwarding(
+                new RouteRule { IpCidr = ["223.5.5.5/32"], Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound },
+                DirectForwardingMode.PreSniff),
             CreateSniffRule("tcp", ["http", "tls"]),
             CreateSniffRule("udp", ["quic", "stun"]),
             new()
@@ -106,8 +120,10 @@ public sealed class RouteProfileBuilder(
         }
 
         rules.AddRange([
-            CreateDomesticIpv6DirectRule(SingboxTags.DirectOutbound),
-            new() { IpCidr = ["::/0"], Action = RouteRuleAction.Reject }
+            MarkDirectForwarding(
+                CreateDomesticIpv6DirectRule(SingboxTags.DirectOutbound),
+                DirectForwardingMode.PostUdpSniff),
+            new() { IpVersion = 6, Action = RouteRuleAction.Reject }
         ]);
 
         foreach (var service in prioritizedServices)
@@ -116,7 +132,9 @@ public sealed class RouteProfileBuilder(
         }
 
         rules.AddRange([
-            CreateDomesticUdp443DirectRule(["geosite-cn", "geosite-category-pt"], SingboxTags.DirectOutbound),
+            MarkDirectForwarding(
+                CreateDomesticUdp443DirectRule(["geosite-cn", "geosite-category-pt"], SingboxTags.DirectOutbound),
+                DirectForwardingMode.PostUdpSniff),
             new RouteRule
             {
                 Inbound = [SingboxTags.MixedInbound],
@@ -125,7 +143,9 @@ public sealed class RouteProfileBuilder(
                 Action = RouteRuleAction.Resolve,
                 Strategy = DnsStrategy.Ipv4Only
             },
-            CreateDomesticUdp443DirectRule(["geoip-cn"], SingboxTags.DirectOutbound),
+            MarkDirectForwarding(
+                CreateDomesticUdp443DirectRule(["geoip-cn"], SingboxTags.DirectOutbound),
+                DirectForwardingMode.PostUdpSniff),
             CreateUdp443RejectRule()
         ]);
 
@@ -137,7 +157,9 @@ public sealed class RouteProfileBuilder(
         }
 
         rules.AddRange([
-            new RouteRule { RuleSet = ["geosite-cn", "geosite-category-pt"], Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound },
+            MarkDirectForwarding(
+                new RouteRule { RuleSet = ["geosite-cn", "geosite-category-pt"], Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound },
+                DirectForwardingMode.PostUdpSniff),
             new RouteRule
             {
                 Inbound = [SingboxTags.MixedInbound],
@@ -151,61 +173,125 @@ public sealed class RouteProfileBuilder(
                 Action = RouteRuleAction.Route,
                 Outbound = SingboxTags.DirectOutbound
             },
-            new RouteRule { RuleSet = ["geoip-cn"], Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound }
+            MarkDirectForwarding(
+                new RouteRule { RuleSet = ["geoip-cn"], Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound },
+                DirectForwardingMode.PostUdpSniff)
         ]);
 
-        route.Rules.AddRange(AddDirectForwardingLayers(rules, platform));
+        route.Rules.AddRange(AddDirectForwardingLayers(
+            rules,
+            platform,
+            directForwardingModes));
         return route;
     }
 
     private static IEnumerable<RouteRule> AddDirectForwardingLayers(
         IEnumerable<RouteRule> rules,
-        TargetPlatform platform)
+        TargetPlatform platform,
+        IReadOnlyDictionary<RouteRule, DirectForwardingMode> forwardingModes)
     {
-        bool beforeSniff = true;
         foreach (RouteRule rule in rules)
         {
-            if (rule.Action == RouteRuleAction.Sniff)
+            if (platform != TargetPlatform.Android
+                && forwardingModes.TryGetValue(
+                    rule,
+                    out DirectForwardingMode forwardingMode)
+                && forwardingMode != DirectForwardingMode.None)
             {
-                beforeSniff = false;
-            }
-
-            bool supportsL3Direct = beforeSniff
-                && platform != TargetPlatform.Android
-                && rule.Type == null
-                && rule.Action == RouteRuleAction.Route
-                && rule.Outbound == SingboxTags.DirectOutbound
-                && (rule.Inbound == null
-                    || rule.Inbound.Contains(SingboxTags.TunInbound));
-            if (supportsL3Direct)
-            {
+                EnsureDirectForwardingRule(rule);
                 if (platform == TargetPlatform.Linux)
                 {
-                    yield return CreateBypassRule(rule);
+                    yield return CreateBypassRule(rule, forwardingMode);
                 }
 
-                yield return CreateBridgeRouteRule(rule);
+                yield return CreateBridgeRouteRule(rule, forwardingMode);
             }
 
             yield return rule;
         }
     }
 
-    private static RouteRule CreateBridgeRouteRule(RouteRule directRule)
-        => directRule with
+    private static void EnsureDirectForwardingRule(RouteRule rule)
+    {
+        if (rule.Action != RouteRuleAction.Route
+            || rule.Outbound != SingboxTags.DirectOutbound)
         {
-            Inbound = [SingboxTags.TunInbound],
-            PreferredBy = [SingboxTags.BridgeOutbound],
-            Outbound = SingboxTags.BridgeOutbound
-        };
+            throw new InvalidOperationException(
+                "Only DIRECT route rules can opt in to direct forwarding.");
+        }
+    }
 
-    private static RouteRule CreateBypassRule(RouteRule directRule)
-        => directRule with
+    private static RouteRule CreateBridgeRouteRule(
+        RouteRule directRule,
+        DirectForwardingMode forwardingMode) => CreateForwardingRule(
+            directRule,
+            forwardingMode,
+            RouteRuleAction.Route,
+            SingboxTags.BridgeOutbound,
+            useBridgeGate: true);
+
+    private static RouteRule CreateBypassRule(
+        RouteRule directRule,
+        DirectForwardingMode forwardingMode) => CreateForwardingRule(
+            directRule,
+            forwardingMode,
+            RouteRuleAction.Bypass,
+            outbound: null,
+            useBridgeGate: false);
+
+    private static RouteRule CreateForwardingRule(
+        RouteRule directRule,
+        DirectForwardingMode forwardingMode,
+        RouteRuleAction action,
+        string? outbound,
+        bool useBridgeGate)
+    {
+        List<string>? network = forwardingMode == DirectForwardingMode.PostUdpSniff
+            ? ["udp"]
+            : directRule.Network;
+        if (directRule.Type != RouteRuleType.Logical)
         {
-            Inbound = [SingboxTags.TunInbound],
-            Action = RouteRuleAction.Bypass,
-            Outbound = null
+            return directRule with
+            {
+                Inbound = [SingboxTags.TunInbound],
+                Network = network,
+                PreferredBy = useBridgeGate
+                    ? [SingboxTags.BridgeOutbound]
+                    : null,
+                Action = action,
+                Outbound = outbound
+            };
+        }
+
+        if (directRule.Mode != RouteLogicalMode.And || directRule.Rules == null)
+        {
+            throw new InvalidOperationException(
+                "Direct forwarding only supports logical AND rules.");
+        }
+
+        var matchers = new List<RouteRule>(directRule.Rules)
+        {
+            new() { Inbound = [SingboxTags.TunInbound] }
         };
+        if (network != null)
+        {
+            matchers.Add(new RouteRule { Network = network });
+        }
+        if (useBridgeGate)
+        {
+            matchers.Add(new RouteRule
+            {
+                PreferredBy = [SingboxTags.BridgeOutbound]
+            });
+        }
+
+        return directRule with
+        {
+            Rules = matchers,
+            Action = action,
+            Outbound = outbound
+        };
+    }
 
     private static RouteRule CreateSniffRule(string network, List<string> sniffers) =>
         new()
@@ -224,7 +310,7 @@ public sealed class RouteProfileBuilder(
             Mode = RouteLogicalMode.And,
             Rules =
             [
-                new RouteRule { IpCidr = ["::/0"] },
+                new RouteRule { IpVersion = 6 },
                 new RouteRule
                 {
                     RuleSet = ["geoip-cn"]
@@ -266,8 +352,16 @@ public sealed class RouteProfileBuilder(
             Port = [443],
             Network = ["udp"],
             RuleSet = ruleSets,
-            Action = RouteRuleAction.Reject
+            Action = RouteRuleAction.Reject,
+            NoDrop = true
         };
+
+    private enum DirectForwardingMode
+    {
+        None,
+        PreSniff,
+        PostUdpSniff
+    }
 
     private static RouteRule CreateServiceRouteRule(ServiceDefinition service) =>
         new()
