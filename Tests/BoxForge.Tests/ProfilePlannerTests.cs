@@ -44,6 +44,18 @@ public sealed class ProfilePlannerTests
             Assert.That(plan.AutoOutbound.InterruptExistConnections, Is.Null);
             Assert.That(plan.RegionOutbounds, Has.Count.EqualTo(4));
             Assert.That(plan.RegionAutoOutbounds, Has.Count.EqualTo(4));
+            Assert.That(
+                plan.RegionOutbounds.Select(outbound => outbound.Tag),
+                Is.EqualTo(new[] { "🇺🇸 US", "🇯🇵 JP", "🇭🇰 HK", "🇸🇬 SG" }));
+            Assert.That(
+                plan.RegionAutoOutbounds.Select(outbound => outbound.Tag),
+                Is.EqualTo(new[]
+                {
+                    "🇺🇸 US AUTO",
+                    "🇯🇵 JP AUTO",
+                    "🇭🇰 HK AUTO",
+                    "🇸🇬 SG AUTO"
+                }));
             Assert.That(plan.MainOutbound.Default, Is.EqualTo(unitedStates));
             Assert.That(
                 plan.MainOutbound.Outbounds,

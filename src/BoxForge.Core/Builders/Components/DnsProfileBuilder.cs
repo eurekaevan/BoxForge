@@ -97,14 +97,16 @@ public sealed class DnsProfileBuilder(
             ["geosite-google"],
             SingboxTags.RemoteGoogleDns,
             SingboxTags.RemoteDns,
-            "google");
+            DnsRaceTags.GoogleGoogle,
+            DnsRaceTags.GoogleCloudflare);
 
         AddRace(
             dns.Rules,
             ["geosite-cn", "geosite-category-pt"],
             SingboxTags.LocalTencentDns,
             SingboxTags.LocalDns,
-            "cn");
+            DnsRaceTags.ChinaTencent,
+            DnsRaceTags.ChinaAliDns);
 
         // 国内域名先由本地 DNS 返回 A/AAAA；其余 AAAA 仍返回空结果，
         // 防止非国内公网 IPv6 绕过后续的 IPv6 拒绝策略。
@@ -120,7 +122,8 @@ public sealed class DnsProfileBuilder(
             null,
             SingboxTags.RemoteGoogleDns,
             SingboxTags.RemoteDns,
-            "global");
+            DnsRaceTags.GlobalGoogle,
+            DnsRaceTags.GlobalCloudflare);
         return dns;
     }
 
@@ -141,11 +144,9 @@ public sealed class DnsProfileBuilder(
         List<string>? ruleSet,
         string firstServer,
         string secondServer,
-        string responseTagPrefix)
+        string firstResponseTag,
+        string secondResponseTag)
     {
-        string firstResponseTag = $"{responseTagPrefix}-first";
-        string secondResponseTag = $"{responseTagPrefix}-second";
-
         rules.Add(new DnsRule
         {
             RuleSet = ruleSet,

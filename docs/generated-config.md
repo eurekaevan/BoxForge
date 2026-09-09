@@ -50,13 +50,13 @@ SFA 工作目录下的 `Taildrop`，Windows 使用
 - 生成配置包含官方 `$schema`。
 - DNS 默认使用 `prefer_ipv4`，缓存容量为 `4096`，并启用超时为 `3d` 的
   optimistic 缓存和 reverse mapping。
-- 代理节点域名固定通过 `node-resolver` 以 `ipv4_only` 解析；所有代理出站的
+- 代理节点域名固定通过 `dns-node` 以 `ipv4_only` 解析；所有代理出站的
   `domain_resolver` 也显式指定 `ipv4_only` 并禁用 optimistic 过期缓存。
   代理出站的内部解析不会经过普通 DNS 规则，因此该约束直接写在每个出站上；
   IPv6 字面量代理节点会在生成时被校验器拒绝。
 - 普通 DNS 查询命中代理节点域名时同样禁用 optimistic 过期缓存；Tailscale DNS
   查询也显式禁用它，避免地址变更后继续使用旧记录。
-- `bootstrap` 仅在目标平台启用 Tailscale endpoint 时生成；它是 endpoint 的
+- `dns-bootstrap` 仅在目标平台启用 Tailscale endpoint 时生成；它是 endpoint 的
   独立直连 DoH 启动解析器，不会在未启用 Tailscale 的配置中占位。
 - 代理服务域名的 AAAA 查询返回空 `NOERROR`；国内 DNS 规则仍允许 A/AAAA。
 - `experimental.cache_file` 使用 `cache.db`，并通过 `store_dns` 持久化 DNS 缓存。
@@ -74,7 +74,7 @@ SFA 工作目录下的 `Taildrop`，Windows 使用
   直接报告，不再生成空字段。
 - Hysteria2 出站使用 `hop_interval: 30s`、`hop_interval_max: 60s` 和
   `bbr_profile: standard`。
-- 远程 rule-set 每天更新，通过默认 HTTP client `rule-set-direct` 直接拨号下载；
+- 远程 rule-set 每天更新，通过默认 HTTP client `http-ruleset-direct` 直接拨号下载；
   该 HTTP client 使用本地 DNS 的 `ipv4_only` 解析，不经 `DIRECT` outbound
   二次解析。
 - 广告过滤使用 SagerNet 的 `geosite-category-ads-all.srs`。
@@ -94,7 +94,7 @@ SFA 工作目录下的 `Taildrop`，Windows 使用
 
 API 默认不生成。启用 `SingboxApi:Enabled` 后，顶层增加一个仅监听
 `127.0.0.1:9090` 的 `api` service，并启用工作目录下的 `dashboard`。
-Dashboard 下载复用 `rule-set-direct` HTTP client；允许的浏览器 origin 被限制为
+Dashboard 下载复用 `http-ruleset-direct` HTTP client；允许的浏览器 origin 被限制为
 同端口的 `127.0.0.1` 与 `localhost`，`access_control_allow_private_network` 保持
 `false`。禁用时顶层 `services` 字段完全省略。
 
@@ -103,18 +103,20 @@ Dashboard 下载复用 `rule-set-direct` HTTP client；允许的浏览器 origin
 - 至少有两个真实代理节点时生成全局 `⚡ AUTO` URLTest；候选只包含代理 leaf
   outbound，不包含 `DIRECT`、selector、bridge 或其他 AUTO。
 - 同一地区至少命中两个节点时，同时生成地区 selector 和对应的地区 AUTO：
-  `🇺🇸 美国 AUTO`、`🇯🇵 日本 AUTO`、`🇭🇰 香港 AUTO`、`🇸🇬 狮城 AUTO`。
+  `🇺🇸 US AUTO`、`🇯🇵 JP AUTO`、`🇭🇰 HK AUTO`、`🇸🇬 SG AUTO`。
   地区 AUTO 只测试该地区真实节点；地区 selector 保留逐节点人工选择，并默认
   选择自己的 AUTO。
 - URLTest 的 `url`、`interval`、`tolerance`、`idle_timeout` 和
   `interrupt_exist_connections` 均省略，使用 sing-box 官方默认值。现有 selector
   继续生成 `interrupt_exist_connections: true`。
 - 主 `🚀 PROXIES` selector 依次保留地区组、全局 AUTO、单个节点和 `DIRECT`
-  的人工选择能力。存在至少两个节点且美国地区组可用时默认选择 `🇺🇸 美国`；
+  的人工选择能力。存在至少两个节点且美国地区组可用时默认选择 `🇺🇸 US`；
   没有可用美国组时回退 `⚡ AUTO`。只有一个节点时默认该节点，没有节点时选择
   `DIRECT`。
 - AI、Google、Spotify 和 Microsoft 服务组在美国地区组存在时默认选择它；
   Steam 在香港地区组存在时默认选择它。Service selector 不直接引用地区 AUTO，
   而由地区 selector 默认到 AUTO；没有偏好地区组时仍回退主代理组。
+- 真实代理节点保留订阅名称，但不得与 BoxForge 固定分组、内部基础设施、DNS
+  race 或 rule-set tag 冲突；冲突会在节点转换阶段直接报错，不自动改名。
 
 [返回 README](../README.md)

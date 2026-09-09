@@ -39,6 +39,46 @@ public sealed class NodeCatalogBuilderTests
         Assert.That(logger.Messages, Is.Empty);
     }
 
+    [TestCase("🚀 PROXIES")]
+    [TestCase("🇺🇸 US AUTO")]
+    [TestCase("dns-node")]
+    [TestCase("race-cn-alidns")]
+    [TestCase("geosite-cn")]
+    public void StrictValidationRejectsReservedGeneratedTagNames(
+        string reservedTag)
+    {
+        var logger = new RecordingLogger<NodeCatalogBuilder>();
+        var builder = new NodeCatalogBuilder(
+            [new ShadowsocksConverter()],
+            logger);
+        var config = new ClashConfig
+        {
+            Proxies =
+            [
+                new ClashProxyNode(new Hashtable
+                {
+                    ["name"] = reservedTag,
+                    ["type"] = "ss",
+                    ["server"] = "node.example.com",
+                    ["port"] = 443,
+                    ["cipher"] = "aes-128-gcm",
+                    ["password"] = "test-only"
+                })
+            ]
+        };
+
+        var exception = Assert.Throws<NodeParseException>(() =>
+            builder.Build(config, strictNodeValidation: true));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                exception!.Message,
+                Is.EqualTo($"节点名称 '{reservedTag}' 与 BoxForge 保留 tag 冲突"));
+            Assert.That(logger.Messages, Is.Empty);
+        });
+    }
+
     private sealed class RecordingLogger<T> : ILogger<T>
     {
         public List<string> Messages { get; } = [];

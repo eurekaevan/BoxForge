@@ -1,5 +1,6 @@
 using System.Net;
 using Microsoft.Extensions.Logging;
+using BoxForge.Configuration;
 using BoxForge.Converters;
 using BoxForge.Exceptions;
 using BoxForge.Models;
@@ -59,6 +60,19 @@ public sealed partial class NodeCatalogBuilder(
             }
 
             var outbound = ((ConvertedNode)result).Outbound;
+            if (ReservedTagNames.Contains(outbound.Tag))
+            {
+                string message =
+                    $"节点名称 '{outbound.Tag}' 与 BoxForge 保留 tag 冲突";
+                if (strictNodeValidation)
+                {
+                    throw new NodeParseException(message);
+                }
+
+                LogInvalidNode(logger, message);
+                continue;
+            }
+
             if (!string.IsNullOrEmpty(outbound.Tag))
             {
                 names.Add(outbound.Tag);

@@ -19,23 +19,56 @@ BoxForge 提供两个 Tailscale 运行时设置，并提供一个全平台 sing-
 `SingboxApi:Enabled` 同样只接受 `true` 或 `false`。启用后，三个目标平台都会生成
 `type: api` service，固定监听 `127.0.0.1:9090`。Dashboard 文件由目标机器上的
 sing-box 下载到工作目录下的 `dashboard`，下载使用现有
-`rule-set-direct` HTTP client。CORS 只允许该端口的 `127.0.0.1` 和
+`http-ruleset-direct` HTTP client。CORS 只允许该端口的 `127.0.0.1` 和
 `localhost` origin，且不允许浏览器私网跨域访问。
 
 首版 API 配置不开放监听地址、端口或远程访问，也不生成共享 secret。尽管只监听
 loopback，同机进程仍可访问该控制面；不需要 Dashboard、远程控制或 Tailscale
 交互管理时应保持关闭。
 
-## 代码固定值
+## 生成 tag 约定
+
+用户可见的 selector 和 URLTest 使用简短英文名称；内部 tag 使用 lowercase
+kebab-case，并按对象用途区分。地区组固定为：
+
+| 类型 | 固定 tag |
+| --- | --- |
+| 主 selector | `🚀 PROXIES` |
+| 全局 URLTest | `⚡ AUTO` |
+| 地区 selector | `🇺🇸 US`、`🇯🇵 JP`、`🇭🇰 HK`、`🇸🇬 SG` |
+| 地区 URLTest | `🇺🇸 US AUTO`、`🇯🇵 JP AUTO`、`🇭🇰 HK AUTO`、`🇸🇬 SG AUTO` |
+| 服务 selector | `🤖 AI`、`🔎 Google`、`🎵 Spotify`、`🎮 Steam`、`🪟 Microsoft` |
+| 直连 outbound | `DIRECT` |
+
+内部基础设施 tag 如下：
+
+| 类型 | 固定 tag |
+| --- | --- |
+| TUN / mixed inbound | `tun-in`、`mixed-in` |
+| L3 bridge outbound | `bridge-out` |
+| Tailscale endpoint / DNS | `tailscale`、`dns-tailscale` |
+| 节点 / Tailscale bootstrap DNS | `dns-node`、`dns-bootstrap` |
+| 国内 DNS | `dns-cn-tencent`、`dns-cn-alidns` |
+| 代理 DNS | `dns-proxy-google`、`dns-proxy-cloudflare` |
+| rule-set HTTP client | `http-ruleset-direct` |
+| sing-box API service | `api` |
+
+DNS evaluate/respond 的内部响应 tag 使用 `race-场景-提供方`：
+`race-google-google`、`race-google-cloudflare`、`race-cn-tencent`、
+`race-cn-alidns`、`race-global-google`、`race-global-cloudflare`。
+SagerNet `geosite-*` 和 `geoip-*` tag 保持上游文件名，不参与本地美化。
+
+订阅中的真实节点保留来源名称。若节点名与任一 BoxForge 固定 tag、DNS race tag
+或 rule-set tag 冲突，转换会直接报告明确错误，不会静默追加后缀。这样可以避免
+订阅更新后 selector 引用或已保存选择发生漂移。
+
+这些 selector tag 同时是 Clash API 使用的标识。由旧命名生成的新配置首次加载时，
+Dashboard 中基于旧地区 tag 保存的选择不会迁移，需要重新选择一次。
+
+## 其他代码固定值
 
 | 内容 | 固定值 |
 | --- | --- |
-| 主代理组 | `🚀 PROXIES` |
-| 直连 outbound | `DIRECT` |
-| 全局 URLTest outbound | `⚡ AUTO` |
-| 非 Android L3 直连 outbound | `bridge-out` |
-| Tailscale endpoint 标签 | `tailscale` |
-| Tailscale DNS 标签 | `tailscale-dns` |
 | Tailscale 状态目录 | `tailscale` |
 | `accept_routes` | `true` |
 | sing-box API（启用时） | `127.0.0.1:9090` |
@@ -50,7 +83,7 @@ loopback，同机进程仍可访问该控制面；不需要 Dashboard、远程�
 VPN/TUN，不创建第二个系统 VPN 接口。登录状态保存在 `StateDirectory`，
 不会写入 `config.json`。
 
-Tailscale 控制平面域名通过 `bootstrap` 解析器建立初始连接。该解析器
+Tailscale 控制平面域名通过 `dns-bootstrap` 解析器建立初始连接。该解析器
 固定以 IP 字面量 `223.5.5.5` 直连 AliDNS DoH，TLS `server_name` 为
 `dns.alidns.com`；它不调用系统解析器，也不经主代理组，避免明文
 DNS 和冷启动循环依赖。

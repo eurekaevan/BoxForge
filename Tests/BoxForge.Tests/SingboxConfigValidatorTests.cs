@@ -1,4 +1,5 @@
 using BoxForge.Exceptions;
+using BoxForge.Configuration;
 using BoxForge.Models;
 using BoxForge.Models.Singbox;
 using BoxForge.Services;
@@ -536,7 +537,7 @@ public sealed class SingboxConfigValidatorTests
                     },
                     new TailscaleDnsServer
                     {
-                        Tag = "tailscale-dns",
+                        Tag = SingboxTags.TailscaleDns,
                         EndpointTag = "missing-endpoint"
                     }
                 ]

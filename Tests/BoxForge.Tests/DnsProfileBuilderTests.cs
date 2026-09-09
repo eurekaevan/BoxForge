@@ -25,6 +25,40 @@ public sealed class DnsProfileBuilderTests
     }
 
     [Test]
+    public void DnsServersAndRaceResponsesUseSemanticTags()
+    {
+        DnsConfig dns = CreateBuilder().Build(
+            new NodeCatalog([], [], []),
+            TargetPlatform.Linux);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                dns.Servers.Select(server => server.Tag),
+                Is.EqualTo(new[]
+                {
+                    "dns-node",
+                    "dns-cn-tencent",
+                    "dns-cn-alidns",
+                    "dns-proxy-google",
+                    "dns-proxy-cloudflare"
+                }));
+            Assert.That(
+                dns.Rules.Where(rule => rule.Action == DnsRuleAction.Evaluate)
+                    .Select(rule => rule.Tag),
+                Is.EqualTo(new[]
+                {
+                    "race-google-google",
+                    "race-google-cloudflare",
+                    "race-cn-tencent",
+                    "race-cn-alidns",
+                    "race-global-google",
+                    "race-global-cloudflare"
+                }));
+        });
+    }
+
+    [Test]
     public void BootstrapUsesDirectHttpsWithoutTheSystemResolver()
     {
         DnsConfig dns = CreateBuilder(tailscaleEnabled: true).Build(
@@ -77,7 +111,7 @@ public sealed class DnsProfileBuilderTests
             TargetPlatform.Linux);
 
         int tailscaleIndex = dns.Rules.FindIndex(rule =>
-            rule.PreferredBy?.Contains("tailscale-dns") == true);
+            rule.PreferredBy?.Contains(SingboxTags.TailscaleDns) == true);
         int nodeResolverIndex = dns.Rules.FindIndex(rule =>
             rule.Domain?.Contains("node.example.com") == true
             && rule.Server == SingboxTags.NodeResolverDns);
@@ -126,12 +160,12 @@ public sealed class DnsProfileBuilderTests
             && rule.Action == DnsRuleAction.Predefined);
         int googleFirstIndex = dns.Rules.FindIndex(rule =>
             rule.Action == DnsRuleAction.Evaluate
-            && rule.Tag == "google-first");
+            && rule.Tag == DnsRaceTags.GoogleGoogle);
         int googleLastIndex = dns.Rules.FindLastIndex(rule =>
             rule.RuleSet?.Contains("geosite-google") == true);
         int domesticFirstIndex = dns.Rules.FindIndex(rule =>
             rule.Action == DnsRuleAction.Evaluate
-            && rule.Tag == "cn-first");
+            && rule.Tag == DnsRaceTags.ChinaTencent);
 
         Assert.Multiple(() =>
         {
@@ -169,7 +203,7 @@ public sealed class DnsProfileBuilderTests
             rule.Domain?.Contains("node.example.cn") == true);
         int domesticFirstIndex = dns.Rules.FindIndex(rule =>
             rule.Action == DnsRuleAction.Evaluate
-            && rule.Tag == "cn-first");
+            && rule.Tag == DnsRaceTags.ChinaTencent);
         int domesticLastIndex = dns.Rules.FindLastIndex(rule =>
             rule.RuleSet?.Contains("geosite-cn") == true);
         int otherAaaaBlockIndex = dns.Rules.FindIndex(rule =>
@@ -182,7 +216,7 @@ public sealed class DnsProfileBuilderTests
             && rule.RuleSet != null);
         int globalFirstIndex = dns.Rules.FindIndex(rule =>
             rule.Action == DnsRuleAction.Evaluate
-            && rule.Tag == "global-first");
+            && rule.Tag == DnsRaceTags.GlobalGoogle);
 
         Assert.Multiple(() =>
         {
