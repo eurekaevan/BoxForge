@@ -466,6 +466,57 @@ public sealed class SingboxConfigValidatorTests
     }
 
     [Test]
+    public void UrlTestRequiresExistingUniqueLeafProxyCandidates()
+    {
+        SingboxConfig valid = CreateValidConfig();
+        SingboxConfig config = valid with
+        {
+            Outbounds =
+            [
+                .. valid.Outbounds,
+                CreateProxyOutbound("leaf"),
+                new UrlTestOutbound
+                {
+                    Tag = "auto",
+                    Outbounds = ["missing", "selector", "leaf", "leaf"]
+                }
+            ]
+        };
+
+        AssertDiagnostics(
+            config,
+            new("SB075", "outbounds[3].outbounds[0]", "urltest 引用了不存在的目标。"),
+            new("SB076", "outbounds[3].outbounds[1]", "urltest 只能引用真实代理节点。"),
+            new("SB077", "outbounds[3].outbounds", "urltest 不能包含重复目标。"));
+    }
+
+    [Test]
+    public void UrlTestRequiresAtLeastTwoCandidates()
+    {
+        SingboxConfig valid = CreateValidConfig();
+        SingboxConfig config = valid with
+        {
+            Outbounds =
+            [
+                .. valid.Outbounds,
+                CreateProxyOutbound("leaf"),
+                new UrlTestOutbound
+                {
+                    Tag = "auto",
+                    Outbounds = ["leaf"]
+                }
+            ]
+        };
+
+        AssertDiagnostics(
+            config,
+            new ConfigDiagnostic(
+                "SB078",
+                "outbounds[3].outbounds",
+                "urltest 至少需要两个真实代理节点。"));
+    }
+
+    [Test]
     public void DnsServerDiagnosticsPreserveOrder()
     {
         SingboxConfig valid = CreateValidConfig();
@@ -639,5 +690,21 @@ public sealed class SingboxConfigValidatorTests
         {
             Tag = "direct",
             DomainResolver = "dns"
+        };
+
+    private static ShadowsocksOutbound CreateProxyOutbound(string tag) =>
+        new()
+        {
+            Tag = tag,
+            Server = "node.example.com",
+            ServerPort = 443,
+            DomainResolver = new DnsResolverOptions
+            {
+                Server = "dns",
+                Strategy = DnsStrategy.Ipv4Only,
+                DisableOptimisticCache = true
+            },
+            Method = "aes-128-gcm",
+            Password = "test-only"
         };
 }

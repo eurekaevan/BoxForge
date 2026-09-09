@@ -178,7 +178,7 @@ public sealed class SingboxConfigBuilderTests
     }
 
     [Test]
-    public void RouteUsesNativeIpVersionAndKeepsQuicRejectResponsesEnabled()
+    public void RouteSerializesIpv6PreMatchAndQuicRejectSemantics()
     {
         SingboxConfig config = CreateBuilder().Build(new SingboxBuildRequest(
             new NodeCatalog([], [], []),
@@ -195,7 +195,10 @@ public sealed class SingboxConfigBuilderTests
                 json.Split("\"no_drop\": true", StringSplitOptions.None).Length - 1,
                 Is.EqualTo(3));
             Assert.That(json, Does.Not.Contain("\"no_drop\": false"));
-            Assert.That(json, Does.Not.Contain("\"invert\""));
+            Assert.That(
+                json.Split("\"invert\": true", StringSplitOptions.None).Length - 1,
+                Is.EqualTo(1));
+            Assert.That(json, Does.Not.Contain("\"invert\": false"));
         });
 
         Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config));
@@ -286,8 +289,10 @@ public sealed class SingboxConfigBuilderTests
     [Test]
     public void GoogleServiceDefaultsToUnitedStatesGroupWhenAvailable()
     {
+        ProxyOutbound first = CreateProxy("美国 01", "us-1.example.com");
+        ProxyOutbound second = CreateProxy("美国 02", "us-2.example.com");
         ProfilePlan plan = ProfilePlanner.Plan(new NodeCatalog(
-            [],
+            [first, second],
             ["美国 01", "美国 02"],
             []));
 
@@ -302,6 +307,72 @@ public sealed class SingboxConfigBuilderTests
             Assert.That(google.Outbounds, Does.Contain(unitedStates));
         });
     }
+
+    [Test]
+    public void GeneratedUrlTestsContainOnlyLeafNodesAndOmitOfficialDefaults()
+    {
+        ProxyOutbound usFirst = CreateProxy("美国 01", "us-1.example.com");
+        ProxyOutbound usSecond = CreateProxy("美国 02", "us-2.example.com");
+        ProxyOutbound jpFirst = CreateProxy("日本 01", "jp-1.example.com");
+        ProxyOutbound jpSecond = CreateProxy("日本 02", "jp-2.example.com");
+        var nodes = new NodeCatalog(
+            [usFirst, usSecond, jpFirst, jpSecond],
+            [usFirst.Tag, usSecond.Tag, jpFirst.Tag, jpSecond.Tag],
+            [usFirst.Server, usSecond.Server, jpFirst.Server, jpSecond.Server]);
+
+        SingboxConfig config = CreateBuilder().Build(new SingboxBuildRequest(
+            nodes,
+            TargetPlatform.Linux,
+            new string('c', 64)));
+        HashSet<string> leafTags = config.Outbounds
+            .OfType<ProxyOutbound>()
+            .Select(outbound => outbound.Tag)
+            .ToHashSet(StringComparer.Ordinal);
+        List<UrlTestOutbound> urlTests = config.Outbounds
+            .OfType<UrlTestOutbound>()
+            .ToList();
+        string json = new ConfigSerializer().Serialize(config);
+        using JsonDocument document = JsonDocument.Parse(json);
+        List<JsonElement> serializedUrlTests = document.RootElement
+            .GetProperty("outbounds")
+            .EnumerateArray()
+            .Where(outbound => outbound.GetProperty("type").GetString() == "urltest")
+            .ToList();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(urlTests, Has.Count.EqualTo(3));
+            Assert.That(
+                urlTests.SelectMany(urlTest => urlTest.Outbounds),
+                Is.All.Matches<string>(leafTags.Contains));
+            Assert.That(
+                serializedUrlTests.All(outbound =>
+                    !outbound.TryGetProperty("url", out _)
+                    && !outbound.TryGetProperty("interval", out _)
+                    && !outbound.TryGetProperty("tolerance", out _)
+                    && !outbound.TryGetProperty("idle_timeout", out _)
+                    && !outbound.TryGetProperty(
+                        "interrupt_exist_connections",
+                        out _)),
+                Is.True);
+            Assert.That(
+                config.Outbounds.OfType<SelectorOutbound>()
+                    .All(selector => selector.InterruptExistConnections == true),
+                Is.True);
+        });
+
+        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config));
+    }
+
+    private static ShadowsocksOutbound CreateProxy(string tag, string server) =>
+        new()
+        {
+            Tag = tag,
+            Server = server,
+            ServerPort = 443,
+            Method = "aes-128-gcm",
+            Password = "test-only"
+        };
 
     private static SingboxConfigBuilder CreateBuilder(
         TailscaleOptions? options = null,

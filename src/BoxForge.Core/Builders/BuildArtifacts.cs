@@ -17,7 +17,9 @@ public sealed record NodeCatalog(
 
 public sealed record ProfilePlan(
     SelectorOutbound MainOutbound,
+    UrlTestOutbound? AutoOutbound,
     IReadOnlyList<SelectorOutbound> RegionOutbounds,
+    IReadOnlyList<UrlTestOutbound> RegionAutoOutbounds,
     IReadOnlyList<SelectorOutbound> ServiceOutbounds,
     DirectOutbound DirectOutbound
 );

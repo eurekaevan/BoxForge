@@ -5,6 +5,7 @@ namespace BoxForge.Models.Singbox;
 
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
 [JsonDerivedType(typeof(SelectorOutbound), typeDiscriminator: "selector")]
+[JsonDerivedType(typeof(UrlTestOutbound), typeDiscriminator: "urltest")]
 [JsonDerivedType(typeof(DirectOutbound), typeDiscriminator: "direct")]
 [JsonDerivedType(typeof(BridgeOutbound), typeDiscriminator: "bridge")]
 [JsonDerivedType(typeof(VlessOutbound), typeDiscriminator: "vless")]
@@ -21,6 +22,16 @@ public record SelectorOutbound : Outbound
 {
     [JsonPropertyName("outbounds")] public required List<string> Outbounds { get; init; }
     [JsonPropertyName("default")] public string? Default { get; init; }
+    [JsonPropertyName("interrupt_exist_connections")] public bool? InterruptExistConnections { get; init; }
+}
+
+public record UrlTestOutbound : Outbound
+{
+    [JsonPropertyName("outbounds")] public required List<string> Outbounds { get; init; }
+    [JsonPropertyName("url")] public string? Url { get; init; }
+    [JsonPropertyName("interval")] public string? Interval { get; init; }
+    [JsonPropertyName("tolerance")] public int? Tolerance { get; init; }
+    [JsonPropertyName("idle_timeout")] public string? IdleTimeout { get; init; }
     [JsonPropertyName("interrupt_exist_connections")] public bool? InterruptExistConnections { get; init; }
 }
 

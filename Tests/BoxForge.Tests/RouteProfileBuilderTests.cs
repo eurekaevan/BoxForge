@@ -125,6 +125,59 @@ public sealed class RouteProfileBuilderTests
         });
     }
 
+    [TestCase(TargetPlatform.Android)]
+    [TestCase(TargetPlatform.Linux)]
+    [TestCase(TargetPlatform.Windows)]
+    public void ForeignIpv6IsRejectedForTunBeforeSniffWithLateFallbackPreserved(
+        TargetPlatform platform)
+    {
+        RouteConfig route = CreateBuilder().Build(platform);
+        RouteRule earlyReject = route.Rules.Single(rule =>
+            rule.Type == RouteRuleType.Logical
+            && rule.Action == RouteRuleAction.Reject
+            && rule.Rules?.Any(child => child.Invert == true) == true);
+        IReadOnlyList<RouteRule> earlyMatchers = earlyReject.Rules!;
+        int earlyRejectIndex = route.Rules.IndexOf(earlyReject);
+        int bootstrapDirectIndex = route.Rules.FindIndex(rule =>
+            rule.Action == RouteRuleAction.Route
+            && rule.Outbound == SingboxTags.DirectOutbound
+            && rule.IpCidr?.SequenceEqual(["223.5.5.5/32"]) == true);
+        RouteRule lateReject = route.Rules.Single(rule =>
+            rule.Action == RouteRuleAction.Reject
+            && rule.IpVersion == 6);
+        int lateRejectIndex = route.Rules.IndexOf(lateReject);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                new[]
+                {
+                    bootstrapDirectIndex,
+                    earlyRejectIndex,
+                    FindFirstSniffIndex(route),
+                    lateRejectIndex
+                },
+                Is.Ordered.And.All.GreaterThanOrEqualTo(0));
+            Assert.That(earlyReject.Mode, Is.EqualTo(RouteLogicalMode.And));
+            Assert.That(earlyReject.NoDrop, Is.Null);
+            Assert.That(earlyMatchers, Has.Count.EqualTo(3));
+            Assert.That(
+                earlyMatchers.Any(child =>
+                    child.Inbound?.SequenceEqual([SingboxTags.TunInbound]) == true),
+                Is.True);
+            Assert.That(
+                earlyMatchers.Any(child => child.IpVersion == 6),
+                Is.True);
+            Assert.That(
+                earlyMatchers.Any(child =>
+                    child.RuleSet?.SequenceEqual(["geoip-cn"]) == true
+                    && child.Invert == true),
+                Is.True);
+            Assert.That(lateReject.Type, Is.Null);
+            Assert.That(lateReject.NoDrop, Is.Null);
+        });
+    }
+
     [Test]
     public void SagerNetRuleSetsGroupGeositeTagsAndRejectAds()
     {

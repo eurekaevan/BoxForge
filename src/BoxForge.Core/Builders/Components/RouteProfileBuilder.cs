@@ -82,6 +82,7 @@ public sealed class RouteProfileBuilder(
             MarkDirectForwarding(
                 new RouteRule { IpCidr = ["223.5.5.5/32"], Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound },
                 DirectForwardingMode.PreSniff),
+            CreateEarlyForeignIpv6RejectRule(),
             CreateSniffRule("tcp", ["http", "tls"]),
             CreateSniffRule("udp", ["quic", "stun"]),
             new()
@@ -301,6 +302,24 @@ public sealed class RouteProfileBuilder(
             Action = RouteRuleAction.Sniff,
             Sniffer = sniffers,
             Timeout = "300ms"
+        };
+
+    private static RouteRule CreateEarlyForeignIpv6RejectRule() =>
+        new()
+        {
+            Type = RouteRuleType.Logical,
+            Mode = RouteLogicalMode.And,
+            Rules =
+            [
+                new RouteRule { Inbound = [SingboxTags.TunInbound] },
+                new RouteRule { IpVersion = 6 },
+                new RouteRule
+                {
+                    RuleSet = ["geoip-cn"],
+                    Invert = true
+                }
+            ],
+            Action = RouteRuleAction.Reject
         };
 
     private static RouteRule CreateDomesticIpv6DirectRule(string directOutbound) =>

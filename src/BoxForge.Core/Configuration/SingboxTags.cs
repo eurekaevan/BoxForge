@@ -3,6 +3,7 @@ namespace BoxForge.Configuration;
 public static class SingboxTags
 {
     public const string MainProxyGroup = "🚀 PROXIES";
+    public const string AutoProxyGroup = "⚡ AUTO";
     public const string DirectOutbound = "DIRECT";
     public const string BridgeOutbound = "bridge-out";
     public const string TailscaleEndpoint = "tailscale";

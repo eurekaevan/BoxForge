@@ -9,8 +9,16 @@ public static class ProfilePlanner
     public static ProfilePlan Plan(NodeCatalog nodes)
     {
         var generatedRegions = new Dictionary<RegionId, string>();
-        var regionOutbounds = BuildRegionOutbounds(nodes, generatedRegions);
-        var mainOutbound = BuildMainOutbound(nodes, regionOutbounds);
+        var regionAutoOutbounds = new List<UrlTestOutbound>();
+        var regionOutbounds = BuildRegionOutbounds(
+            nodes,
+            generatedRegions,
+            regionAutoOutbounds);
+        UrlTestOutbound? autoOutbound = BuildAutoOutbound(nodes.Names);
+        var mainOutbound = BuildMainOutbound(
+            nodes,
+            regionOutbounds,
+            autoOutbound);
         var serviceOutbounds = BuildServiceOutbounds(nodes, generatedRegions);
         var directOutbound = new DirectOutbound
         {
@@ -20,14 +28,17 @@ public static class ProfilePlanner
 
         return new ProfilePlan(
             mainOutbound,
+            autoOutbound,
             regionOutbounds,
+            regionAutoOutbounds,
             serviceOutbounds,
             directOutbound);
     }
 
     private static List<SelectorOutbound> BuildRegionOutbounds(
         NodeCatalog nodes,
-        Dictionary<RegionId, string> generatedRegions)
+        Dictionary<RegionId, string> generatedRegions,
+        List<UrlTestOutbound> regionAutoOutbounds)
     {
         var outbounds = new List<SelectorOutbound>();
 
@@ -42,12 +53,18 @@ public static class ProfilePlanner
                 continue;
             }
 
+            string autoTag = $"{definition.DisplayName} AUTO";
             generatedRegions[definition.Id] = definition.DisplayName;
+            regionAutoOutbounds.Add(new UrlTestOutbound
+            {
+                Tag = autoTag,
+                Outbounds = [.. matchedNodes]
+            });
             outbounds.Add(new SelectorOutbound
             {
                 Tag = definition.DisplayName,
-                Outbounds = matchedNodes,
-                Default = matchedNodes[0],
+                Outbounds = [autoTag, .. matchedNodes],
+                Default = autoTag,
                 InterruptExistConnections = true
             });
         }
@@ -57,11 +74,16 @@ public static class ProfilePlanner
 
     private static SelectorOutbound BuildMainOutbound(
         NodeCatalog nodes,
-        List<SelectorOutbound> regionOutbounds)
+        List<SelectorOutbound> regionOutbounds,
+        UrlTestOutbound? autoOutbound)
     {
         var groupOptions = regionOutbounds
             .Select(outbound => outbound.Tag)
             .ToList();
+        if (autoOutbound != null)
+        {
+            groupOptions.Add(autoOutbound.Tag);
+        }
         groupOptions.AddRange(nodes.Names);
         groupOptions.Add(SingboxTags.DirectOutbound);
 
@@ -69,14 +91,30 @@ public static class ProfilePlanner
         {
             Tag = SingboxTags.MainProxyGroup,
             Outbounds = groupOptions,
-            Default = regionOutbounds.Count > 0
-                ? regionOutbounds[0].Tag
-                : nodes.Names.Count > 0
+            Default = nodes.Names.Count >= 2
+                ? regionOutbounds.FirstOrDefault(outbound =>
+                        outbound.Tag == GetRegionName(RegionId.UnitedStates))?.Tag
+                    ?? autoOutbound!.Tag
+                : nodes.Names.Count == 1
                     ? nodes.Names[0]
                     : SingboxTags.DirectOutbound,
             InterruptExistConnections = true
         };
     }
+
+    private static UrlTestOutbound? BuildAutoOutbound(
+        IReadOnlyList<string> nodeNames) =>
+        nodeNames.Count >= 2
+            ? new UrlTestOutbound
+            {
+                Tag = SingboxTags.AutoProxyGroup,
+                Outbounds = [.. nodeNames]
+            }
+            : null;
+
+    private static string GetRegionName(RegionId regionId) =>
+        ProfileDefinitions.Regions.Single(definition =>
+            definition.Id == regionId).DisplayName;
 
     private static List<SelectorOutbound> BuildServiceOutbounds(
         NodeCatalog nodes,

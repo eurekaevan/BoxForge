@@ -32,6 +32,7 @@ loopback，同机进程仍可访问该控制面；不需要 Dashboard、远程�
 | --- | --- |
 | 主代理组 | `🚀 PROXIES` |
 | 直连 outbound | `DIRECT` |
+| 全局 URLTest outbound | `⚡ AUTO` |
 | 非 Android L3 直连 outbound | `bridge-out` |
 | Tailscale endpoint 标签 | `tailscale` |
 | Tailscale DNS 标签 | `tailscale-dns` |

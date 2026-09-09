@@ -55,6 +55,9 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
             outboundTags,
             StringComparer.Ordinal);
         routeTargets.UnionWith(endpointTags);
+        var proxyOutboundTags = new HashSet<string>(
+            config.Outbounds.OfType<ProxyOutbound>().Select(outbound => outbound.Tag),
+            StringComparer.Ordinal);
 
         var dnsTags = CollectUniqueRequiredTags(
             config.Dns.Servers.Select(server => server.Tag),
@@ -81,6 +84,7 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
         return new ValidationContext(
             diagnostics,
             routeTargets,
+            proxyOutboundTags,
             endpointTags,
             dnsTags,
             httpClientTags,
@@ -212,10 +216,59 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
                 case SelectorOutbound selector:
                     ValidateSelectorOutbound(selector, index, context);
                     break;
+                case UrlTestOutbound urlTest:
+                    ValidateUrlTestOutbound(urlTest, index, context);
+                    break;
                 case ProxyOutbound proxy:
                     ValidateProxyOutbound(proxy, index, context);
                     break;
             }
+        }
+    }
+
+    private static void ValidateUrlTestOutbound(
+        UrlTestOutbound urlTest,
+        int index,
+        ValidationContext context)
+    {
+        for (var childIndex = 0;
+            childIndex < urlTest.Outbounds.Count;
+            childIndex++)
+        {
+            string candidate = urlTest.Outbounds[childIndex];
+            ValidateReference(
+                candidate,
+                context.RouteTargets,
+                "SB075",
+                $"outbounds[{index}].outbounds[{childIndex}]",
+                "urltest 引用了不存在的目标。",
+                context.Diagnostics);
+
+            if (context.RouteTargets.Contains(candidate)
+                && !context.ProxyOutboundTags.Contains(candidate))
+            {
+                context.Diagnostics.Add(new ConfigDiagnostic(
+                    "SB076",
+                    $"outbounds[{index}].outbounds[{childIndex}]",
+                    "urltest 只能引用真实代理节点。"));
+            }
+        }
+
+        if (urlTest.Outbounds.Count != urlTest.Outbounds.Distinct(
+                StringComparer.Ordinal).Count())
+        {
+            context.Diagnostics.Add(new ConfigDiagnostic(
+                "SB077",
+                $"outbounds[{index}].outbounds",
+                "urltest 不能包含重复目标。"));
+        }
+
+        if (urlTest.Outbounds.Count < 2)
+        {
+            context.Diagnostics.Add(new ConfigDiagnostic(
+                "SB078",
+                $"outbounds[{index}].outbounds",
+                "urltest 至少需要两个真实代理节点。"));
         }
     }
 
@@ -586,6 +639,7 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
     private sealed record ValidationContext(
         List<ConfigDiagnostic> Diagnostics,
         HashSet<string> RouteTargets,
+        HashSet<string> ProxyOutboundTags,
         HashSet<string> EndpointTags,
         HashSet<string> DnsTags,
         HashSet<string> HttpClientTags,
