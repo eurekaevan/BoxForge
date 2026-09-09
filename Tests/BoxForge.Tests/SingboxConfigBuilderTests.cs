@@ -44,6 +44,7 @@ public sealed class SingboxConfigBuilderTests
             Assert.That(json, Does.Not.Contain("\"set_system_proxy\""));
             Assert.That(json, Does.Not.Contain("\"platform\""));
             Assert.That(json, Does.Not.Contain("\"http_proxy\""));
+            Assert.That(json, Does.Not.Contain("\"mtu\""));
             Assert.That(
                 json.Contains("\"type\": \"bridge\"", StringComparison.Ordinal),
                 Is.EqualTo(platform != TargetPlatform.Android));

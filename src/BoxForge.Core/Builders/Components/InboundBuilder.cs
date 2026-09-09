@@ -22,8 +22,7 @@ public static class InboundBuilder
                 AutoRoute = true,
                 AutoRedirect = platform == TargetPlatform.Linux ? true : null,
                 StrictRoute = true,
-                Stack = platform == TargetPlatform.Windows ? "mixed" : "system",
-                Mtu = platform == TargetPlatform.Android ? 1400 : null
+                Stack = platform == TargetPlatform.Windows ? "mixed" : "system"
             },
             new Inbound
             {

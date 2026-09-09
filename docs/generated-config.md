@@ -12,9 +12,11 @@ sing-box 自动修改系统 HTTP 代理设置。
 
 | 平台 | TUN stack | 其他差异 |
 | --- | --- | --- |
-| Android | `system` | `mtu: 1400`；不为代理出站写入 TCP keepalive |
+| Android | `system` | 不为代理出站写入 TCP keepalive |
 | Linux | `system` | `auto_redirect: true`；生成 `bridge-out` L3 直连和 kernel-level `bypass`；代理出站使用 `tcp_keep_alive: 1m` 和 `tcp_keep_alive_interval: 30s` |
 | Windows | `mixed` | 生成 `bridge-out` L3 直连；代理出站使用 `tcp_keep_alive: 1m` 和 `tcp_keep_alive_interval: 30s` |
+
+三个平台均不生成 `mtu`，由 sing-box 按目标平台和运行环境采用默认值。
 
 Linux 和 Windows 额外生成 sing-box 1.14 `bridge` outbound，并按规则可判定的
 阶段生成两类 L3 forwarding 层：
