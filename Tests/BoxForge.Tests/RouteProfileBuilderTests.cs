@@ -9,8 +9,21 @@ namespace BoxForge.Tests;
 [TestFixture]
 public sealed class RouteProfileBuilderTests
 {
-    private const string GoogleRuleSetUrl =
-        "https://fastly.jsdelivr.net/gh/SagerNet/sing-geosite@rule-set/geosite-google.srs";
+    private const string GeositeRuleSetUrlTemplate =
+        "https://fastly.jsdelivr.net/gh/SagerNet/sing-geosite@rule-set/{tag}.srs";
+    private const string GeoIpRuleSetUrl =
+        "https://fastly.jsdelivr.net/gh/SagerNet/sing-geoip@rule-set/geoip-cn.srs";
+    private static readonly string[] GeositeRuleSetTags =
+    [
+        AdBlockingRuleSets.SagerAdsTag,
+        "geosite-category-pt",
+        "geosite-google",
+        "geosite-cn",
+        "geosite-spotify",
+        "geosite-steam",
+        "geosite-category-ai-!cn",
+        "geosite-microsoft"
+    ];
 
     [Test]
     public void DirectRoutesRetainTheirMatchersAcrossPlatformForwardingLayers()
@@ -113,38 +126,27 @@ public sealed class RouteProfileBuilderTests
     }
 
     [Test]
-    public void AdBlockingRuleSetsUseFixedRemoteBinaryUrlsAndAreRejected()
+    public void SagerNetRuleSetsGroupGeositeTagsAndRejectAds()
     {
         RouteConfig route = CreateBuilder().Build(TargetPlatform.Linux);
-        var expectedRuleSets = new Dictionary<string, string>
-        {
-            [AdBlockingRuleSets.AntiAdTag] = AdBlockingRuleSets.AntiAdUrl,
-            [AdBlockingRuleSets.SagerAdsTag] = AdBlockingRuleSets.SagerAdsUrl
-        };
-
-        List<SingboxRuleSet> adBlockingRuleSets = route.RuleSet
-            .Where(ruleSet => ruleSet.Tag != null
-                && expectedRuleSets.ContainsKey(ruleSet.Tag))
-            .ToList();
+        SingboxRuleSet geositeRuleSet = route.RuleSet.Single(ruleSet =>
+            ruleSet.Tag?.Contains(AdBlockingRuleSets.SagerAdsTag) == true);
+        SingboxRuleSet geoIpRuleSet = route.RuleSet.Single(ruleSet =>
+            ruleSet.Tag?.SequenceEqual(["geoip-cn"]) == true);
         RouteRule? adBlockingRejectRule = route.Rules.SingleOrDefault(rule =>
             rule.Action == RouteRuleAction.Reject
             && rule.RuleSet?.SequenceEqual(
-                [
-                    AdBlockingRuleSets.AntiAdTag,
-                    AdBlockingRuleSets.SagerAdsTag
-                ]) == true);
+                [AdBlockingRuleSets.SagerAdsTag]) == true);
 
         Assert.Multiple(() =>
         {
-            Assert.That(adBlockingRuleSets, Has.Count.EqualTo(2));
-            Assert.That(
-                adBlockingRuleSets.All(ruleSet =>
-                    ruleSet.Type == RuleSetType.Remote
-                    && ruleSet.Format == RuleSetFormat.Binary
-                    && ruleSet.Tag != null
-                    && ruleSet.Url == expectedRuleSets[ruleSet.Tag]
-                    && ruleSet.UpdateInterval == "1d"),
-                Is.True);
+            Assert.That(route.RuleSet, Has.Count.EqualTo(2));
+            Assert.That(geositeRuleSet.Tag, Is.EqualTo(GeositeRuleSetTags));
+            Assert.That(geositeRuleSet.Type, Is.EqualTo(RuleSetType.Remote));
+            Assert.That(geositeRuleSet.Format, Is.EqualTo(RuleSetFormat.Binary));
+            Assert.That(geositeRuleSet.Url, Is.EqualTo(GeositeRuleSetUrlTemplate));
+            Assert.That(geositeRuleSet.UpdateInterval, Is.EqualTo("1d"));
+            Assert.That(geoIpRuleSet.Url, Is.EqualTo(GeoIpRuleSetUrl));
             Assert.That(adBlockingRejectRule, Is.Not.Null);
             Assert.That(
                 route.DefaultHttpClient,
@@ -153,7 +155,7 @@ public sealed class RouteProfileBuilderTests
                 route.RuleSet.All(ruleSet => ruleSet.HttpClient == null),
                 Is.True);
             Assert.That(
-                route.RuleSet.Select(ruleSet => ruleSet.Tag)
+                route.RuleSet.SelectMany(ruleSet => ruleSet.Tag ?? [])
                     .Concat(route.Rules.SelectMany(ReferencedRuleSets)),
                 Does.Not.Contain("adguard-dns"));
         });
@@ -165,14 +167,11 @@ public sealed class RouteProfileBuilderTests
         RouteConfig route = CreateBuilder().Build(TargetPlatform.Linux);
 
         SingboxRuleSet? googleRuleSet = route.RuleSet.SingleOrDefault(ruleSet =>
-            ruleSet.Tag == "geosite-google");
+            ruleSet.Tag?.Contains("geosite-google") == true);
         int adBlockingIndex = route.Rules.FindIndex(rule =>
             rule.Action == RouteRuleAction.Reject
             && rule.RuleSet?.SequenceEqual(
-                [
-                    AdBlockingRuleSets.AntiAdTag,
-                    AdBlockingRuleSets.SagerAdsTag
-                ]) == true);
+                [AdBlockingRuleSets.SagerAdsTag]) == true);
         int aiUdp443RejectIndex = route.Rules.FindIndex(rule =>
             rule.Action == RouteRuleAction.Reject
             && ContainsUdp443Condition(rule)
@@ -207,7 +206,7 @@ public sealed class RouteProfileBuilderTests
             Assert.That(googleRuleSet, Is.Not.Null);
             Assert.That(googleRuleSet!.Type, Is.EqualTo(RuleSetType.Remote));
             Assert.That(googleRuleSet.Format, Is.EqualTo(RuleSetFormat.Binary));
-            Assert.That(googleRuleSet.Url, Is.EqualTo(GoogleRuleSetUrl));
+            Assert.That(googleRuleSet.Url, Is.EqualTo(GeositeRuleSetUrlTemplate));
             Assert.That(googleRuleSet.UpdateInterval, Is.EqualTo("1d"));
             Assert.That(
                 new[]
@@ -397,7 +396,7 @@ public sealed class RouteProfileBuilderTests
     }
 
     [Test]
-    public void SniffingUsesOnlyWebAndQuicAcrossAllPorts()
+    public void SniffingUsesWebQuicAndStunAcrossAllPorts()
     {
         RouteConfig route = CreateBuilder().Build(TargetPlatform.Linux);
 
@@ -409,7 +408,7 @@ public sealed class RouteProfileBuilderTests
         Assert.Multiple(() =>
         {
             AssertSniffRule(sniffRules[0], "tcp", ["http", "tls"]);
-            AssertSniffRule(sniffRules[1], "udp", ["quic"]);
+            AssertSniffRule(sniffRules[1], "udp", ["quic", "stun"]);
             Assert.That(
                 route.Rules.Any(rule => rule.Protocol?.Contains("ssh") == true),
                 Is.False,
@@ -418,14 +417,13 @@ public sealed class RouteProfileBuilderTests
     }
 
     [Test]
-    public void FixedStunRejectPrecedesSniffAndForeignUdp443Policy()
+    public void StunProtocolRejectFollowsUdpSniffAndPrecedesPostSniffRouting()
     {
         RouteConfig route = CreateBuilder().Build(TargetPlatform.Linux);
 
-        int stunRejectIndex = route.Rules.FindIndex(rule =>
+        int stunProtocolRejectIndex = route.Rules.FindIndex(rule =>
             rule.Action == RouteRuleAction.Reject
-            && rule.Network?.Contains("udp") == true
-            && rule.Port?.Contains(3478) == true);
+            && rule.Protocol?.SequenceEqual(["stun"]) == true);
         int tcpSniffIndex = FindSniffIndex(route, "tcp");
         int udpSniffIndex = FindSniffIndex(route, "udp");
         int aiUdp443RejectIndex = route.Rules.FindIndex(rule =>
@@ -455,9 +453,9 @@ public sealed class RouteProfileBuilderTests
         Assert.That(
             new[]
             {
-                stunRejectIndex,
                 tcpSniffIndex,
                 udpSniffIndex,
+                stunProtocolRejectIndex,
                 aiUdp443RejectIndex,
                 googleUdp443RejectIndex,
                 aiRouteIndex,
@@ -472,6 +470,27 @@ public sealed class RouteProfileBuilderTests
                 geoipDirectIndex
             },
             Is.Ordered.And.All.GreaterThanOrEqualTo(0));
+        RouteRule stunProtocolReject = route.Rules[stunProtocolRejectIndex];
+        Assert.Multiple(() =>
+        {
+            Assert.That(stunProtocolRejectIndex, Is.EqualTo(udpSniffIndex + 1));
+            Assert.That(route.Rules.Count(rule =>
+                rule.Action == RouteRuleAction.Reject
+                && rule.Protocol?.SequenceEqual(["stun"]) == true),
+                Is.EqualTo(1));
+            Assert.That(stunProtocolReject.Inbound, Is.EquivalentTo(new[]
+            {
+                SingboxTags.TunInbound,
+                SingboxTags.MixedInbound
+            }));
+            Assert.That(stunProtocolReject.Network, Is.EqualTo(new[] { "udp" }));
+            Assert.That(stunProtocolReject.Port, Is.Null);
+            Assert.That(stunProtocolReject.RuleSet, Is.Null);
+            Assert.That(route.Rules.Any(rule =>
+                rule.Action == RouteRuleAction.Reject
+                && rule.Port?.Intersect([3478, 3479, 19302, 19303]).Any() == true),
+                Is.False);
+        });
     }
 
     private static void AssertSniffRule(

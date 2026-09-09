@@ -71,7 +71,6 @@ public sealed class DnsProfileBuilder(
         {
             RuleSet =
             [
-                AdBlockingRuleSets.AntiAdTag,
                 AdBlockingRuleSets.SagerAdsTag
             ],
             Action = DnsRuleAction.Predefined,

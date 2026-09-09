@@ -14,7 +14,9 @@ public record RouteConfig
 public record SingboxRuleSet
 {
     [JsonPropertyName("type")] public RuleSetType? Type { get; init; }
-    [JsonPropertyName("tag")] public string? Tag { get; init; }
+    [JsonPropertyName("tag")]
+    [JsonConverter(typeof(StringOrArrayJsonConverter))]
+    public List<string>? Tag { get; init; }
     [JsonPropertyName("format")] public RuleSetFormat? Format { get; init; }
     [JsonPropertyName("url")] public string? Url { get; init; }
     [JsonPropertyName("http_client")] public string? HttpClient { get; init; }

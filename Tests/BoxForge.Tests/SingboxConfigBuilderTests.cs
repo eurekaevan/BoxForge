@@ -1,3 +1,4 @@
+using System.Text.Json;
 using BoxForge.Builders;
 using BoxForge.Builders.Components;
 using BoxForge.Configuration;
@@ -133,6 +134,12 @@ public sealed class SingboxConfigBuilderTests
             client.Tag == HttpClientTags.RuleSetDirect);
 
         string json = new ConfigSerializer().Serialize(config);
+        using JsonDocument document = JsonDocument.Parse(json);
+        JsonElement serializedRuleSets = document.RootElement
+            .GetProperty("route")
+            .GetProperty("rule_set");
+        JsonElement serializedGeositeTags = serializedRuleSets[0]
+            .GetProperty("tag");
 
         Assert.Multiple(() =>
         {
@@ -152,9 +159,19 @@ public sealed class SingboxConfigBuilderTests
                 Is.True);
             Assert.That(json, Does.Not.Contain("\"http_client\":"));
             Assert.That(json, Does.Not.Contain("\"http_client\": null"));
-            Assert.That(json, Does.Contain(AdBlockingRuleSets.AntiAdTag));
             Assert.That(json, Does.Contain(AdBlockingRuleSets.SagerAdsTag));
+            Assert.That(json, Does.Not.Contain("anti-ad"));
+            Assert.That(json, Does.Not.Contain("anti-ad.net"));
             Assert.That(json, Does.Not.Contain("adguard-dns"));
+            Assert.That(serializedRuleSets.GetArrayLength(), Is.EqualTo(2));
+            Assert.That(serializedGeositeTags.ValueKind, Is.EqualTo(JsonValueKind.Array));
+            Assert.That(serializedGeositeTags.GetArrayLength(), Is.EqualTo(8));
+            Assert.That(
+                serializedRuleSets[0].GetProperty("url").GetString(),
+                Is.EqualTo("https://fastly.jsdelivr.net/gh/SagerNet/sing-geosite@rule-set/{tag}.srs"));
+            Assert.That(
+                serializedRuleSets[1].GetProperty("tag").ValueKind,
+                Is.EqualTo(JsonValueKind.String));
         });
 
         Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config));

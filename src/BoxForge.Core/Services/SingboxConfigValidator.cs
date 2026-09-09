@@ -64,8 +64,9 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
             config.HttpClients.Select(client => client.Tag),
             "http_clients",
             diagnostics);
-        var ruleSetTags = CollectTags(
-            config.Route.RuleSet.Select(ruleSet => ruleSet.Tag));
+        var ruleSetTags = CollectRuleSetTags(
+            config.Route.RuleSet,
+            diagnostics);
         var inboundTags = CollectTags(
             config.Inbounds.Select(inbound => inbound.Tag));
         ValidateRequiredTags(
@@ -511,6 +512,14 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
                 $"route.rule_set[{index}].url",
                 "远程 rule-set URL 不能为空。",
                 context.Diagnostics);
+            if (ruleSet.Tag is { Count: > 1 }
+                && ruleSet.Url?.Contains("{tag}", StringComparison.Ordinal) != true)
+            {
+                context.Diagnostics.Add(new ConfigDiagnostic(
+                    "SB072",
+                    $"route.rule_set[{index}].url",
+                    "包含多个 tag 的远程 rule-set URL 必须使用 {tag} 占位符。"));
+            }
             if (ruleSet.Type == RuleSetType.Remote)
             {
                 ValidateReference(
@@ -588,6 +597,49 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
             .Where(tag => !string.IsNullOrWhiteSpace(tag))
             .Select(tag => tag!)
             .ToHashSet(StringComparer.Ordinal);
+
+    private static HashSet<string> CollectRuleSetTags(
+        List<SingboxRuleSet> ruleSets,
+        List<ConfigDiagnostic> diagnostics)
+    {
+        var result = new HashSet<string>(StringComparer.Ordinal);
+        for (var ruleSetIndex = 0; ruleSetIndex < ruleSets.Count; ruleSetIndex++)
+        {
+            List<string>? tags = ruleSets[ruleSetIndex].Tag;
+            if (tags == null || tags.Count == 0)
+            {
+                diagnostics.Add(new ConfigDiagnostic(
+                    "SB008",
+                    $"route.rule_set[{ruleSetIndex}].tag",
+                    "标签不能为空。"));
+                continue;
+            }
+
+            for (var tagIndex = 0; tagIndex < tags.Count; tagIndex++)
+            {
+                string tag = tags[tagIndex];
+                string path = tags.Count == 1
+                    ? $"route.rule_set[{ruleSetIndex}].tag"
+                    : $"route.rule_set[{ruleSetIndex}].tag[{tagIndex}]";
+                if (string.IsNullOrWhiteSpace(tag))
+                {
+                    diagnostics.Add(new ConfigDiagnostic(
+                        "SB008",
+                        path,
+                        "标签不能为空。"));
+                }
+                else if (!result.Add(tag))
+                {
+                    diagnostics.Add(new ConfigDiagnostic(
+                        "SB009",
+                        path,
+                        $"标签 '{tag}' 重复。"));
+                }
+            }
+        }
+
+        return result;
+    }
 
     private static HashSet<string> CollectUniqueRequiredTags(
         IEnumerable<string?> tags,

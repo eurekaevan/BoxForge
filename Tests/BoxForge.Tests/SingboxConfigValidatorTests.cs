@@ -41,6 +41,103 @@ public sealed class SingboxConfigValidatorTests
     }
 
     [Test]
+    public void GroupedRuleSetTagsAreAvailableToDnsAndRouteRules()
+    {
+        SingboxConfig valid = CreateValidConfig();
+        SingboxRuleSet grouped = valid.Route.RuleSet[0] with
+        {
+            Tag = ["rules", "secondary-rules"],
+            Url = "https://example.test/{tag}.srs"
+        };
+        SingboxConfig config = valid with
+        {
+            Dns = valid.Dns with
+            {
+                Rules =
+                [
+                    .. valid.Dns.Rules,
+                    new DnsRule
+                    {
+                        RuleSet = ["secondary-rules"],
+                        Action = DnsRuleAction.Route,
+                        Server = "dns"
+                    }
+                ]
+            },
+            Route = valid.Route with
+            {
+                RuleSet = [grouped],
+                Rules =
+                [
+                    valid.Route.Rules[0] with
+                    {
+                        RuleSet = ["secondary-rules"]
+                    }
+                ]
+            }
+        };
+
+        Assert.DoesNotThrow(() => validator.Validate(config));
+    }
+
+    [Test]
+    public void RuleSetTagsMustBePresentAndUnique()
+    {
+        SingboxConfig valid = CreateValidConfig();
+        SingboxConfig config = valid with
+        {
+            Route = valid.Route with
+            {
+                RuleSet =
+                [
+                    valid.Route.RuleSet[0] with { Tag = [] },
+                    valid.Route.RuleSet[0] with
+                    {
+                        Tag = ["duplicate", "", "duplicate"],
+                        Url = "https://example.test/{tag}.srs"
+                    },
+                    valid.Route.RuleSet[0] with { Tag = ["duplicate"] }
+                ],
+                Rules = []
+            }
+        };
+
+        AssertDiagnostics(
+            config,
+            new("SB008", "route.rule_set[0].tag", "标签不能为空。"),
+            new("SB008", "route.rule_set[1].tag[1]", "标签不能为空。"),
+            new("SB009", "route.rule_set[1].tag[2]", "标签 'duplicate' 重复。"),
+            new("SB009", "route.rule_set[2].tag", "标签 'duplicate' 重复。"));
+    }
+
+    [Test]
+    public void GroupedRemoteRuleSetRequiresTagPlaceholder()
+    {
+        SingboxConfig valid = CreateValidConfig();
+        SingboxConfig config = valid with
+        {
+            Route = valid.Route with
+            {
+                RuleSet =
+                [
+                    valid.Route.RuleSet[0] with
+                    {
+                        Tag = ["rules", "secondary-rules"]
+                    }
+                ],
+                Rules = []
+            }
+        };
+
+        AssertDiagnostics(
+            config,
+            new ConfigDiagnostic(
+                "SB072",
+                "route.rule_set[0].url",
+                "包含多个 tag 的远程 rule-set URL 必须使用 {tag} 占位符。"));
+    }
+
+    [Test]
     public void HttpClientTagsMustBePresentAndUnique()
     {
         SingboxConfig config = CreateValidConfig() with
@@ -259,7 +356,7 @@ public sealed class SingboxConfigValidatorTests
                 [
                     new SingboxRuleSet
                     {
-                        Tag = "broken-rule-set",
+                        Tag = ["broken-rule-set"],
                         Type = RuleSetType.Remote,
                         Url = ""
                     }
@@ -481,7 +578,7 @@ public sealed class SingboxConfigValidatorTests
                     new SingboxRuleSet
                     {
                         Type = RuleSetType.Remote,
-                        Tag = "rules",
+                        Tag = ["rules"],
                         Format = RuleSetFormat.Binary,
                         Url = "https://example.test/rules.srs",
                         HttpClient = "http"

@@ -83,10 +83,7 @@ public sealed class DnsProfileBuilderTests
             && rule.Server == SingboxTags.NodeResolverDns);
         int adBlockingIndex = dns.Rules.FindIndex(rule =>
             rule.RuleSet?.SequenceEqual(
-                [
-                    AdBlockingRuleSets.AntiAdTag,
-                    AdBlockingRuleSets.SagerAdsTag
-                ]) == true);
+                [AdBlockingRuleSets.SagerAdsTag]) == true);
         DnsRule adBlockingRule = dns.Rules[adBlockingIndex];
 
         string json = new ConfigSerializer().Serialize(new SingboxConfig
@@ -108,8 +105,8 @@ public sealed class DnsProfileBuilderTests
             Assert.That(
                 serializedAdBlockingRule.GetProperty("rcode").GetString(),
                 Is.EqualTo("NXDOMAIN"));
-            Assert.That(json, Does.Contain(AdBlockingRuleSets.AntiAdTag));
             Assert.That(json, Does.Contain(AdBlockingRuleSets.SagerAdsTag));
+            Assert.That(json, Does.Not.Contain("anti-ad"));
             Assert.That(json, Does.Not.Contain("adguard-dns"));
         });
     }
@@ -122,7 +119,7 @@ public sealed class DnsProfileBuilderTests
             TargetPlatform.Linux);
 
         int adBlockingIndex = dns.Rules.FindIndex(rule =>
-            rule.RuleSet?.Contains(AdBlockingRuleSets.AntiAdTag) == true);
+            rule.RuleSet?.Contains(AdBlockingRuleSets.SagerAdsTag) == true);
         int serviceAaaaBlockIndex = dns.Rules.FindIndex(rule =>
             rule.QueryType?.Contains("AAAA") == true
             && rule.RuleSet?.Contains("geosite-google") == true

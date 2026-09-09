@@ -66,12 +66,16 @@ SFA 工作目录下的 `Taildrop`，Windows 使用
 - 远程 rule-set 每天更新，通过默认 HTTP client `rule-set-direct` 直接拨号下载；
   该 HTTP client 使用本地 DNS 的 `ipv4_only` 解析，不经 `DIRECT` outbound
   二次解析。
-- 广告过滤同时使用 anti-AD 的 `anti-ad-sing-box.srs` 和 SagerNet 的
-  `geosite-category-ads-all.srs`。
+- 广告过滤使用 SagerNet 的 `geosite-category-ads-all.srs`。
+- 同源的 SagerNet geosite rule-set 使用 sing-box 1.14 多 tag 与 `{tag}` URL
+  模板合并声明；各 DNS 和路由规则仍按原 tag 单独引用。
 - mixed inbound 的代理业务域名和最终代理回退域名在路由前执行
   `resolve` + `ipv4_only`。公网 IPv6 只有命中 `geoip-cn` 时才进入 `DIRECT`；
   其他公网 IPv6 在所有代理业务路由之前被拒绝。私网和 Tailscale 路径不受
   这条公网限制影响。
+- 未被前置 Tailscale、私网或 bootstrap 直连规则处理的 UDP 流量会同时嗅探
+  QUIC 和 STUN，并拒绝识别出的 STUN 协议；不再根据 3478、3479、19302 或
+  19303 等固定端口拒绝普通 UDP 流量。
 
 ## sing-box API
 

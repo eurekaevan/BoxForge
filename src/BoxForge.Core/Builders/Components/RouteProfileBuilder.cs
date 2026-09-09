@@ -19,20 +19,19 @@ public sealed class RouteProfileBuilder(
         };
 
         route.RuleSet.AddRange([
-            CreateRemoteBinaryRuleSet(
-                AdBlockingRuleSets.AntiAdTag,
-                AdBlockingRuleSets.AntiAdUrl),
-            CreateRemoteBinaryRuleSet(
-                AdBlockingRuleSets.SagerAdsTag,
-                AdBlockingRuleSets.SagerAdsUrl),
-            CreateRemoteRuleSet("geosite-category-pt", "geosite", "geosite-category-pt"),
-            CreateRemoteRuleSet("geosite-google", "geosite", "geosite-google"),
-            CreateRemoteRuleSet("geosite-cn", "geosite", "geosite-cn"),
+            CreateRemoteRuleSetGroup(
+                [
+                    AdBlockingRuleSets.SagerAdsTag,
+                    "geosite-category-pt",
+                    "geosite-google",
+                    "geosite-cn",
+                    "geosite-spotify",
+                    "geosite-steam",
+                    "geosite-category-ai-!cn",
+                    "geosite-microsoft"
+                ],
+                "geosite"),
             CreateRemoteRuleSet("geoip-cn", "geoip", "geoip-cn"),
-            CreateRemoteRuleSet("geosite-spotify", "geosite", "geosite-spotify"),
-            CreateRemoteRuleSet("geosite-steam", "geosite", "geosite-steam"),
-            CreateRemoteRuleSet("geosite-category-ai-!cn", "geosite", "geosite-category-ai-!cn"),
-            CreateRemoteRuleSet("geosite-microsoft", "geosite", "geosite-microsoft"),
         ]);
 
         var rules = new List<RouteRule>
@@ -69,16 +68,18 @@ public sealed class RouteProfileBuilder(
         rules.AddRange([
             new RouteRule { IpIsPrivate = true, Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound },
             new() { IpCidr = ["223.5.5.5/32"], Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound },
-            new() { Port = [3478, 3479, 19302, 19303], Network = ["udp"], Action = RouteRuleAction.Reject },
             CreateSniffRule("tcp", ["http", "tls"]),
-            CreateSniffRule("udp", ["quic"]),
+            CreateSniffRule("udp", ["quic", "stun"]),
             new()
             {
-                RuleSet =
-                [
-                    AdBlockingRuleSets.AntiAdTag,
-                    AdBlockingRuleSets.SagerAdsTag
-                ],
+                Inbound = [SingboxTags.TunInbound, SingboxTags.MixedInbound],
+                Protocol = ["stun"],
+                Network = ["udp"],
+                Action = RouteRuleAction.Reject
+            },
+            new()
+            {
+                RuleSet = [AdBlockingRuleSets.SagerAdsTag],
                 Action = RouteRuleAction.Reject
             }
         ]);
@@ -280,14 +281,20 @@ public sealed class RouteProfileBuilder(
         string tag,
         string repoType,
         string fileName) => CreateRemoteBinaryRuleSet(
-            tag,
+            [tag],
             $"https://fastly.jsdelivr.net/gh/SagerNet/sing-{repoType}@rule-set/{fileName}.srs");
 
+    private static SingboxRuleSet CreateRemoteRuleSetGroup(
+        List<string> tags,
+        string repoType) => CreateRemoteBinaryRuleSet(
+            tags,
+            $"https://fastly.jsdelivr.net/gh/SagerNet/sing-{repoType}@rule-set/{{tag}}.srs");
+
     private static SingboxRuleSet CreateRemoteBinaryRuleSet(
-        string tag,
+        List<string> tags,
         string url) => new()
         {
-            Tag = tag,
+            Tag = tags,
             Type = RuleSetType.Remote,
             Format = RuleSetFormat.Binary,
             Url = url,
