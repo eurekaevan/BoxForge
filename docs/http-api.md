@@ -44,7 +44,8 @@ curl http://127.0.0.1:5080/healthz
 }
 ```
 
-- `name` 必须非空。
+- `name` 必须为 1～100 个 Unicode 标量值，不能是单独的 `.` 或
+  `..`，不能包含 `/`、`\` 或控制字符。
 - `yaml` 必须非空，UTF-8 大小不得超过 2 MiB。
 - `platforms` 至少包含一项，只允许 `Android`、`Linux` 和
   `Windows`，不区分大小写且不得重复。

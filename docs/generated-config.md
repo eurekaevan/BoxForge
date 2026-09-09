@@ -67,6 +67,8 @@ SFA 工作目录下的 `Taildrop`，Windows 使用
 
 ## 出站与 rule-set
 
+- Clash YAML 中的重复键会在解析阶段拒绝，不会以“后值覆盖前值”
+  的方式静默改变节点字段。
 - AnyTLS 的 `idle-session-timeout`、下划线别名以及旧
   `idle-timeout` 输入统一生成官方 `idle_session_timeout`；纯数字输入按秒转换。
 - VLESS `packet-encoding`（兼容 `packet_encoding`）会按来源生成 `xudp`、

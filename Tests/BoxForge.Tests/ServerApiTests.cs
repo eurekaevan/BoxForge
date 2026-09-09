@@ -174,6 +174,40 @@ public sealed class ServerApiTests
         }
     }
 
+    [TestCase(".")]
+    [TestCase("..")]
+    [TestCase("../escape")]
+    [TestCase("..\\escape")]
+    [TestCase("nested/name")]
+    [TestCase("nested\\name")]
+    [TestCase("line\nbreak")]
+    public async Task RejectsUnsafeConfigurationNames(string name)
+    {
+        using HttpClient client = factory.CreateClient();
+
+        using HttpResponseMessage response = await PostConversionAsync(
+            client,
+            name,
+            ValidYaml,
+            ["Android"]);
+
+        await AssertProblemAsync(response, HttpStatusCode.BadRequest);
+    }
+
+    [Test]
+    public async Task RejectsConfigurationNameLongerThanOneHundredRunes()
+    {
+        using HttpClient client = factory.CreateClient();
+
+        using HttpResponseMessage response = await PostConversionAsync(
+            client,
+            string.Concat(Enumerable.Repeat("🚀", 101)),
+            ValidYaml,
+            ["Android"]);
+
+        await AssertProblemAsync(response, HttpStatusCode.BadRequest);
+    }
+
     [Test]
     public async Task RejectsUnknownAndDuplicatePlatforms()
     {

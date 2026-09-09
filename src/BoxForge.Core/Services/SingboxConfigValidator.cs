@@ -37,18 +37,18 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
     {
         var diagnostics = new List<ConfigDiagnostic>();
 
-        var outboundTags = CollectTags(
-            config.Outbounds.Select(outbound => outbound.Tag));
-        ValidateRequiredTags(
+        var outboundTags = CollectUniqueRequiredTags(
             config.Outbounds.Select(outbound => outbound.Tag),
             "outbounds",
             diagnostics);
 
-        var endpointTags = CollectTags(
-            config.Endpoints?.Select(endpoint => endpoint.Tag) ?? []);
-        ValidateRequiredTags(
+        var endpointTags = CollectUniqueRequiredTags(
             config.Endpoints?.Select(endpoint => endpoint.Tag) ?? [],
             "endpoints",
+            diagnostics);
+        ValidateEndpointTagCollisions(
+            config.Endpoints?.Select(endpoint => endpoint.Tag) ?? [],
+            outboundTags,
             diagnostics);
 
         var routeTargets = new HashSet<string>(
@@ -70,9 +70,7 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
         var ruleSetTags = CollectRuleSetTags(
             config.Route.RuleSet,
             diagnostics);
-        var inboundTags = CollectTags(
-            config.Inbounds.Select(inbound => inbound.Tag));
-        ValidateRequiredTags(
+        var inboundTags = CollectUniqueRequiredTags(
             config.Inbounds.Select(inbound => inbound.Tag),
             "inbounds",
             diagnostics);
@@ -646,12 +644,6 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
         HashSet<string> RuleSetTags,
         HashSet<string> InboundTags);
 
-    private static HashSet<string> CollectTags(IEnumerable<string?> tags) =>
-        tags
-            .Where(tag => !string.IsNullOrWhiteSpace(tag))
-            .Select(tag => tag!)
-            .ToHashSet(StringComparer.Ordinal);
-
     private static HashSet<string> CollectRuleSetTags(
         List<SingboxRuleSet> ruleSets,
         List<ConfigDiagnostic> diagnostics)
@@ -725,20 +717,20 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
         return result;
     }
 
-    private static void ValidateRequiredTags(
+    private static void ValidateEndpointTagCollisions(
         IEnumerable<string?> tags,
-        string path,
+        HashSet<string> outboundTags,
         List<ConfigDiagnostic> diagnostics)
     {
         var index = 0;
         foreach (var tag in tags)
         {
-            if (string.IsNullOrWhiteSpace(tag))
+            if (!string.IsNullOrWhiteSpace(tag) && outboundTags.Contains(tag))
             {
                 diagnostics.Add(new ConfigDiagnostic(
-                    "SB008",
-                    $"{path}[{index}].tag",
-                    "标签不能为空。"));
+                    "SB009",
+                    $"endpoints[{index}].tag",
+                    $"标签 '{tag}' 与 outbound tag 重复。"));
             }
 
             index++;

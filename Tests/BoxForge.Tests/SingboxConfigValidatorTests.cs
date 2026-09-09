@@ -158,6 +158,72 @@ public sealed class SingboxConfigValidatorTests
     }
 
     [Test]
+    public void OutboundTagsMustBeUnique()
+    {
+        SingboxConfig valid = CreateValidConfig();
+        SingboxConfig config = valid with
+        {
+            Outbounds = [.. valid.Outbounds, CreateDirectOutbound()]
+        };
+
+        AssertDiagnostics(
+            config,
+            new ConfigDiagnostic(
+                "SB009",
+                "outbounds[2].tag",
+                "标签 'direct' 重复。"));
+    }
+
+    [Test]
+    public void EndpointTagsMustBeUnique()
+    {
+        SingboxConfig config = CreateValidConfig() with
+        {
+            Endpoints = [CreateEndpoint("endpoint"), CreateEndpoint("endpoint")]
+        };
+
+        AssertDiagnostics(
+            config,
+            new ConfigDiagnostic(
+                "SB009",
+                "endpoints[1].tag",
+                "标签 'endpoint' 重复。"));
+    }
+
+    [Test]
+    public void InboundTagsMustBeUnique()
+    {
+        SingboxConfig valid = CreateValidConfig();
+        SingboxConfig config = valid with
+        {
+            Inbounds = [.. valid.Inbounds, valid.Inbounds[0]]
+        };
+
+        AssertDiagnostics(
+            config,
+            new ConfigDiagnostic(
+                "SB009",
+                "inbounds[1].tag",
+                "标签 'tun' 重复。"));
+    }
+
+    [Test]
+    public void OutboundAndEndpointRouteTargetTagsMustNotCollide()
+    {
+        SingboxConfig config = CreateValidConfig() with
+        {
+            Endpoints = [CreateEndpoint("direct")]
+        };
+
+        AssertDiagnostics(
+            config,
+            new ConfigDiagnostic(
+                "SB009",
+                "endpoints[0].tag",
+                "标签 'direct' 与 outbound tag 重复。"));
+    }
+
+    [Test]
     public void HttpClientDetourMustExist()
     {
         SingboxConfig config = CreateValidConfig() with
@@ -691,6 +757,16 @@ public sealed class SingboxConfigValidatorTests
         {
             Tag = "direct",
             DomainResolver = "dns"
+        };
+
+    private static TailscaleEndpoint CreateEndpoint(string tag) =>
+        new()
+        {
+            Tag = tag,
+            DomainResolver = "dns",
+            StateDirectory = "tailscale",
+            AcceptRoutes = true,
+            TaildropDirectory = "Taildrop"
         };
 
     private static ShadowsocksOutbound CreateProxyOutbound(string tag) =>

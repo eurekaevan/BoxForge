@@ -28,8 +28,8 @@ BoxForge.Tests  ──→ BoxForge.Cli, BoxForge.Server, BoxForge.Core
 3. `LocalGenerationWorkflow` 将每个文件作为一个 `ConversionRequest` 交给
    `IBoxForgeEngine`。
 4. `BoxForgeEngine` 校验内存输入，调用 `ConversionService.Prepare` 解析
-   YAML、生成 `NodeCatalog` 和稳定 `cache_id`，然后按 Android、Linux、
-   Windows 顺序调用 `ConversionService.Convert`。
+   YAML（重复键会直接失败）、生成 `NodeCatalog` 和稳定 `cache_id`，然后按
+   Android、Linux、Windows 顺序调用 `ConversionService.Convert`。
 5. 对每个目标平台，`SingboxConfigBuilder` 组合 inbound、endpoint、outbound、
    DNS、route 和 experimental 配置。
 6. `SingboxConfigValidator` 检查 BoxForge 自身约束，`ConfigSerializer` 生成
@@ -52,6 +52,7 @@ BoxForge.Tests  ──→ BoxForge.Cli, BoxForge.Server, BoxForge.Core
 - `GET /healthz` 只返回服务状态。
 - `POST /api/v1/convert` 将 JSON 请求映射为 `ConversionRequest`，并将
   `ConversionBundle` 直接映射为响应；`content` 不会被再次序列化或格式化。
+  响应 `path` 使用与 ZIP 导出相同的配置名限长和路径字符校验。
 - `POST /api/v1/export` 只在内存中读取一个 YAML 上传，引擎完整
   转换成功后，再按 Android、Linux、Windows 顺序构建 ZIP。
   ZIP entry 路径由经过限长和路径字符校验的配置名与固定
@@ -96,6 +97,8 @@ BoxForge.Tests  ──→ BoxForge.Cli, BoxForge.Server, BoxForge.Core
 ## 校验边界
 
 `SingboxConfigValidator` 检查标签、引用、必填字段、端口和生成器特有约束。
+outbound、endpoint 和 inbound 各自的 tag 必须唯一，outbound 与 endpoint
+共享路由目标命名空间，tag 也不得互相重复。
 它不会启动 sing-box，也不会下载或验证远程 rule-set。发布流程应对每个最终
 `config.json` 另行执行目标版本的 `sing-box check`。
 

@@ -81,9 +81,10 @@ internal static class ConversionApi
             return ApiProblems.BadRequest("请求体不能为空。");
         }
 
-        if (string.IsNullOrWhiteSpace(request.Name))
+        if (!ApiRequestValidation.IsValidConfigurationName(request.Name))
         {
-            return ApiProblems.BadRequest("name 不能为空。");
+            return ApiProblems.BadRequest(
+                "name 必须为 1～100 个 Unicode 标量值，不能是 . 或 ..，且不能包含路径分隔符或控制字符。");
         }
 
         if (string.IsNullOrWhiteSpace(request.Yaml))

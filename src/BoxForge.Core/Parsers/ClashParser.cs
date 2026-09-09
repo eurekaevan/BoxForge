@@ -15,6 +15,7 @@ public sealed class ClashParser : IClashParser
     {
         var deserializer = new DeserializerBuilder()
             .WithNamingConvention(HyphenatedNamingConvention.Instance)
+            .WithDuplicateKeyChecking()
             .IgnoreUnmatchedProperties()
             .Build();
 

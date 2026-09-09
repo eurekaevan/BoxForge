@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using BoxForge.Models;
 
 namespace BoxForge.Server.Api;
@@ -34,7 +35,8 @@ internal static class ApiRequestValidation
         return true;
     }
 
-    public static bool IsValidConfigurationName(string? name)
+    public static bool IsValidConfigurationName(
+        [NotNullWhen(true)] string? name)
     {
         if (string.IsNullOrWhiteSpace(name)
             || name is "." or ".."

@@ -236,6 +236,32 @@ public sealed class BoxForgeEngineTests
     }
 
     [Test]
+    public void RejectsDuplicateYamlKeys()
+    {
+        using ServiceProvider provider = CreateProvider();
+        var engine = provider.GetRequiredService<IBoxForgeEngine>();
+        const string yaml = """
+            proxies:
+              - name: duplicate-key
+                type: ss
+                server: first.example.com
+                server: second.example.com
+                port: 443
+                cipher: aes-128-gcm
+                password: test-only
+            """;
+
+        BoxForgeConversionException? exception =
+            Assert.ThrowsAsync<BoxForgeConversionException>(async () =>
+                await engine.ConvertAsync(new ConversionRequest(
+                    "duplicate-key",
+                    yaml,
+                    [TargetPlatform.Android])));
+
+        Assert.That(exception!.InnerException, Is.Not.Null);
+    }
+
+    [Test]
     public void PlatformFailureDoesNotReturnPartialBundle()
     {
         RecordingConfigBuilder? recordingBuilder = null;
