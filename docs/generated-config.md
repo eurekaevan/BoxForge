@@ -5,15 +5,29 @@
 ## 平台差异
 
 每个平台都包含一个 TUN inbound 和一个仅监听 `127.0.0.1:8848` 的 mixed inbound。
-TUN 固定启用 `auto_route`、`strict_route` 和 `dns_mode: hijack`，平台差异如下：
-全平台同时启用 `platform.http_proxy`，并将系统 HTTP 代理指向同一配置中的
-`127.0.0.1:8848` mixed inbound，形成 TUN + system HTTP proxy 模型。
+TUN 固定启用 `auto_route`、`strict_route` 和 `dns_mode: hijack`，平台差异如下。
+全平台仍生成仅监听 `127.0.0.1:8848` 的 `mixed-in`，供显式配置的 SOCKS/HTTP
+客户端使用，但不生成 `set_system_proxy` 或 `platform.http_proxy`，因此不会由
+sing-box 自动修改系统 HTTP 代理设置。
 
 | 平台 | TUN stack | 其他差异 |
 | --- | --- | --- |
 | Android | `system` | `mtu: 1400`；不为代理出站写入 TCP keepalive |
-| Linux | `system` | `auto_redirect: true`；代理出站使用 `tcp_keep_alive: 1m` 和 `tcp_keep_alive_interval: 30s` |
-| Windows | `mixed` | 代理出站使用 `tcp_keep_alive: 1m` 和 `tcp_keep_alive_interval: 30s` |
+| Linux | `system` | `auto_redirect: true`；生成 `bridge-out` L3 直连和 kernel-level `bypass`；代理出站使用 `tcp_keep_alive: 1m` 和 `tcp_keep_alive_interval: 30s` |
+| Windows | `mixed` | 生成 `bridge-out` L3 直连；代理出站使用 `tcp_keep_alive: 1m` 和 `tcp_keep_alive_interval: 30s` |
+
+Linux 和 Windows 额外生成 sing-box 1.14 `bridge` outbound。仅对首个 `sniff`
+之前可安全预匹配的私网地址和 `223.5.5.5` 直连规则，保留原 `DIRECT` 作为 L4
+回退，并在它前面增加带 `preferred_by: bridge-out` 门控的 L3 route。Linux
+还会再优先生成无 `outbound` 的 `bypass` 动作，使 `auto_redirect` 流量在相同
+条件下从内核层直接绕过 sing-box；该动作在其他上下文会被跳过。
+
+依赖嗅探、域名或后续服务优先级才能确定的国内直连规则不会提前，仍使用原
+`DIRECT` 路径。仅属于 `mixed-in` 的规则也不参与 L3/bypass 扩展，保留的
+loopback mixed 入站与 DIRECT 分流范围保持不变。
+
+`bridge` 需要系统权限；Windows 依赖 WinDivert，Linux 的 `bypass` 依赖已启用的
+`auto_redirect`。Android 不生成这些字段。
 
 在目标平台启用 Tailscale 时，`taildrop_directory` 始终按目标平台生成：Android 使用
 SFA 工作目录下的 `Taildrop`，Windows 使用
@@ -40,6 +54,13 @@ SFA 工作目录下的 `Taildrop`，Windows 使用
 
 ## 出站与 rule-set
 
+- AnyTLS 的 `idle-session-timeout`、下划线别名以及旧
+  `idle-timeout` 输入统一生成官方 `idle_session_timeout`；纯数字输入按秒转换。
+- VLESS `packet-encoding`（兼容 `packet_encoding`）会按来源生成 `xudp`、
+  `packetaddr` 或显式空值；未提供时保持既有 `xudp` 默认。
+- Reality 转换要求有效的 32 字节 Base64URL 公钥和显式 short ID。short ID
+  可以为空，否则必须是最多 8 字节的偶数位十六进制字符串；错误会在节点转换阶段
+  直接报告，不再生成空字段。
 - Hysteria2 出站使用 `hop_interval: 30s`、`hop_interval_max: 60s` 和
   `bbr_profile: standard`。
 - 远程 rule-set 每天更新，通过默认 HTTP client `rule-set-direct` 直接拨号下载；
@@ -51,6 +72,14 @@ SFA 工作目录下的 `Taildrop`，Windows 使用
   `resolve` + `ipv4_only`。公网 IPv6 只有命中 `geoip-cn` 时才进入 `DIRECT`；
   其他公网 IPv6 在所有代理业务路由之前被拒绝。私网和 Tailscale 路径不受
   这条公网限制影响。
+
+## sing-box API
+
+API 默认不生成。启用 `SingboxApi:Enabled` 后，顶层增加一个仅监听
+`127.0.0.1:9090` 的 `api` service，并启用工作目录下的 `dashboard`。
+Dashboard 下载复用 `rule-set-direct` HTTP client；允许的浏览器 origin 被限制为
+同端口的 `127.0.0.1` 与 `localhost`，`access_control_allow_private_network` 保持
+`false`。禁用时顶层 `services` 字段完全省略。
 
 ## 节点与分组
 

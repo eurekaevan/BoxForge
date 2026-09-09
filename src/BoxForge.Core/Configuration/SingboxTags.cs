@@ -4,6 +4,7 @@ public static class SingboxTags
 {
     public const string MainProxyGroup = "🚀 PROXIES";
     public const string DirectOutbound = "DIRECT";
+    public const string BridgeOutbound = "bridge-out";
     public const string TailscaleEndpoint = "tailscale";
     public const string TailscaleDns = "tailscale-dns";
     public const string TailscaleStateDirectory = "tailscale";
@@ -15,4 +16,5 @@ public static class SingboxTags
     public const string RemoteDns = "remote";
     public const string TunInbound = "tun-in";
     public const string MixedInbound = "mixed-in";
+    public const string ApiService = "api";
 }

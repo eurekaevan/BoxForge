@@ -22,6 +22,14 @@ public static class OptionsRegistration
                 "TailscaleAndroidEnabled",
                 false);
         });
+        services.Configure<SingboxApiOptions>(options =>
+        {
+            options.Enabled = ReadBool(
+                configuration,
+                "SingboxApi:Enabled",
+                null,
+                false);
+        });
 
         return services;
     }
@@ -29,10 +37,11 @@ public static class OptionsRegistration
     private static bool ReadBool(
         IConfiguration configuration,
         string nestedKey,
-        string legacyKey,
+        string? legacyKey,
         bool defaultValue)
     {
-        var value = configuration[nestedKey] ?? configuration[legacyKey];
+        var value = configuration[nestedKey]
+            ?? (legacyKey == null ? null : configuration[legacyKey]);
         if (value == null)
         {
             return defaultValue;

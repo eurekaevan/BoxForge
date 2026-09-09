@@ -6,6 +6,7 @@ namespace BoxForge.Models.Singbox;
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
 [JsonDerivedType(typeof(SelectorOutbound), typeDiscriminator: "selector")]
 [JsonDerivedType(typeof(DirectOutbound), typeDiscriminator: "direct")]
+[JsonDerivedType(typeof(BridgeOutbound), typeDiscriminator: "bridge")]
 [JsonDerivedType(typeof(VlessOutbound), typeDiscriminator: "vless")]
 [JsonDerivedType(typeof(TrojanOutbound), typeDiscriminator: "trojan")]
 [JsonDerivedType(typeof(Hysteria2Outbound), typeDiscriminator: "hysteria2")]
@@ -27,6 +28,8 @@ public record DirectOutbound : Outbound
 {
     [JsonPropertyName("domain_resolver")] public required string DomainResolver { get; init; }
 }
+
+public record BridgeOutbound : Outbound;
 
 public abstract record ProxyOutbound : Outbound
 {
@@ -82,7 +85,7 @@ public record ShadowsocksOutbound : ProxyOutbound
 public record AnyTlsOutbound : ProxyOutbound
 {
     [JsonPropertyName("password")] public required string Password { get; init; }
-    [JsonPropertyName("idle_timeout")] public string? IdleTimeout { get; init; }
+    [JsonPropertyName("idle_session_timeout")] public string? IdleSessionTimeout { get; init; }
     [JsonPropertyName("tls")] public OutboundTls? Tls { get; init; }
 }
 

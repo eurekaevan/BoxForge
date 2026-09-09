@@ -31,6 +31,7 @@ public static class CoreServiceRegistration
         services.AddTransient<TailscaleEndpointBuilder>();
         services.AddTransient<DnsProfileBuilder>();
         services.AddTransient<RouteProfileBuilder>();
+        services.AddTransient<SingboxApiServiceBuilder>();
 
         services.AddTransient<ISingboxConfigBuilder, SingboxConfigBuilder>();
         services.AddTransient<ConversionService>();

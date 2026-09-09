@@ -13,12 +13,14 @@ public interface ISingboxConfigBuilder
 public sealed class SingboxConfigBuilder(
     TailscaleEndpointBuilder tailscaleEndpointBuilder,
     DnsProfileBuilder dnsProfileBuilder,
-    RouteProfileBuilder routeProfileBuilder) : ISingboxConfigBuilder
+    RouteProfileBuilder routeProfileBuilder,
+    SingboxApiServiceBuilder singboxApiServiceBuilder) : ISingboxConfigBuilder
 {
     public SingboxConfig Build(SingboxBuildRequest request)
     {
         var profiles = ProfilePlanner.Plan(request.Nodes);
         var endpoints = tailscaleEndpointBuilder.Build(request.Platform);
+        var services = singboxApiServiceBuilder.Build();
 
         var orderedOutbounds = new List<Outbound>();
         orderedOutbounds.Add(profiles.MainOutbound);
@@ -26,6 +28,13 @@ public sealed class SingboxConfigBuilder(
         orderedOutbounds.AddRange(profiles.ServiceOutbounds);
         orderedOutbounds.AddRange(request.Nodes.Outbounds.Select(
             outbound => AddPlatformDialFields(outbound, request.Platform)));
+        if (request.Platform != TargetPlatform.Android)
+        {
+            orderedOutbounds.Add(new BridgeOutbound
+            {
+                Tag = SingboxTags.BridgeOutbound
+            });
+        }
         orderedOutbounds.Add(profiles.DirectOutbound);
 
         return new SingboxConfig
@@ -48,6 +57,7 @@ public sealed class SingboxConfigBuilder(
             Endpoints = endpoints.Count > 0 ? endpoints : null,
             Outbounds = orderedOutbounds,
             Route = routeProfileBuilder.Build(request.Platform),
+            Services = services.Count > 0 ? services : null,
             Experimental = ExperimentalBuilder.Build(request.CacheId)
         };
     }

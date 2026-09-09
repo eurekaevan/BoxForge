@@ -14,7 +14,8 @@ public sealed class SingboxConfigBuilderTests
     [TestCase(TargetPlatform.Android)]
     [TestCase(TargetPlatform.Linux)]
     [TestCase(TargetPlatform.Windows)]
-    public void AllPlatformsEnableTunSystemHttpProxy(TargetPlatform platform)
+    public void AllPlatformsKeepMixedInboundWithoutSystemProxy(
+        TargetPlatform platform)
     {
         SingboxConfig config = CreateBuilder().Build(new SingboxBuildRequest(
             new NodeCatalog([], [], []),
@@ -25,20 +26,26 @@ public sealed class SingboxConfigBuilderTests
             inbound.Tag == SingboxTags.TunInbound);
         Inbound mixedInbound = config.Inbounds.Single(inbound =>
             inbound.Tag == SingboxTags.MixedInbound);
+        bool hasBridge = config.Outbounds
+            .OfType<BridgeOutbound>()
+            .Any(outbound => outbound.Tag == SingboxTags.BridgeOutbound);
         string json = new ConfigSerializer().Serialize(config);
 
         Assert.Multiple(() =>
         {
-            Assert.That(tunInbound.Platform?.HttpProxy.Enabled, Is.True);
+            Assert.That(tunInbound.Type, Is.EqualTo("tun"));
+            Assert.That(mixedInbound.Type, Is.EqualTo("mixed"));
+            Assert.That(mixedInbound.Listen, Is.EqualTo("127.0.0.1"));
+            Assert.That(mixedInbound.ListenPort, Is.EqualTo(8848));
             Assert.That(
-                tunInbound.Platform?.HttpProxy.Server,
-                Is.EqualTo(mixedInbound.Listen));
+                hasBridge,
+                Is.EqualTo(platform != TargetPlatform.Android));
+            Assert.That(json, Does.Not.Contain("\"set_system_proxy\""));
+            Assert.That(json, Does.Not.Contain("\"platform\""));
+            Assert.That(json, Does.Not.Contain("\"http_proxy\""));
             Assert.That(
-                tunInbound.Platform?.HttpProxy.ServerPort,
-                Is.EqualTo(mixedInbound.ListenPort));
-            Assert.That(json, Does.Contain("\"platform\": {"));
-            Assert.That(json, Does.Contain("\"http_proxy\": {"));
-            Assert.That(json, Does.Contain("\"enabled\": true"));
+                json.Contains("\"type\": \"bridge\"", StringComparison.Ordinal),
+                Is.EqualTo(platform != TargetPlatform.Android));
         });
 
         Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config));
@@ -153,6 +160,47 @@ public sealed class SingboxConfigBuilderTests
         Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config));
     }
 
+    [TestCase(TargetPlatform.Android)]
+    [TestCase(TargetPlatform.Linux)]
+    [TestCase(TargetPlatform.Windows)]
+    public void SingboxApiIsOptionalAndLoopbackOnly(TargetPlatform platform)
+    {
+        SingboxConfig disabled = CreateBuilder().Build(new SingboxBuildRequest(
+            new NodeCatalog([], [], []),
+            platform,
+            new string('a', 64)));
+        SingboxConfig enabled = CreateBuilder(apiEnabled: true).Build(
+            new SingboxBuildRequest(
+                new NodeCatalog([], [], []),
+                platform,
+                new string('b', 64)));
+
+        ApiService api = enabled.Services?.OfType<ApiService>().Single()
+            ?? throw new AssertionException("缺少 sing-box API service");
+        string disabledJson = new ConfigSerializer().Serialize(disabled);
+        string enabledJson = new ConfigSerializer().Serialize(enabled);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(disabled.Services, Is.Null);
+            Assert.That(disabledJson, Does.Not.Contain("\"services\""));
+            Assert.That(enabledJson, Does.Contain("\"type\": \"api\""));
+            Assert.That(enabledJson, Does.Contain("\"listen_port\": 9090"));
+            Assert.That(api.Tag, Is.EqualTo(SingboxTags.ApiService));
+            Assert.That(api.Listen, Is.EqualTo("127.0.0.1"));
+            Assert.That(api.ListenPort, Is.EqualTo(9090));
+            Assert.That(api.AccessControlAllowOrigin, Does.Not.Contain("*"));
+            Assert.That(api.AccessControlAllowPrivateNetwork, Is.False);
+            Assert.That(api.Dashboard?.Enabled, Is.True);
+            Assert.That(api.Dashboard?.Path, Is.EqualTo("dashboard"));
+            Assert.That(
+                api.Dashboard?.HttpClient,
+                Is.EqualTo(HttpClientTags.RuleSetDirect));
+        });
+
+        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(enabled));
+    }
+
     [Test]
     public void ProxyServerDomainsUseFreshIpv4OnlyResolverObjects()
     {
@@ -215,13 +263,16 @@ public sealed class SingboxConfigBuilderTests
     }
 
     private static SingboxConfigBuilder CreateBuilder(
-        TailscaleOptions? options = null)
+        TailscaleOptions? options = null,
+        bool apiEnabled = false)
     {
         var tailscaleOptions = Options.Create(options ?? new TailscaleOptions());
 
         return new SingboxConfigBuilder(
             new TailscaleEndpointBuilder(tailscaleOptions),
             new DnsProfileBuilder(tailscaleOptions),
-            new RouteProfileBuilder(tailscaleOptions));
+            new RouteProfileBuilder(tailscaleOptions),
+            new SingboxApiServiceBuilder(Options.Create(
+                new SingboxApiOptions { Enabled = apiEnabled })));
     }
 }

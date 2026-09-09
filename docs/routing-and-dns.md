@@ -7,6 +7,12 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
 
 `RouteProfileBuilder` 按以下顺序生成顶层规则：
 
+在首个 `sniff` 之前，私网地址和 `223.5.5.5` 两条 `DIRECT` 规则会在非
+Android 平台先尝试 `bridge-out` L3 forwarding，再以原 `DIRECT` 作为 L4
+回退；Linux 还会更早尝试 `auto_redirect` kernel-level `bypass`。这些层仅限
+`tun-in` 并复用原目标条件。依赖嗅探或后续服务优先级的国内直连规则，以及
+仅针对 `mixed-in` 的直连规则，不会提前或添加无效的 L3/bypass 层。
+
 1. 劫持 TUN 和 mixed inbound 的 DNS 流量。
 2. 启用 Tailscale 时，先路由 Tailscale endpoint 声明为首选的目标。
 3. 直连私网地址和 DoH bootstrap 的 IP 地址。

@@ -83,6 +83,68 @@ public sealed class SingboxConfigValidatorTests
     }
 
     [Test]
+    public void ApiServiceMustKeepTheLocalControlPlaneContract()
+    {
+        SingboxConfig config = CreateValidConfig() with
+        {
+            Services =
+            [
+                new ApiService
+                {
+                    Tag = "api",
+                    Listen = "0.0.0.0",
+                    ListenPort = 8080,
+                    AccessControlAllowOrigin = ["*"],
+                    AccessControlAllowPrivateNetwork = true,
+                    Dashboard = new ApiDashboardConfig
+                    {
+                        Enabled = true,
+                        Path = "dashboard",
+                        HttpClient = "missing-http"
+                    }
+                }
+            ]
+        };
+
+        AssertDiagnostics(
+            config,
+            new("SB066", "services[0].listen", "sing-box API 必须仅监听 127.0.0.1。"),
+            new("SB067", "services[0].listen_port", "sing-box API 监听端口必须是 9090。"),
+            new("SB068", "services[0].access_control_allow_origin", "sing-box API 只允许固定的本机 Dashboard origin。"),
+            new("SB069", "services[0].access_control_allow_private_network", "sing-box API 不得允许浏览器私网跨域访问。"),
+            new("SB071", "services[0].dashboard.http_client", "引用了不存在的 HTTP client。"));
+    }
+
+    [Test]
+    public void RoutePreferredByTargetsMustExist()
+    {
+        SingboxConfig valid = CreateValidConfig();
+        SingboxConfig config = valid with
+        {
+            Route = valid.Route with
+            {
+                Rules =
+                [
+                    .. valid.Route.Rules,
+                    new RouteRule
+                    {
+                        PreferredBy = ["missing-target"],
+                        Action = RouteRuleAction.Route,
+                        Outbound = "direct"
+                    }
+                ]
+            }
+        };
+
+        AssertDiagnostics(
+            config,
+            new ConfigDiagnostic(
+                "SB065",
+                "route.rules[1].preferred_by[0]",
+                "引用了不存在的 outbound 或 endpoint。"));
+    }
+
+    [Test]
     public void ProxyServersMustUseIpv4OnlyResolutionAndRejectIpv6Literals()
     {
         SingboxConfig valid = CreateValidConfig();

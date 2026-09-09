@@ -23,16 +23,7 @@ public static class InboundBuilder
                 AutoRedirect = platform == TargetPlatform.Linux ? true : null,
                 StrictRoute = true,
                 Stack = platform == TargetPlatform.Windows ? "mixed" : "system",
-                Mtu = platform == TargetPlatform.Android ? 1400 : null,
-                Platform = new TunPlatformOptions
-                {
-                    HttpProxy = new TunHttpProxyOptions
-                    {
-                        Enabled = true,
-                        Server = MixedListenAddress,
-                        ServerPort = MixedListenPort
-                    }
-                }
+                Mtu = platform == TargetPlatform.Android ? 1400 : null
             },
             new Inbound
             {

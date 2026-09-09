@@ -298,7 +298,8 @@ public sealed class BoxForgeEngineTests
         new SingboxConfigBuilder(
             serviceProvider.GetRequiredService<TailscaleEndpointBuilder>(),
             serviceProvider.GetRequiredService<DnsProfileBuilder>(),
-            serviceProvider.GetRequiredService<RouteProfileBuilder>());
+            serviceProvider.GetRequiredService<RouteProfileBuilder>(),
+            serviceProvider.GetRequiredService<SingboxApiServiceBuilder>());
 
     private sealed class RecordingConfigBuilder(
         ISingboxConfigBuilder inner,

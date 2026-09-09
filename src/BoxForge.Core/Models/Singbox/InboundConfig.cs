@@ -15,18 +15,4 @@ public record Inbound
     [JsonPropertyName("stack")] public string? Stack { get; init; }
     [JsonPropertyName("mtu")] public int? Mtu { get; init; }
     [JsonPropertyName("auto_redirect")] public bool? AutoRedirect { get; init; }
-    [JsonPropertyName("platform")] public TunPlatformOptions? Platform { get; init; }
-}
-
-public record TunPlatformOptions
-{
-    [JsonPropertyName("http_proxy")]
-    public required TunHttpProxyOptions HttpProxy { get; init; }
-}
-
-public record TunHttpProxyOptions
-{
-    [JsonPropertyName("enabled")] public bool Enabled { get; init; }
-    [JsonPropertyName("server")] public required string Server { get; init; }
-    [JsonPropertyName("server_port")] public int ServerPort { get; init; }
 }

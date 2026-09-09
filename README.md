@@ -9,7 +9,10 @@ CLI 会为 Windows、Android 和 Linux 批量生成平台化配置，并在
 - 支持 `trojan`、`vless`、`hysteria2`、`shadowsocks` (`ss`) 和 `anytls`
 - 自动生成地区分组、服务分组、DNS、路由规则和远程 rule-set
 - 强制代理节点与代理业务使用 IPv4，仅允许命中 `geoip-cn` 的公网 IPv6 直连
+- Linux/Windows 为预匹配可安全判断的直连流量提供 `bridge` L3 forwarding，
+  Linux 优先使用 `auto_redirect` kernel-level `bypass`
 - 可选 sing-box 内置 Tailscale endpoint，支持 MagicDNS、子网路由和 Taildrop
+- 可选仅监听本机的 sing-box 1.14 API 与 Dashboard，默认不生成
 - 提供不依赖文件系统的 `IBoxForgeEngine` 内存转换边界
 - 每个 YAML 只解析和转换节点一次，再复用于所有目标平台
 - 输入与平台按固定顺序处理，生成结果具有确定性
@@ -137,6 +140,15 @@ dotnet run --project src/BoxForge.Cli -- generate --platform Linux
 即使开启上述通用开关，Android 配置仍默认关闭 Tailscale。需要在
 Android 端使用时，单独设置
 `BOXFORGE_Tailscale__AndroidEnabled=true`。
+
+sing-box API 默认关闭。需要在生成配置中加入本机 API 与 Dashboard 时设置：
+
+```bash
+BOXFORGE_SingboxApi__Enabled=true \
+dotnet run --project src/BoxForge.Cli -- generate
+```
+
+生成的 API 固定监听 `127.0.0.1:9090`，不接受远程监听配置。
 
 其余标签、目录及 endpoint 字段均由代码固定或按目标平台生成，见
 [配置参考](docs/configuration.md)。

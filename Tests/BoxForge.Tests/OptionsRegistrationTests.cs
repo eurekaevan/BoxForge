@@ -26,6 +26,49 @@ public sealed class OptionsRegistrationTests
     }
 
     [Test]
+    public void SingboxApiIsDisabledByDefault()
+    {
+        using ServiceProvider provider = CreateProvider(
+            new Dictionary<string, string?>());
+
+        SingboxApiOptions options = provider
+            .GetRequiredService<IOptions<SingboxApiOptions>>()
+            .Value;
+
+        Assert.That(options.Enabled, Is.False);
+    }
+
+    [Test]
+    public void SingboxApiCanBeEnabled()
+    {
+        using ServiceProvider provider = CreateProvider(new Dictionary<string, string?>
+        {
+            ["SingboxApi:Enabled"] = "true"
+        });
+
+        SingboxApiOptions options = provider
+            .GetRequiredService<IOptions<SingboxApiOptions>>()
+            .Value;
+
+        Assert.That(options.Enabled, Is.True);
+    }
+
+    [Test]
+    public void InvalidSingboxApiBooleanFailsWhenOptionsAreLoaded()
+    {
+        using ServiceProvider provider = CreateProvider(new Dictionary<string, string?>
+        {
+            ["SingboxApi:Enabled"] = "yes"
+        });
+
+        Assert.That(
+            () => provider.GetRequiredService<IOptions<SingboxApiOptions>>().Value,
+            Throws.TypeOf<FormatException>()
+                .With.Message.EqualTo(
+                    "配置项 'SingboxApi:Enabled' 必须是 true 或 false。"));
+    }
+
+    [Test]
     public void NestedEnabledKeyTakesPriorityOverLegacyKey()
     {
         using ServiceProvider provider = CreateProvider(new Dictionary<string, string?>

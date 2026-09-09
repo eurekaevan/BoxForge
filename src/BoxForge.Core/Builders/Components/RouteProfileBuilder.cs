@@ -153,9 +153,58 @@ public sealed class RouteProfileBuilder(
             new RouteRule { RuleSet = ["geoip-cn"], Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound }
         ]);
 
-        route.Rules.AddRange(rules);
+        route.Rules.AddRange(AddDirectForwardingLayers(rules, platform));
         return route;
     }
+
+    private static IEnumerable<RouteRule> AddDirectForwardingLayers(
+        IEnumerable<RouteRule> rules,
+        TargetPlatform platform)
+    {
+        bool beforeSniff = true;
+        foreach (RouteRule rule in rules)
+        {
+            if (rule.Action == RouteRuleAction.Sniff)
+            {
+                beforeSniff = false;
+            }
+
+            bool supportsL3Direct = beforeSniff
+                && platform != TargetPlatform.Android
+                && rule.Type == null
+                && rule.Action == RouteRuleAction.Route
+                && rule.Outbound == SingboxTags.DirectOutbound
+                && (rule.Inbound == null
+                    || rule.Inbound.Contains(SingboxTags.TunInbound));
+            if (supportsL3Direct)
+            {
+                if (platform == TargetPlatform.Linux)
+                {
+                    yield return CreateBypassRule(rule);
+                }
+
+                yield return CreateBridgeRouteRule(rule);
+            }
+
+            yield return rule;
+        }
+    }
+
+    private static RouteRule CreateBridgeRouteRule(RouteRule directRule)
+        => directRule with
+        {
+            Inbound = [SingboxTags.TunInbound],
+            PreferredBy = [SingboxTags.BridgeOutbound],
+            Outbound = SingboxTags.BridgeOutbound
+        };
+
+    private static RouteRule CreateBypassRule(RouteRule directRule)
+        => directRule with
+        {
+            Inbound = [SingboxTags.TunInbound],
+            Action = RouteRuleAction.Bypass,
+            Outbound = null
+        };
 
     private static RouteRule CreateSniffRule(string network, List<string> sniffers) =>
         new()

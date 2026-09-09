@@ -22,6 +22,7 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
         ValidationContext context = CreateValidationContext(config);
         ValidateTopLevelReferences(config.Route, context);
         ValidateHttpClients(config.HttpClients, context);
+        ValidateServices(config.Services ?? [], context);
         ValidateOutbounds(config.Outbounds, context);
         ValidateInbounds(config.Inbounds, context.Diagnostics);
         ValidateDnsServers(config.Dns.Servers, context);
@@ -70,6 +71,10 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
         ValidateRequiredTags(
             config.Inbounds.Select(inbound => inbound.Tag),
             "inbounds",
+            diagnostics);
+        CollectUniqueRequiredTags(
+            config.Services?.Select(service => service.Tag) ?? [],
+            "services",
             diagnostics);
 
         return new ValidationContext(
@@ -122,6 +127,76 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
                 $"http_clients[{index}].domain_resolver.server",
                 "引用了不存在的 DNS server。",
                 context.Diagnostics);
+        }
+    }
+
+    private static void ValidateServices(
+        List<SingboxService> services,
+        ValidationContext context)
+    {
+        string[] expectedOrigins =
+        [
+            "http://127.0.0.1:9090",
+            "http://localhost:9090"
+        ];
+
+        for (var index = 0; index < services.Count; index++)
+        {
+            if (services[index] is not ApiService api)
+            {
+                continue;
+            }
+
+            string path = $"services[{index}]";
+            if (api.Listen != "127.0.0.1")
+            {
+                context.Diagnostics.Add(new ConfigDiagnostic(
+                    "SB066",
+                    $"{path}.listen",
+                    "sing-box API 必须仅监听 127.0.0.1。"));
+            }
+            if (api.ListenPort != 9090)
+            {
+                context.Diagnostics.Add(new ConfigDiagnostic(
+                    "SB067",
+                    $"{path}.listen_port",
+                    "sing-box API 监听端口必须是 9090。"));
+            }
+            if (!api.AccessControlAllowOrigin.SequenceEqual(
+                    expectedOrigins,
+                    StringComparer.Ordinal))
+            {
+                context.Diagnostics.Add(new ConfigDiagnostic(
+                    "SB068",
+                    $"{path}.access_control_allow_origin",
+                    "sing-box API 只允许固定的本机 Dashboard origin。"));
+            }
+            if (api.AccessControlAllowPrivateNetwork)
+            {
+                context.Diagnostics.Add(new ConfigDiagnostic(
+                    "SB069",
+                    $"{path}.access_control_allow_private_network",
+                    "sing-box API 不得允许浏览器私网跨域访问。"));
+            }
+            if (api.Dashboard == null
+                || !api.Dashboard.Enabled
+                || string.IsNullOrWhiteSpace(api.Dashboard.Path))
+            {
+                context.Diagnostics.Add(new ConfigDiagnostic(
+                    "SB070",
+                    $"{path}.dashboard",
+                    "sing-box API Dashboard 必须启用并设置存储路径。"));
+            }
+            if (api.Dashboard != null)
+            {
+                ValidateReference(
+                    api.Dashboard.HttpClient,
+                    context.HttpClientTags,
+                    "SB071",
+                    $"{path}.dashboard.http_client",
+                    "引用了不存在的 HTTP client。",
+                    context.Diagnostics);
+            }
         }
     }
 
@@ -586,6 +661,20 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
             $"{path}.rule_set",
             diagnostics);
 
+        if (rule.PreferredBy != null)
+        {
+            for (var index = 0; index < rule.PreferredBy.Count; index++)
+            {
+                ValidateReference(
+                    rule.PreferredBy[index],
+                    routeTargets,
+                    "SB065",
+                    $"{path}.preferred_by[{index}]",
+                    "引用了不存在的 outbound 或 endpoint。",
+                    diagnostics);
+            }
+        }
+
         if (rule.Inbound != null)
         {
             for (var index = 0; index < rule.Inbound.Count; index++)
@@ -616,13 +705,14 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
                 $"{path}.outbound",
                 "route 动作必须指定 outbound。"));
         }
-        else if (rule.Action is not (null or RouteRuleAction.Route)
+        else if (rule.Action is not (
+                null or RouteRuleAction.Route or RouteRuleAction.Bypass)
             && rule.Outbound != null)
         {
             diagnostics.Add(new ConfigDiagnostic(
                 "SB037",
                 $"{path}.outbound",
-                "只有 route 动作可以指定 outbound。"));
+                "只有 route 或 bypass 动作可以指定 outbound。"));
         }
 
         if (rule.Strategy.HasValue

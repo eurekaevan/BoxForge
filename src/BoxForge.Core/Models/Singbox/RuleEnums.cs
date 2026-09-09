@@ -17,6 +17,7 @@ public enum DnsRuleAction
 public enum RouteRuleAction
 {
     [JsonStringEnumMemberName("route")] Route,
+    [JsonStringEnumMemberName("bypass")] Bypass,
     [JsonStringEnumMemberName("reject")] Reject,
     [JsonStringEnumMemberName("sniff")] Sniff,
     [JsonStringEnumMemberName("resolve")] Resolve,
