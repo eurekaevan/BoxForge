@@ -104,8 +104,6 @@ Dashboard 下载复用 `http-ruleset-direct` HTTP client；允许的浏览器 or
 
 ## 节点与分组
 
-- 至少有两个真实代理节点时生成全局 `⚡ AUTO` URLTest；候选只包含代理 leaf
-  outbound，不包含 `DIRECT`、selector、bridge 或其他 AUTO。
 - 同一地区至少命中两个节点时，同时生成地区 selector 和对应的地区 AUTO：
   `🇺🇸 US AUTO`、`🇯🇵 JP AUTO`、`🇭🇰 HK AUTO`、`🇸🇬 SG AUTO`。
   地区 AUTO 只测试该地区真实节点；地区 selector 保留逐节点人工选择，并默认
@@ -113,10 +111,10 @@ Dashboard 下载复用 `http-ruleset-direct` HTTP client；允许的浏览器 or
 - URLTest 的 `url`、`interval`、`tolerance`、`idle_timeout` 和
   `interrupt_exist_connections` 均省略，使用 sing-box 官方默认值。现有 selector
   继续生成 `interrupt_exist_connections: true`。
-- 主 `🚀 PROXIES` selector 依次保留地区组、全局 AUTO、单个节点和 `DIRECT`
-  的人工选择能力。存在至少两个节点且美国地区组可用时默认选择 `🇺🇸 US`；
-  没有可用美国组时回退 `⚡ AUTO`。只有一个节点时默认该节点，没有节点时选择
-  `DIRECT`。
+- 主 `🚀 PROXIES` selector 依次保留地区组、单个节点和 `DIRECT` 的人工
+  选择能力，不生成跨地区的全局 URLTest。美国地区组可用时默认选择 `🇺🇸 US`；
+  否则默认第一个已生成的地区组。没有地区组时，有节点则选择第一个节点，
+  没有节点则选择 `DIRECT`。
 - AI、Google、Spotify 和 Microsoft 服务组在美国地区组存在时默认选择它；
   Steam 在香港地区组存在时默认选择它。Service selector 不直接引用地区 AUTO，
   而由地区 selector 默认到 AUTO；没有偏好地区组时仍回退主代理组。

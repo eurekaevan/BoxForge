@@ -24,10 +24,6 @@ public sealed class SingboxConfigBuilder(
 
         var orderedOutbounds = new List<Outbound>();
         orderedOutbounds.Add(profiles.MainOutbound);
-        if (profiles.AutoOutbound != null)
-        {
-            orderedOutbounds.Add(profiles.AutoOutbound);
-        }
         orderedOutbounds.AddRange(profiles.RegionOutbounds);
         orderedOutbounds.AddRange(profiles.RegionAutoOutbounds);
         orderedOutbounds.AddRange(profiles.ServiceOutbounds);

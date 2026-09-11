@@ -10,7 +10,7 @@ namespace BoxForge.Tests;
 public sealed class ProfilePlannerTests
 {
     [Test]
-    public void MultipleNodesCreateLeafOnlyGlobalAndRegionalAutoGroups()
+    public void MultipleNodesCreateLeafOnlyRegionalAutoGroups()
     {
         NodeCatalog nodes = CreateCatalog(
             "美国 01",
@@ -31,17 +31,6 @@ public sealed class ProfilePlannerTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(plan.AutoOutbound, Is.Not.Null);
-            Assert.That(plan.AutoOutbound!.Tag, Is.EqualTo(SingboxTags.AutoProxyGroup));
-            Assert.That(plan.AutoOutbound.Outbounds, Is.EqualTo(nodes.Names));
-            Assert.That(
-                plan.AutoOutbound.Outbounds,
-                Is.All.Matches<string>(leafTags.Contains));
-            Assert.That(plan.AutoOutbound.Url, Is.Null);
-            Assert.That(plan.AutoOutbound.Interval, Is.Null);
-            Assert.That(plan.AutoOutbound.Tolerance, Is.Null);
-            Assert.That(plan.AutoOutbound.IdleTimeout, Is.Null);
-            Assert.That(plan.AutoOutbound.InterruptExistConnections, Is.Null);
             Assert.That(plan.RegionOutbounds, Has.Count.EqualTo(4));
             Assert.That(plan.RegionAutoOutbounds, Has.Count.EqualTo(4));
             Assert.That(
@@ -59,7 +48,7 @@ public sealed class ProfilePlannerTests
             Assert.That(plan.MainOutbound.Default, Is.EqualTo(unitedStates));
             Assert.That(
                 plan.MainOutbound.Outbounds,
-                Does.Contain(SingboxTags.AutoProxyGroup));
+                Does.Not.Contain("⚡ AUTO"));
         });
 
         foreach (SelectorOutbound region in plan.RegionOutbounds)
@@ -103,7 +92,6 @@ public sealed class ProfilePlannerTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(plan.AutoOutbound, Is.Null);
             Assert.That(plan.RegionAutoOutbounds, Is.Empty);
             Assert.That(plan.RegionOutbounds, Is.Empty);
             Assert.That(plan.MainOutbound.Default, Is.EqualTo("美国 01"));
@@ -114,17 +102,37 @@ public sealed class ProfilePlannerTests
     }
 
     [Test]
-    public void MultipleNodesWithoutUnitedStatesRegionFallBackToGlobalAuto()
+    public void MultipleNodesWithoutUnitedStatesPreferTheFirstRegionGroup()
     {
         ProfilePlan plan = ProfilePlanner.Plan(CreateCatalog("日本 01", "日本 02"));
+        string japan = RegionName(RegionId.Japan);
 
         Assert.Multiple(() =>
         {
-            Assert.That(plan.AutoOutbound, Is.Not.Null);
-            Assert.That(plan.MainOutbound.Default, Is.EqualTo(SingboxTags.AutoProxyGroup));
+            Assert.That(plan.MainOutbound.Default, Is.EqualTo(japan));
+            Assert.That(plan.MainOutbound.Outbounds, Does.Contain(japan));
+            Assert.That(plan.MainOutbound.Outbounds, Does.Not.Contain("⚡ AUTO"));
+        });
+    }
+
+    [Test]
+    public void MultipleUnmatchedNodesFallBackToTheFirstLeafNode()
+    {
+        ProfilePlan plan = ProfilePlanner.Plan(CreateCatalog("其他 01", "其他 02"));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(plan.RegionOutbounds, Is.Empty);
+            Assert.That(plan.RegionAutoOutbounds, Is.Empty);
+            Assert.That(plan.MainOutbound.Default, Is.EqualTo("其他 01"));
             Assert.That(
                 plan.MainOutbound.Outbounds,
-                Does.Contain(SingboxTags.AutoProxyGroup));
+                Is.EqualTo(new[]
+                {
+                    "其他 01",
+                    "其他 02",
+                    SingboxTags.DirectOutbound
+                }));
         });
     }
 

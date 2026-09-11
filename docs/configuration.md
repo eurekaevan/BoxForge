@@ -34,7 +34,6 @@ kebab-case，并按对象用途区分。地区组固定为：
 | 类型 | 固定 tag |
 | --- | --- |
 | 主 selector | `🚀 PROXIES` |
-| 全局 URLTest | `⚡ AUTO` |
 | 地区 selector | `🇺🇸 US`、`🇯🇵 JP`、`🇭🇰 HK`、`🇸🇬 SG` |
 | 地区 URLTest | `🇺🇸 US AUTO`、`🇯🇵 JP AUTO`、`🇭🇰 HK AUTO`、`🇸🇬 SG AUTO` |
 | 服务 selector | `🤖 AI`、`🔎 Google`、`🎵 Spotify`、`🎮 Steam`、`🪟 Microsoft` |

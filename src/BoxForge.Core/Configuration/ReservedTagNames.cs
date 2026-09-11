@@ -13,7 +13,6 @@ public static class ReservedTagNames
         string[] fixedTags =
         [
             SingboxTags.MainProxyGroup,
-            SingboxTags.AutoProxyGroup,
             SingboxTags.DirectOutbound,
             SingboxTags.BridgeOutbound,
             SingboxTags.TailscaleEndpoint,

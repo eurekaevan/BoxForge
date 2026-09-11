@@ -14,11 +14,7 @@ public static class ProfilePlanner
             nodes,
             generatedRegions,
             regionAutoOutbounds);
-        UrlTestOutbound? autoOutbound = BuildAutoOutbound(nodes.Names);
-        var mainOutbound = BuildMainOutbound(
-            nodes,
-            regionOutbounds,
-            autoOutbound);
+        var mainOutbound = BuildMainOutbound(nodes, regionOutbounds);
         var serviceOutbounds = BuildServiceOutbounds(nodes, generatedRegions);
         var directOutbound = new DirectOutbound
         {
@@ -28,7 +24,6 @@ public static class ProfilePlanner
 
         return new ProfilePlan(
             mainOutbound,
-            autoOutbound,
             regionOutbounds,
             regionAutoOutbounds,
             serviceOutbounds,
@@ -74,43 +69,31 @@ public static class ProfilePlanner
 
     private static SelectorOutbound BuildMainOutbound(
         NodeCatalog nodes,
-        List<SelectorOutbound> regionOutbounds,
-        UrlTestOutbound? autoOutbound)
+        List<SelectorOutbound> regionOutbounds)
     {
         var groupOptions = regionOutbounds
             .Select(outbound => outbound.Tag)
             .ToList();
-        if (autoOutbound != null)
-        {
-            groupOptions.Add(autoOutbound.Tag);
-        }
         groupOptions.AddRange(nodes.Names);
         groupOptions.Add(SingboxTags.DirectOutbound);
+
+        string fallbackSelection = regionOutbounds.Count > 0
+            ? regionOutbounds[0].Tag
+            : nodes.Names.Count > 0
+                ? nodes.Names[0]
+                : SingboxTags.DirectOutbound;
+        string defaultSelection = regionOutbounds.FirstOrDefault(outbound =>
+                outbound.Tag == GetRegionName(RegionId.UnitedStates))?.Tag
+            ?? fallbackSelection;
 
         return new SelectorOutbound
         {
             Tag = SingboxTags.MainProxyGroup,
             Outbounds = groupOptions,
-            Default = nodes.Names.Count >= 2
-                ? regionOutbounds.FirstOrDefault(outbound =>
-                        outbound.Tag == GetRegionName(RegionId.UnitedStates))?.Tag
-                    ?? autoOutbound!.Tag
-                : nodes.Names.Count == 1
-                    ? nodes.Names[0]
-                    : SingboxTags.DirectOutbound,
+            Default = defaultSelection,
             InterruptExistConnections = true
         };
     }
-
-    private static UrlTestOutbound? BuildAutoOutbound(
-        IReadOnlyList<string> nodeNames) =>
-        nodeNames.Count >= 2
-            ? new UrlTestOutbound
-            {
-                Tag = SingboxTags.AutoProxyGroup,
-                Outbounds = [.. nodeNames]
-            }
-            : null;
 
     private static string GetRegionName(RegionId regionId) =>
         ProfileDefinitions.Regions.Single(definition =>

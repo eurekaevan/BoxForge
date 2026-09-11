@@ -342,7 +342,7 @@ public sealed class SingboxConfigBuilderTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(urlTests, Has.Count.EqualTo(3));
+            Assert.That(urlTests, Has.Count.EqualTo(2));
             Assert.That(
                 urlTests.SelectMany(urlTest => urlTest.Outbounds),
                 Is.All.Matches<string>(leafTags.Contains));
