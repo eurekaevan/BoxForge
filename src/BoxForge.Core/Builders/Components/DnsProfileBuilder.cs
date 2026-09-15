@@ -45,7 +45,7 @@ public sealed class DnsProfileBuilder(
                 AcceptDefaultResolversValue = false
             });
 
-            // sing-box 1.14 直接根据 Tailscale 的 MagicDNS 域名与分流后缀匹配。
+            // sing-box 直接根据 Tailscale 的 MagicDNS 域名与分流后缀匹配。
             dns.Rules.Add(new DnsRule
             {
                 PreferredBy = [SingboxTags.TailscaleDns],

@@ -13,15 +13,11 @@ public sealed class TailscaleEndpointBuilderTests
     [TestCase(TargetPlatform.Android, "Taildrop")]
     [TestCase(TargetPlatform.Windows, "$USERPROFILE\\Downloads\\Taildrop")]
     [TestCase(TargetPlatform.Linux, "$HOME/Downloads/Taildrop")]
-    public void EnabledEndpointUsesThePlatformTaildropDirectory(
+    public void DefaultEndpointUsesThePlatformTaildropDirectoryAndOnDemand(
         TargetPlatform platform,
         string expectedDirectory)
     {
-        TailscaleEndpoint endpoint = BuildEndpoint(new TailscaleOptions
-        {
-            Enabled = true,
-            AndroidEnabled = true
-        }, platform);
+        TailscaleEndpoint endpoint = BuildEndpoint(new TailscaleOptions(), platform);
 
         string json = new ConfigSerializer().Serialize(new SingboxConfig
         {
@@ -38,7 +34,9 @@ public sealed class TailscaleEndpointBuilderTests
                 endpoint.StateDirectory,
                 Is.EqualTo(SingboxTags.TailscaleStateDirectory));
             Assert.That(endpoint.AcceptRoutes, Is.True);
+            Assert.That(endpoint.OnDemand, Is.True);
             Assert.That(endpoint.TaildropDirectory, Is.EqualTo(expectedDirectory));
+            Assert.That(json, Does.Contain("\"on_demand\": true"));
             Assert.That(json, Does.Contain("\"taildrop_directory\":"));
             Assert.That(json, Does.Contain(expectedDirectory.Replace("\\", "\\\\")));
             Assert.That(json, Does.Not.Contain("control_url"));

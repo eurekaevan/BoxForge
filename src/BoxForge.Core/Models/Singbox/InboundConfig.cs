@@ -12,6 +12,5 @@ public record Inbound
     [JsonPropertyName("dns_mode")] public string? DnsMode { get; init; }
     [JsonPropertyName("auto_route")] public bool? AutoRoute { get; init; }
     [JsonPropertyName("strict_route")] public bool? StrictRoute { get; init; }
-    [JsonPropertyName("stack")] public string? Stack { get; init; }
     [JsonPropertyName("auto_redirect")] public bool? AutoRedirect { get; init; }
 }

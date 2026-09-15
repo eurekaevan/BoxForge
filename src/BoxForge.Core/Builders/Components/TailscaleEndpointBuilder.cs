@@ -24,6 +24,7 @@ public sealed class TailscaleEndpointBuilder(IOptions<TailscaleOptions> options)
                 DomainResolver = SingboxTags.BootstrapDns,
                 StateDirectory = SingboxTags.TailscaleStateDirectory,
                 AcceptRoutes = true,
+                OnDemand = true,
                 TaildropDirectory = GetTaildropDirectory(platform)
             }
         ];

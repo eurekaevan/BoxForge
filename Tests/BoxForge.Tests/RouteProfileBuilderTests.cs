@@ -573,7 +573,11 @@ public sealed class RouteProfileBuilderTests
 
     private static RouteProfileBuilder CreateBuilder() =>
         new(
-            Options.Create(new TailscaleOptions()));
+            Options.Create(new TailscaleOptions
+            {
+                Enabled = false,
+                AndroidEnabled = false
+            }));
 
     private static List<RouteRule> DirectRules(RouteConfig route) =>
         route.Rules.Where(rule =>

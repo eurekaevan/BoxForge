@@ -16,5 +16,6 @@ public record TailscaleEndpoint : Endpoint
     [JsonPropertyName("domain_resolver")] public required string DomainResolver { get; init; }
     [JsonPropertyName("state_directory")] public required string StateDirectory { get; init; }
     [JsonPropertyName("accept_routes")] public bool AcceptRoutes { get; init; }
+    [JsonPropertyName("on_demand")] public bool OnDemand { get; init; }
     [JsonPropertyName("taildrop_directory")] public required string TaildropDirectory { get; init; }
 }

@@ -21,8 +21,7 @@ public static class InboundBuilder
                 DnsMode = "hijack",
                 AutoRoute = true,
                 AutoRedirect = platform == TargetPlatform.Linux ? true : null,
-                StrictRoute = true,
-                Stack = platform == TargetPlatform.Windows ? "mixed" : "system"
+                StrictRoute = true
             },
             new Inbound
             {

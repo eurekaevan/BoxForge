@@ -45,6 +45,7 @@ public sealed class SingboxConfigBuilderTests
             Assert.That(json, Does.Not.Contain("\"platform\""));
             Assert.That(json, Does.Not.Contain("\"http_proxy\""));
             Assert.That(json, Does.Not.Contain("\"mtu\""));
+            Assert.That(json, Does.Not.Contain("\"stack\""));
             Assert.That(
                 json.Contains("\"type\": \"bridge\"", StringComparison.Ordinal),
                 Is.EqualTo(platform != TargetPlatform.Android));
@@ -53,24 +54,19 @@ public sealed class SingboxConfigBuilderTests
         Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config));
     }
 
-    [TestCase(TargetPlatform.Android, false)]
-    [TestCase(TargetPlatform.Linux, true)]
-    [TestCase(TargetPlatform.Windows, true)]
-    public void GeneralTailscaleSettingLeavesAndroidDisabledByDefault(
-        TargetPlatform platform,
-        bool expectedEnabled)
+    [TestCase(TargetPlatform.Android)]
+    [TestCase(TargetPlatform.Linux)]
+    [TestCase(TargetPlatform.Windows)]
+    public void AllPlatformsEnableTailscaleByDefault(TargetPlatform platform)
     {
-        SingboxConfig config = CreateBuilder(new TailscaleOptions
-        {
-            Enabled = true
-        }).Build(new SingboxBuildRequest(
+        SingboxConfig config = CreateBuilder().Build(new SingboxBuildRequest(
             new NodeCatalog([], [], []),
             platform,
             new string('b', 64)));
 
-        bool hasEndpoint = config.Endpoints?
+        TailscaleEndpoint? endpoint = config.Endpoints?
             .OfType<TailscaleEndpoint>()
-            .Any() == true;
+            .SingleOrDefault();
         bool hasDnsServer = config.Dns.Servers
             .OfType<TailscaleDnsServer>()
             .Any();
@@ -82,42 +78,48 @@ public sealed class SingboxConfigBuilderTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(hasEndpoint, Is.EqualTo(expectedEnabled));
-            Assert.That(hasDnsServer, Is.EqualTo(expectedEnabled));
-            Assert.That(hasBootstrap, Is.EqualTo(expectedEnabled));
-            Assert.That(hasRoute, Is.EqualTo(expectedEnabled));
-            Assert.That(
-                json.Contains("\"tailscale\"", StringComparison.Ordinal),
-                Is.EqualTo(expectedEnabled));
+            Assert.That(endpoint, Is.Not.Null);
+            Assert.That(endpoint!.OnDemand, Is.True);
+            Assert.That(hasDnsServer, Is.True);
+            Assert.That(hasBootstrap, Is.True);
+            Assert.That(hasRoute, Is.True);
+            Assert.That(json, Does.Contain("\"on_demand\": true"));
         });
 
         Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config));
     }
 
-    [Test]
-    public void AndroidTailscaleCanBeEnabledExplicitly()
+    [TestCase(TargetPlatform.Android)]
+    [TestCase(TargetPlatform.Linux)]
+    [TestCase(TargetPlatform.Windows)]
+    public void AllPlatformsCanDisableTailscaleExplicitly(TargetPlatform platform)
     {
-        SingboxConfig config = CreateBuilder(new TailscaleOptions
+        var options = new TailscaleOptions();
+        if (platform == TargetPlatform.Android)
         {
-            AndroidEnabled = true
-        }).Build(new SingboxBuildRequest(
+            options.AndroidEnabled = false;
+        }
+        else
+        {
+            options.Enabled = false;
+        }
+
+        SingboxConfig config = CreateBuilder(options).Build(new SingboxBuildRequest(
             new NodeCatalog([], [], []),
-            TargetPlatform.Android,
+            platform,
             new string('c', 64)));
 
         Assert.Multiple(() =>
         {
-            Assert.That(
-                config.Endpoints?.OfType<TailscaleEndpoint>().Count(),
-                Is.EqualTo(1));
+            Assert.That(config.Endpoints, Is.Null);
             Assert.That(
                 config.Dns.Servers.OfType<TailscaleDnsServer>().Count(),
-                Is.EqualTo(1));
+                Is.EqualTo(0));
             Assert.That(
                 config.Route.Rules.Any(rule =>
                     rule.PreferredBy?.Contains(
                         SingboxTags.TailscaleEndpoint) == true),
-                Is.True);
+                Is.False);
         });
 
         Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config));

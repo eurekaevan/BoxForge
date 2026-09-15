@@ -1,6 +1,6 @@
 # BoxForge
 
-BoxForge 用于将 Clash YAML 转换为 sing-box 1.14 `config.json`。
+BoxForge 用于将 Clash YAML 转换为 sing-box 1.15 `config.json`。
 CLI 会为 Windows、Android 和 Linux 批量生成平台化配置，并在
 整批成功后一次性替换输出目录；Server 则提供无状态的内存转换 API。
 
@@ -12,8 +12,8 @@ CLI 会为 Windows、Android 和 Linux 批量生成平台化配置，并在
 - TUN 外国公网 IPv6 在 sniff 前直接拒绝，并保留后置 IPv6 correctness fallback
 - Linux/Windows 为 sniff 前快路径及 sniff 后 UDP 国内直连提供 `bridge` L3
   forwarding，Linux 优先使用 `auto_redirect` kernel-level `bypass`
-- 可选 sing-box 内置 Tailscale endpoint，支持 MagicDNS、子网路由和 Taildrop
-- 可选仅监听本机的 sing-box 1.14 API 与 Dashboard，默认不生成
+- 默认生成 sing-box 内置 Tailscale endpoint，支持按需连接、MagicDNS、子网路由和 Taildrop
+- 可选仅监听本机的 sing-box API 与 Dashboard，默认不生成
 - 提供不依赖文件系统的 `IBoxForgeEngine` 内存转换边界
 - 每个 YAML 只解析和转换节点一次，再复用于所有目标平台
 - 输入与平台按固定顺序处理，生成结果具有确定性
@@ -23,8 +23,9 @@ CLI 会为 Windows、Android 和 Linux 批量生成平台化配置，并在
 
 ## 快速开始
 
-需要 .NET SDK 10.0。生成配置面向 sing-box 1.14；使用 Tailscale endpoint
-时需要 sing-box 1.14.0-beta.15 或更高版本。
+需要 .NET SDK 10.0。生成配置面向 sing-box 1.15 系列；当前最低要求为
+`1.15.0-alpha.1`，因为生成的 Tailscale endpoint 使用了该版本新增的
+`on_demand`。
 
 ```bash
 dotnet run --project src/BoxForge.Cli -- generate \
@@ -131,16 +132,17 @@ singboxConfigs/
 
 ## 运行时配置
 
-Tailscale endpoint 默认不生成。Linux 和 Windows 需要启用时设置：
+Tailscale endpoint 默认在三个目标平台生成，并启用 `on_demand`。如需关闭
+Linux 和 Windows 的 Tailscale：
 
 ```bash
-BOXFORGE_Tailscale__Enabled=true \
+BOXFORGE_Tailscale__Enabled=false \
 dotnet run --project src/BoxForge.Cli -- generate --platform Linux
 ```
 
-即使开启上述通用开关，Android 配置仍默认关闭 Tailscale。需要在
-Android 端使用时，单独设置
-`BOXFORGE_Tailscale__AndroidEnabled=true`。
+Android 使用独立开关；如需关闭，设置
+`BOXFORGE_Tailscale__AndroidEnabled=false`。两个开关互不继承，便于只在指定
+平台关闭 endpoint。
 
 sing-box API 默认关闭。需要在生成配置中加入本机 API 与 Dashboard 时设置：
 

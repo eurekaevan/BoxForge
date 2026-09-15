@@ -7,14 +7,14 @@ BoxForge 提供两个 Tailscale 运行时设置，并提供一个全平台 sing-
 
 | 推荐环境变量 | 兼容键 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `BOXFORGE_Tailscale__Enabled` | `BOXFORGE_TailscaleEnabled` | `false` | 是否在 Linux 和 Windows 生成 Tailscale endpoint |
-| `BOXFORGE_Tailscale__AndroidEnabled` | `BOXFORGE_TailscaleAndroidEnabled` | `false` | 是否在 Android 生成 Tailscale endpoint |
+| `BOXFORGE_Tailscale__Enabled` | `BOXFORGE_TailscaleEnabled` | `true` | 是否在 Linux 和 Windows 生成 Tailscale endpoint |
+| `BOXFORGE_Tailscale__AndroidEnabled` | `BOXFORGE_TailscaleAndroidEnabled` | `true` | 是否在 Android 生成 Tailscale endpoint |
 | `BOXFORGE_SingboxApi__Enabled` | 无 | `false` | 是否生成仅监听本机的 sing-box API 与 Dashboard |
 
 `Enabled` 和 `AndroidEnabled` 只接受 `true` 或 `false`（不区分大小写）。
-无法解析的值会使生成失败。Android 不继承桌面端的 `Enabled`：
-即使 `Enabled=true`，只要未显式设置 `AndroidEnabled=true`，Android 产物仍不会
-包含 Tailscale endpoint、Tailscale DNS 或对应路由。
+无法解析的值会使生成失败。两者默认均为 `true`，但 Android 不继承桌面端的
+`Enabled`：将其中一个设为 `false` 只关闭对应平台的 Tailscale endpoint、DNS
+和路由，不改变另一个开关。
 
 `SingboxApi:Enabled` 同样只接受 `true` 或 `false`。启用后，三个目标平台都会生成
 `type: api` service，固定监听 `127.0.0.1:9090`。Dashboard 文件由目标机器上的
@@ -69,6 +69,7 @@ Dashboard 中基于旧地区 tag 保存的选择不会迁移，需要重新选�
 | --- | --- |
 | Tailscale 状态目录 | `tailscale` |
 | `accept_routes` | `true` |
+| `on_demand` | `true` |
 | sing-box API（启用时） | `127.0.0.1:9090` |
 | Dashboard 目录（启用时） | `dashboard` |
 
@@ -77,9 +78,9 @@ Dashboard 中基于旧地区 tag 保存的选择不会迁移，需要重新选�
 
 ## Tailscale 运行说明
 
-在目标平台启用后，生成配置包含一个 Tailscale endpoint。它复用 sing-box 已有的系统
-VPN/TUN，不创建第二个系统 VPN 接口。登录状态保存在 `StateDirectory`，
-不会写入 `config.json`。
+三个目标平台默认都生成一个 Tailscale endpoint。它复用 sing-box 已有的系统
+VPN/TUN，不创建第二个系统 VPN 接口，并通过 `on_demand: true` 允许 endpoint
+在无需使用时断开。登录状态保存在 `StateDirectory`，不会写入 `config.json`。
 
 Tailscale 控制平面域名通过 `dns-bootstrap` 解析器建立初始连接。该解析器
 固定以 IP 字面量 `223.5.5.5` 直连 AliDNS DoH，TLS `server_name` 为

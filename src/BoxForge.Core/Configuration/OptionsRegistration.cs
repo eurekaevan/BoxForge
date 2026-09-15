@@ -15,12 +15,12 @@ public static class OptionsRegistration
                 configuration,
                 "Tailscale:Enabled",
                 "TailscaleEnabled",
-                false);
+                true);
             options.AndroidEnabled = ReadBool(
                 configuration,
                 "Tailscale:AndroidEnabled",
                 "TailscaleAndroidEnabled",
-                false);
+                true);
         });
         services.Configure<SingboxApiOptions>(options =>
         {

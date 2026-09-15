@@ -9,10 +9,30 @@ namespace BoxForge.Tests;
 public sealed class OptionsRegistrationTests
 {
     [Test]
-    public void TailscaleIsDisabledByDefaultOnEveryPlatform()
+    public void TailscaleIsEnabledByDefaultOnEveryPlatform()
     {
         using ServiceProvider provider = CreateProvider(
             new Dictionary<string, string?>());
+
+        TailscaleOptions tailscale = provider
+            .GetRequiredService<IOptions<TailscaleOptions>>()
+            .Value;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(tailscale.Enabled, Is.True);
+            Assert.That(tailscale.AndroidEnabled, Is.True);
+        });
+    }
+
+    [Test]
+    public void TailscaleCanBeDisabledForDesktopAndAndroidIndependently()
+    {
+        using ServiceProvider provider = CreateProvider(new Dictionary<string, string?>
+        {
+            ["Tailscale:Enabled"] = "false",
+            ["Tailscale:AndroidEnabled"] = "false"
+        });
 
         TailscaleOptions tailscale = provider
             .GetRequiredService<IOptions<TailscaleOptions>>()

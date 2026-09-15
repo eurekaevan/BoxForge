@@ -10,15 +10,16 @@ TUN 固定启用 `auto_route`、`strict_route` 和 `dns_mode: hijack`，平台�
 客户端使用，但不生成 `set_system_proxy` 或 `platform.http_proxy`，因此不会由
 sing-box 自动修改系统 HTTP 代理设置。
 
-| 平台 | TUN stack | 其他差异 |
-| --- | --- | --- |
-| Android | `system` | 不为代理出站写入 TCP keepalive |
-| Linux | `system` | `auto_redirect: true`；生成 `bridge-out` L3 直连和 kernel-level `bypass`；代理出站使用 `tcp_keep_alive: 1m` 和 `tcp_keep_alive_interval: 30s` |
-| Windows | `mixed` | 生成 `bridge-out` L3 直连；代理出站使用 `tcp_keep_alive: 1m` 和 `tcp_keep_alive_interval: 30s` |
+| 平台 | 差异 |
+| --- | --- |
+| Android | 不为代理出站写入 TCP keepalive |
+| Linux | `auto_redirect: true`；生成 `bridge-out` L3 直连和 kernel-level `bypass`；代理出站使用 `tcp_keep_alive: 1m` 和 `tcp_keep_alive_interval: 30s` |
+| Windows | 生成 `bridge-out` L3 直连；代理出站使用 `tcp_keep_alive: 1m` 和 `tcp_keep_alive_interval: 30s` |
 
-三个平台均不生成 `mtu`，由 sing-box 按目标平台和运行环境采用默认值。
+三个平台均不生成已弃用的 `stack`，由 sing-box 1.15 使用 sing-tun 自有 TCP/IP
+栈；也不生成 `mtu`，由 sing-box 按目标平台和运行环境采用默认值。
 
-Linux 和 Windows 额外生成 sing-box 1.14 `bridge` outbound，并按规则可判定的
+Linux 和 Windows 额外生成 sing-box 1.15 `bridge` outbound，并按规则可判定的
 阶段生成两类 L3 forwarding 层：
 
 - 私网地址和 `223.5.5.5` 在首个 `sniff` 之前预匹配；原 `DIRECT` 前增加带
@@ -42,7 +43,8 @@ TCP 和 UDP 无法完成 sniff 等不能使用 L3 forwarding 的情况。仅属�
 `bridge` 需要系统权限；Windows 依赖 WinDivert，Linux 的 `bypass` 依赖已启用的
 `auto_redirect`。Android 不生成这些字段。
 
-在目标平台启用 Tailscale 时，`taildrop_directory` 始终按目标平台生成：Android 使用
+三个平台默认生成 Tailscale endpoint，并启用 `on_demand: true`。启用时，
+`taildrop_directory` 始终按目标平台生成：Android 使用
 SFA 工作目录下的 `Taildrop`，Windows 使用
 `$USERPROFILE\Downloads\Taildrop`，Linux 使用 `$HOME/Downloads/Taildrop`。环境
 变量由目标机器上的 sing-box 在运行时展开。
@@ -85,7 +87,7 @@ SFA 工作目录下的 `Taildrop`，Windows 使用
   该 HTTP client 使用本地 DNS 的 `ipv4_only` 解析，不经 `DIRECT` outbound
   二次解析。
 - 广告过滤使用 SagerNet 的 `geosite-category-ads-all.srs`。
-- 同源的 SagerNet geosite rule-set 使用 sing-box 1.14 多 tag 与 `{tag}` URL
+- 同源的 SagerNet geosite rule-set 使用 sing-box 1.15 多 tag 与 `{tag}` URL
   模板合并声明；各 DNS 和路由规则仍按原 tag 单独引用。
 - mixed inbound 的代理业务域名和最终代理回退域名在路由前执行
   `resolve` + `ipv4_only`。公网 IPv6 只有命中 `geoip-cn` 时才进入 `DIRECT`；

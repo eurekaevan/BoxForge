@@ -242,7 +242,8 @@ public sealed class DnsProfileBuilderTests
         new(
             Options.Create(new TailscaleOptions
             {
-                Enabled = tailscaleEnabled
+                Enabled = tailscaleEnabled,
+                AndroidEnabled = tailscaleEnabled
             }));
 
     [TestCase(TargetPlatform.Android)]
