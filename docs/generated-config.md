@@ -50,6 +50,9 @@ SFA 工作目录下的 `Taildrop`，Windows 使用
 ## DNS 与持久化缓存
 
 - 生成配置包含官方 `$schema`。
+- DNS 查询默认超时为 `5s`；国内首选 Tencent（`1s`），失败后使用 AliDNS；
+  远程首选 Cloudflare（`2s`），失败后使用 Google DNS。备用查询继承 `5s`，
+  各组按顺序执行，不启用 race 或 speculative；详见 [DNS 顺序与回退](routing-and-dns.md)。
 - DNS 默认使用 `prefer_ipv4`，缓存容量为 `4096`，并启用超时为 `3d` 的
   optimistic 缓存和 reverse mapping。
 - 代理节点域名固定通过 `dns-node` 以 `ipv4_only` 解析；所有代理出站的
@@ -119,6 +122,6 @@ Dashboard 下载复用 `http-ruleset-direct` HTTP client；允许的浏览器 or
   Steam 在香港地区组存在时默认选择它。Service selector 不直接引用地区 AUTO，
   而由地区 selector 默认到 AUTO；没有偏好地区组时仍回退主代理组。
 - 真实代理节点保留订阅名称，但不得与 BoxForge 固定分组、内部基础设施、DNS
-  race 或 rule-set tag 冲突；冲突会在节点转换阶段直接报错，不自动改名。
+  响应或 rule-set tag 冲突；冲突会在节点转换阶段直接报错，不自动改名。
 
 [返回 README](../README.md)

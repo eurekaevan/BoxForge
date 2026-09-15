@@ -52,12 +52,11 @@ kebab-case，并按对象用途区分。地区组固定为：
 | rule-set HTTP client | `http-ruleset-direct` |
 | sing-box API service | `api` |
 
-DNS evaluate/respond 的内部响应 tag 使用 `race-场景-提供方`：
-`race-google-google`、`race-google-cloudflare`、`race-cn-tencent`、
-`race-cn-alidns`、`race-global-google`、`race-global-cloudflare`。
+DNS evaluate/respond 的首选响应 tag 使用 `response-场景-提供方`：
+`response-google-cloudflare`、`response-cn-tencent`、`response-global-cloudflare`。
 SagerNet `geosite-*` 和 `geoip-*` tag 保持上游文件名，不参与本地美化。
 
-订阅中的真实节点保留来源名称。若节点名与任一 BoxForge 固定 tag、DNS race tag
+订阅中的真实节点保留来源名称。若节点名与任一 BoxForge 固定 tag、DNS 响应 tag
 或 rule-set tag 冲突，转换会直接报告明确错误，不会静默追加后缀。这样可以避免
 订阅更新后 selector 引用或已保存选择发生漂移。
 

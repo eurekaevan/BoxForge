@@ -5,6 +5,7 @@ namespace BoxForge.Models.Singbox;
 
 public record DnsConfig
 {
+    [JsonPropertyName("timeout")] public string Timeout { get; init; } = "5s";
     [JsonPropertyName("servers")] public List<DnsServer> Servers { get; init; } = [];
     [JsonPropertyName("rules")] public List<DnsRule> Rules { get; init; } = [];
     [JsonPropertyName("final")] public string Final { get; init; } = SingboxTags.RemoteDns;
@@ -74,6 +75,7 @@ public record TailscaleDnsServer : DnsServer
 
 public record DnsRule
 {
+    [JsonPropertyName("timeout")] public string? Timeout { get; init; }
     [JsonPropertyName("rule_set")] public List<string>? RuleSet { get; init; }
     [JsonPropertyName("domain")] public List<string>? Domain { get; init; }
     [JsonPropertyName("domain_suffix")] public List<string>? DomainSuffix { get; init; }

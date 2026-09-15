@@ -63,24 +63,33 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
 3. 广告域名直接返回 `NXDOMAIN`。
 4. 所有代理服务 rule-set 的 AAAA 请求返回空 `NOERROR`。这条规则位于
    Google 和国内 DNS 规则之前，避免 rule-set 交集返回代理业务 IPv6。
-5. `geosite-google` 的非 AAAA 查询并发评估 Google DNS 和 Cloudflare DNS，
+5. `geosite-google` 的非 AAAA 查询首选 Cloudflare DNS，失败后使用 Google DNS，
    两者都通过主代理组。
-6. `geosite-cn` 和 `geosite-category-pt` 并发评估 Tencent DNS 和 AliDNS。
+6. `geosite-cn` 和 `geosite-category-pt` 首选 Tencent DNS，失败后使用 AliDNS。
 7. 未命中上述国内规则的 AAAA 请求返回空 `NOERROR`。
-8. 其他查询并发评估 Google DNS 和 Cloudflare DNS。
+8. 其他查询首选 Cloudflare DNS，失败后使用 Google DNS。
 
 这保证 Google 以及其他代理业务不会先命中国内 DNS 规则而获得 AAAA。
 国内域名仍允许 A/AAAA；其他 AAAA 被空答复，路由层再拒绝应用内置 DoH、
 缓存或硬编码地址带来的非国内公网 IPv6。
 
-## DNS 并发评估语义
+## DNS 顺序回退语义
 
-每组 DNS 竞速都生成两个 `evaluate` 和配套的 `respond`/`route` 规则：
+每组生成一个首选 `evaluate`、两个 `respond` 和一个备用 `route`，
+不生成 `race` 或 `speculative`：
 
-- 最快返回的有效地址立即胜出。
-- 两者都没有有效地址时，才接受任一 `NXDOMAIN`。
-- 仍无可用响应时，优先复用第二台已返回的错误响应；第二台尚无响应时，
-  最后向它执行一次普通 route。
+- 首选返回 `NOERROR`（包括 NODATA 和 TXT/HTTPS 等非地址答案）或 `NXDOMAIN`
+  时直接返回，不启动备用查询。NXDOMAIN 不再等待另一家上游确认。
+- 首选超时、传输失败或返回其他 rcode（如 SERVFAIL/REFUSED）时，才查询备用。
+  备用的响应或错误直接结束该组，不重复查询，也不落入其他 DNS 分流。
+- `dns.timeout = 5s` 是每次上游查询的默认超时。国内首选覆盖为 `1s`，
+  两个远程场景首选覆盖为 `2s`；备用继承 `5s`。因此两次都超时时，
+  整条链可能约需 `6s` / `7s`，并非全链共享 5s 截止时间。
+- 正常 TTL 缓存与 optimistic 缓存保持启用；命中缓存不代表发生了上游查询。
+  显式指定 server 的节点、Tailscale 或内部解析不经过这些回退链。
+
+字段依据：[DNS timeout](https://sing-box.sagernet.org/configuration/dns/#timeout_1)、
+[evaluate / respond](https://sing-box.sagernet.org/configuration/dns/rule_action/)。
 
 `RouteProfileBuilderTests` 和 `DnsProfileBuilderTests` 会校验关键规则的实际索引。
 修改服务定义或国内规则时，应同时更新实现、顺序测试和本文。

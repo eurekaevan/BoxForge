@@ -92,21 +92,21 @@ public sealed class DnsProfileBuilder(
             Rcode = DnsResponseCode.NoError
         });
 
-        AddRace(
+        AddPrimaryFallback(
             dns.Rules,
             ["geosite-google"],
-            SingboxTags.RemoteGoogleDns,
             SingboxTags.RemoteDns,
-            DnsRaceTags.GoogleGoogle,
-            DnsRaceTags.GoogleCloudflare);
+            SingboxTags.RemoteGoogleDns,
+            DnsResponseTags.GooglePrimary,
+            "2s");
 
-        AddRace(
+        AddPrimaryFallback(
             dns.Rules,
             ["geosite-cn", "geosite-category-pt"],
             SingboxTags.LocalTencentDns,
             SingboxTags.LocalDns,
-            DnsRaceTags.ChinaTencent,
-            DnsRaceTags.ChinaAliDns);
+            DnsResponseTags.ChinaPrimary,
+            "1s");
 
         // 国内域名先由本地 DNS 返回 A/AAAA；其余 AAAA 仍返回空结果，
         // 防止非国内公网 IPv6 绕过后续的 IPv6 拒绝策略。
@@ -117,13 +117,13 @@ public sealed class DnsProfileBuilder(
             Rcode = DnsResponseCode.NoError
         });
 
-        AddRace(
+        AddPrimaryFallback(
             dns.Rules,
             null,
-            SingboxTags.RemoteGoogleDns,
             SingboxTags.RemoteDns,
-            DnsRaceTags.GlobalGoogle,
-            DnsRaceTags.GlobalCloudflare);
+            SingboxTags.RemoteGoogleDns,
+            DnsResponseTags.GlobalPrimary,
+            "2s");
         return dns;
     }
 
@@ -139,70 +139,41 @@ public sealed class DnsProfileBuilder(
             TlsConfig = new DnsTlsConfig { ServerName = serverName }
         };
 
-    private static void AddRace(
+    private static void AddPrimaryFallback(
         List<DnsRule> rules,
         List<string>? ruleSet,
-        string firstServer,
-        string secondServer,
-        string firstResponseTag,
-        string secondResponseTag)
+        string primaryServer,
+        string fallbackServer,
+        string responseTag,
+        string primaryTimeout)
     {
         rules.Add(new DnsRule
         {
             RuleSet = ruleSet,
             Action = DnsRuleAction.Evaluate,
-            Server = firstServer,
-            Tag = firstResponseTag
+            Server = primaryServer,
+            Tag = responseTag,
+            Timeout = primaryTimeout
         });
         rules.Add(new DnsRule
         {
             RuleSet = ruleSet,
-            MatchResponse = firstResponseTag,
-            IpAcceptAny = true,
-            Action = DnsRuleAction.Respond,
-            Race = true
-        });
-        rules.Add(new DnsRule
-        {
-            RuleSet = ruleSet,
-            Action = DnsRuleAction.Evaluate,
-            Server = secondServer,
-            Tag = secondResponseTag,
-            Speculative = true
-        });
-        rules.Add(new DnsRule
-        {
-            RuleSet = ruleSet,
-            MatchResponse = secondResponseTag,
-            IpAcceptAny = true,
-            Action = DnsRuleAction.Respond,
-            Race = true
-        });
-        rules.Add(new DnsRule
-        {
-            RuleSet = ruleSet,
-            MatchResponse = firstResponseTag,
-            ResponseRcode = DnsResponseCode.NameError,
+            MatchResponse = responseTag,
+            ResponseRcode = DnsResponseCode.NoError,
             Action = DnsRuleAction.Respond
         });
         rules.Add(new DnsRule
         {
             RuleSet = ruleSet,
-            MatchResponse = secondResponseTag,
+            MatchResponse = responseTag,
             ResponseRcode = DnsResponseCode.NameError,
-            Action = DnsRuleAction.Respond
-        });
-        rules.Add(new DnsRule
-        {
-            RuleSet = ruleSet,
-            MatchResponse = secondResponseTag,
             Action = DnsRuleAction.Respond
         });
         rules.Add(new DnsRule
         {
             RuleSet = ruleSet,
             Action = DnsRuleAction.Route,
-            Server = secondServer
+            Server = fallbackServer
         });
     }
 }

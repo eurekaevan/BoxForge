@@ -25,7 +25,7 @@ public sealed class DnsProfileBuilderTests
     }
 
     [Test]
-    public void DnsServersAndRaceResponsesUseSemanticTags()
+    public void DnsServersAndPrimaryResponsesUseSemanticTags()
     {
         DnsConfig dns = CreateBuilder().Build(
             new NodeCatalog([], [], []),
@@ -48,12 +48,9 @@ public sealed class DnsProfileBuilderTests
                     .Select(rule => rule.Tag),
                 Is.EqualTo(new[]
                 {
-                    "race-google-google",
-                    "race-google-cloudflare",
-                    "race-cn-tencent",
-                    "race-cn-alidns",
-                    "race-global-google",
-                    "race-global-cloudflare"
+                    "response-google-cloudflare",
+                    "response-cn-tencent",
+                    "response-global-cloudflare"
                 }));
         });
     }
@@ -146,7 +143,7 @@ public sealed class DnsProfileBuilderTests
     }
 
     [Test]
-    public void GoogleRemoteDnsRacePrecedesDomesticDnsRace()
+    public void GoogleRemoteDnsPrecedesDomesticDns()
     {
         DnsConfig dns = CreateBuilder().Build(
             new NodeCatalog([], [], []),
@@ -160,12 +157,12 @@ public sealed class DnsProfileBuilderTests
             && rule.Action == DnsRuleAction.Predefined);
         int googleFirstIndex = dns.Rules.FindIndex(rule =>
             rule.Action == DnsRuleAction.Evaluate
-            && rule.Tag == DnsRaceTags.GoogleGoogle);
+            && rule.Tag == DnsResponseTags.GooglePrimary);
         int googleLastIndex = dns.Rules.FindLastIndex(rule =>
             rule.RuleSet?.Contains("geosite-google") == true);
         int domesticFirstIndex = dns.Rules.FindIndex(rule =>
             rule.Action == DnsRuleAction.Evaluate
-            && rule.Tag == DnsRaceTags.ChinaTencent);
+            && rule.Tag == DnsResponseTags.ChinaPrimary);
 
         Assert.Multiple(() =>
         {
@@ -184,7 +181,7 @@ public sealed class DnsProfileBuilderTests
                 Is.EqualTo(new[] { "geosite-google" }));
             Assert.That(
                 dns.Rules[googleFirstIndex].Server,
-                Is.EqualTo(SingboxTags.RemoteGoogleDns));
+                Is.EqualTo(SingboxTags.RemoteDns));
             Assert.That(
                 dns.Rules[serviceAaaaBlockIndex].RuleSet,
                 Is.EquivalentTo(ProfileDefinitions.Services
@@ -203,7 +200,7 @@ public sealed class DnsProfileBuilderTests
             rule.Domain?.Contains("node.example.cn") == true);
         int domesticFirstIndex = dns.Rules.FindIndex(rule =>
             rule.Action == DnsRuleAction.Evaluate
-            && rule.Tag == DnsRaceTags.ChinaTencent);
+            && rule.Tag == DnsResponseTags.ChinaPrimary);
         int domesticLastIndex = dns.Rules.FindLastIndex(rule =>
             rule.RuleSet?.Contains("geosite-cn") == true);
         int otherAaaaBlockIndex = dns.Rules.FindIndex(rule =>
@@ -216,7 +213,7 @@ public sealed class DnsProfileBuilderTests
             && rule.RuleSet != null);
         int globalFirstIndex = dns.Rules.FindIndex(rule =>
             rule.Action == DnsRuleAction.Evaluate
-            && rule.Tag == DnsRaceTags.GlobalGoogle);
+            && rule.Tag == DnsResponseTags.GlobalPrimary);
 
         Assert.Multiple(() =>
         {
@@ -247,4 +244,65 @@ public sealed class DnsProfileBuilderTests
             {
                 Enabled = tailscaleEnabled
             }));
+
+    [TestCase(TargetPlatform.Android)]
+    [TestCase(TargetPlatform.Linux)]
+    [TestCase(TargetPlatform.Windows)]
+    public void PrimaryFallbackChainsUseBoundedSequentialQueries(TargetPlatform platform)
+    {
+        DnsConfig dns = CreateBuilder().Build(new NodeCatalog([], [], []), platform);
+        var expected = new[]
+        {
+            (DnsResponseTags.GooglePrimary, SingboxTags.RemoteDns, SingboxTags.RemoteGoogleDns, "2s"),
+            (DnsResponseTags.ChinaPrimary, SingboxTags.LocalTencentDns, SingboxTags.LocalDns, "1s"),
+            (DnsResponseTags.GlobalPrimary, SingboxTags.RemoteDns, SingboxTags.RemoteGoogleDns, "2s")
+        };
+
+        Assert.That(dns.Timeout, Is.EqualTo("5s"));
+        Assert.That(dns.Rules.Count(rule => rule.Action == DnsRuleAction.Evaluate), Is.EqualTo(3));
+        foreach (var (tag, primary, fallback, timeout) in expected)
+        {
+            int index = dns.Rules.FindIndex(rule => rule.Tag == tag);
+            DnsRule evaluate = dns.Rules[index];
+            DnsRule success = dns.Rules[index + 1];
+            DnsRule negative = dns.Rules[index + 2];
+            DnsRule backup = dns.Rules[index + 3];
+            Assert.Multiple(() =>
+            {
+                Assert.That(evaluate.Action, Is.EqualTo(DnsRuleAction.Evaluate));
+                Assert.That(evaluate.Server, Is.EqualTo(primary));
+                Assert.That(evaluate.Timeout, Is.EqualTo(timeout));
+                Assert.That(success.MatchResponse, Is.EqualTo(tag));
+                Assert.That(success.ResponseRcode, Is.EqualTo(DnsResponseCode.NoError));
+                Assert.That(success.IpAcceptAny, Is.Null, "Accept NODATA and non-address records without fallback.");
+                Assert.That(success.Action, Is.EqualTo(DnsRuleAction.Respond));
+                Assert.That(negative.MatchResponse, Is.EqualTo(tag));
+                Assert.That(negative.ResponseRcode, Is.EqualTo(DnsResponseCode.NameError));
+                Assert.That(negative.Action, Is.EqualTo(DnsRuleAction.Respond));
+                Assert.That(backup.Action, Is.EqualTo(DnsRuleAction.Route));
+                Assert.That(backup.Server, Is.EqualTo(fallback));
+                Assert.That(backup.Timeout, Is.Null, "Fallback inherits the global query timeout.");
+                Assert.That(backup.MatchResponse, Is.Null, "Transport failures must also reach fallback.");
+                Assert.That(success.RuleSet, Is.EqualTo(evaluate.RuleSet));
+                Assert.That(negative.RuleSet, Is.EqualTo(evaluate.RuleSet));
+                Assert.That(backup.RuleSet, Is.EqualTo(evaluate.RuleSet));
+            });
+        }
+
+        string json = new ConfigSerializer().Serialize(new SingboxConfig { Dns = dns });
+        using JsonDocument document = JsonDocument.Parse(json);
+        JsonElement serializedDns = document.RootElement.GetProperty("dns");
+        Assert.That(serializedDns.GetProperty("timeout").GetString(), Is.EqualTo("5s"));
+        foreach (JsonElement rule in serializedDns.GetProperty("rules").EnumerateArray())
+        {
+            Assert.That(rule.TryGetProperty("race", out _), Is.False);
+            Assert.That(rule.TryGetProperty("speculative", out _), Is.False);
+            if (rule.GetProperty("action").GetString() == "evaluate")
+            {
+                string? server = rule.GetProperty("server").GetString();
+                Assert.That(rule.GetProperty("timeout").GetString(),
+                    Is.EqualTo(server == SingboxTags.LocalTencentDns ? "1s" : "2s"));
+            }
+        }
+    }
 }
