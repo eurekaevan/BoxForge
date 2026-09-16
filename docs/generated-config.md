@@ -24,12 +24,12 @@ Linux 和 Windows 额外生成 sing-box 1.15 `bridge` outbound，并按规则可
 
 - 私网地址和 `223.5.5.5` 在首个 `sniff` 之前预匹配；原 `DIRECT` 前增加带
   `preferred_by: bridge-out` 门控的 L3 route。
-- 国内 IPv6、国内 UDP/443、`geosite-cn`/`geosite-category-pt` 和 `geoip-cn`
+- 国内 IPv6、国内 UDP/443、`cn`/`pt` 和 `cnip`
   在 UDP sniff 之后、各自原始规则所在位置增加仅匹配 `tun-in` + UDP 的 L3
   route。它们不会被搬到 sniff 之前，因此仍保留原有服务优先级和域名嗅探语义。
 
 两条 pre-sniff DIRECT 之后还会生成仅限 `tun-in` 的外国公网 IPv6 早期拒绝：
-`ip_version: 6` 与反向 `geoip-cn` rule-set 必须同时匹配。该规则在 TCP/UDP
+`ip_version: 6` 与反向 `cnip` rule-set 必须同时匹配。该规则在 TCP/UDP
 sniff 之前终止明显不允许的 TUN 流量；中国 IPv6 会继续进入后续 QUIC/服务
 优先级和国内直连规则。后置的全局 `ip_version: 6` 拒绝仍然保留，用于 mixed
 域名解析及其他无法在 Pre-match 阶段判定的路径。
@@ -86,11 +86,20 @@ SFA 工作目录下的 `Taildrop`，Windows 使用
 - 远程 rule-set 每天更新，通过默认 HTTP client `http-ruleset-direct` 直接拨号下载；
   该 HTTP client 使用本地 DNS 的 `ipv4_only` 解析，不经 `DIRECT` outbound
   二次解析。
-- 广告过滤使用 SagerNet 的 `geosite-category-ads-all.srs`。
-- 同源的 SagerNet geosite rule-set 使用 sing-box 1.15 多 tag 与 `{tag}` URL
-  模板合并声明；各 DNS 和路由规则仍按原 tag 单独引用。
+- 规则集来源与内部 tag 的映射如下；代码中的 DNS/route 引用只使用内部 tag，
+  不依赖上游文件名。九个 tag 均唯一声明并按 `1d` 更新。
+
+  | 来源 | 内部 tag → 文件名 | URL 基础路径 |
+  | --- | --- | --- |
+  | DustinWin release | `ads→ads.srs`、`ai→ai.srs`、`spotify→spotify.srs`、`games→games.srs`、`cn→cn.srs`、`cnip→cnip.srs` | `https://github.com/DustinWin/ruleset_geodata/releases/download/sing-box-ruleset/` |
+  | MetaCubeX `sing` 分支 | `google→google.srs`、`microsoft→microsoft.srs`、`pt→category-pt.srs` | `https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/` |
+
+  DustinWin 同名文件共用 `{tag}.srs` 模板；MetaCubeX 的文件逐项声明。
+  广告过滤使用 `ads`；Games 使用 `games`，覆盖范围由上游规则维护，
+  不再限于单一游戏平台。DustinWin 的 `ads` 来源于 anti-AD，`games` 明确排除
+  `games-cn`；两者的实际命中范围与迁移前的单项分类不同。
 - mixed inbound 的代理业务域名和最终代理回退域名在路由前执行
-  `resolve` + `ipv4_only`。公网 IPv6 只有命中 `geoip-cn` 时才进入 `DIRECT`；
+  `resolve` + `ipv4_only`。公网 IPv6 只有命中 `cnip` 时才进入 `DIRECT`；
   其他公网 IPv6 使用原生 `ip_version: 6` 匹配并在所有代理业务路由之前被
   拒绝。私网和 Tailscale 路径不受这条公网限制影响。
 - 未被前置 Tailscale、私网或 bootstrap 直连规则处理的 UDP 流量会同时嗅探
@@ -121,7 +130,7 @@ Dashboard 下载复用 `http-ruleset-direct` HTTP client；允许的浏览器 or
   否则默认第一个已生成的地区组。没有地区组时，有节点则选择第一个节点，
   没有节点则选择 `DIRECT`。
 - AI、Google、Spotify 和 Microsoft 服务组在美国地区组存在时默认选择它；
-  Steam 在香港地区组存在时默认选择它。Service selector 不直接引用地区 AUTO，
+  Games 在香港地区组存在时默认选择它。Service selector 不直接引用地区 AUTO，
   而由地区 selector 默认到 AUTO；没有偏好地区组时仍回退主代理组。
 - 真实代理节点保留订阅名称，但不得与 BoxForge 固定分组、内部基础设施、DNS
   响应或 rule-set tag 冲突；冲突会在节点转换阶段直接报错，不自动改名。

@@ -19,16 +19,16 @@ public static partial class ProfileDefinitions
         new(
             ServiceGroupNames.Ai,
             RegionId.UnitedStates,
-            ["geosite-category-ai-!cn"],
+            [RuleSetTags.Ai],
             PrecedesDomesticRoutes: true),
         new(
             ServiceGroupNames.Google,
             RegionId.UnitedStates,
-            ["geosite-google"],
+            [RuleSetTags.Google],
             PrecedesDomesticRoutes: true),
-        new(ServiceGroupNames.Spotify, RegionId.UnitedStates, ["geosite-spotify"]),
-        new(ServiceGroupNames.Steam, RegionId.HongKong, ["geosite-steam"]),
-        new(ServiceGroupNames.Microsoft, RegionId.UnitedStates, ["geosite-microsoft"])
+        new(ServiceGroupNames.Spotify, RegionId.UnitedStates, [RuleSetTags.Spotify]),
+        new(ServiceGroupNames.Games, RegionId.HongKong, [RuleSetTags.Games]),
+        new(ServiceGroupNames.Microsoft, RegionId.UnitedStates, [RuleSetTags.Microsoft])
     ];
 
     [GeneratedRegex(

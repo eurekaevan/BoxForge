@@ -114,7 +114,7 @@ public sealed class DnsProfileBuilderTests
             && rule.Server == SingboxTags.NodeResolverDns);
         int adBlockingIndex = dns.Rules.FindIndex(rule =>
             rule.RuleSet?.SequenceEqual(
-                [AdBlockingRuleSets.SagerAdsTag]) == true);
+                [RuleSetTags.Ads]) == true);
         DnsRule adBlockingRule = dns.Rules[adBlockingIndex];
 
         string json = new ConfigSerializer().Serialize(new SingboxConfig
@@ -136,7 +136,7 @@ public sealed class DnsProfileBuilderTests
             Assert.That(
                 serializedAdBlockingRule.GetProperty("rcode").GetString(),
                 Is.EqualTo("NXDOMAIN"));
-            Assert.That(json, Does.Contain(AdBlockingRuleSets.SagerAdsTag));
+            Assert.That(json, Does.Contain(RuleSetTags.Ads));
             Assert.That(json, Does.Not.Contain("anti-ad"));
             Assert.That(json, Does.Not.Contain("adguard-dns"));
         });
@@ -150,16 +150,16 @@ public sealed class DnsProfileBuilderTests
             TargetPlatform.Linux);
 
         int adBlockingIndex = dns.Rules.FindIndex(rule =>
-            rule.RuleSet?.Contains(AdBlockingRuleSets.SagerAdsTag) == true);
+            rule.RuleSet?.Contains(RuleSetTags.Ads) == true);
         int serviceAaaaBlockIndex = dns.Rules.FindIndex(rule =>
             rule.QueryType?.Contains("AAAA") == true
-            && rule.RuleSet?.Contains("geosite-google") == true
+            && rule.RuleSet?.Contains("google") == true
             && rule.Action == DnsRuleAction.Predefined);
         int googleFirstIndex = dns.Rules.FindIndex(rule =>
             rule.Action == DnsRuleAction.Evaluate
             && rule.Tag == DnsResponseTags.GooglePrimary);
         int googleLastIndex = dns.Rules.FindLastIndex(rule =>
-            rule.RuleSet?.Contains("geosite-google") == true);
+            rule.RuleSet?.Contains("google") == true);
         int domesticFirstIndex = dns.Rules.FindIndex(rule =>
             rule.Action == DnsRuleAction.Evaluate
             && rule.Tag == DnsResponseTags.ChinaPrimary);
@@ -178,7 +178,7 @@ public sealed class DnsProfileBuilderTests
                 Is.Ordered.And.All.GreaterThanOrEqualTo(0));
             Assert.That(
                 dns.Rules[googleFirstIndex].RuleSet,
-                Is.EqualTo(new[] { "geosite-google" }));
+                Is.EqualTo(new[] { "google" }));
             Assert.That(
                 dns.Rules[googleFirstIndex].Server,
                 Is.EqualTo(SingboxTags.RemoteDns));
@@ -202,7 +202,7 @@ public sealed class DnsProfileBuilderTests
             rule.Action == DnsRuleAction.Evaluate
             && rule.Tag == DnsResponseTags.ChinaPrimary);
         int domesticLastIndex = dns.Rules.FindLastIndex(rule =>
-            rule.RuleSet?.Contains("geosite-cn") == true);
+            rule.RuleSet?.Contains("cn") == true);
         int otherAaaaBlockIndex = dns.Rules.FindIndex(rule =>
             rule.QueryType?.Contains("AAAA") == true
             && rule.Action == DnsRuleAction.Predefined

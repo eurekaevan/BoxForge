@@ -30,10 +30,10 @@ public static class ReservedTagNames
             DnsResponseTags.GooglePrimary,
             DnsResponseTags.ChinaPrimary,
             DnsResponseTags.GlobalPrimary,
-            AdBlockingRuleSets.SagerAdsTag,
-            "geosite-category-pt",
-            "geosite-cn",
-            "geoip-cn"
+            RuleSetTags.Ads,
+            RuleSetTags.Pt,
+            RuleSetTags.Cn,
+            RuleSetTags.CnIp
         ];
 
         var tags = new HashSet<string>(fixedTags, StringComparer.Ordinal);

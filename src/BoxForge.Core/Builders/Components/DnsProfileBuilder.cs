@@ -71,14 +71,14 @@ public sealed class DnsProfileBuilder(
         {
             RuleSet =
             [
-                AdBlockingRuleSets.SagerAdsTag
+                RuleSetTags.Ads
             ],
             Action = DnsRuleAction.Predefined,
             Rcode = DnsResponseCode.NameError
         });
 
         // 所有代理服务域名都禁止 AAAA。Google 等服务规则必须位于国内
-        // DNS 之前，避免被 geosite-cn 的交集提前返回 IPv6。
+        // DNS 之前，避免被国内域名规则的交集提前返回 IPv6。
         dns.Rules.Add(new DnsRule
         {
             RuleSet =
@@ -94,7 +94,7 @@ public sealed class DnsProfileBuilder(
 
         AddPrimaryFallback(
             dns.Rules,
-            ["geosite-google"],
+            [RuleSetTags.Google],
             SingboxTags.RemoteDns,
             SingboxTags.RemoteGoogleDns,
             DnsResponseTags.GooglePrimary,
@@ -102,7 +102,7 @@ public sealed class DnsProfileBuilder(
 
         AddPrimaryFallback(
             dns.Rules,
-            ["geosite-cn", "geosite-category-pt"],
+            [RuleSetTags.Cn, RuleSetTags.Pt],
             SingboxTags.LocalTencentDns,
             SingboxTags.LocalDns,
             DnsResponseTags.ChinaPrimary,

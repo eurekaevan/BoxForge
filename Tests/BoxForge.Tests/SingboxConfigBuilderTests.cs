@@ -141,7 +141,7 @@ public sealed class SingboxConfigBuilderTests
         JsonElement serializedRuleSets = document.RootElement
             .GetProperty("route")
             .GetProperty("rule_set");
-        JsonElement serializedGeositeTags = serializedRuleSets[0]
+        JsonElement serializedDustinWinTags = serializedRuleSets[0]
             .GetProperty("tag");
 
         Assert.Multiple(() =>
@@ -162,19 +162,23 @@ public sealed class SingboxConfigBuilderTests
                 Is.True);
             Assert.That(json, Does.Not.Contain("\"http_client\":"));
             Assert.That(json, Does.Not.Contain("\"http_client\": null"));
-            Assert.That(json, Does.Contain(AdBlockingRuleSets.SagerAdsTag));
+            Assert.That(json, Does.Contain(RuleSetTags.Ads));
             Assert.That(json, Does.Not.Contain("anti-ad"));
             Assert.That(json, Does.Not.Contain("anti-ad.net"));
             Assert.That(json, Does.Not.Contain("adguard-dns"));
-            Assert.That(serializedRuleSets.GetArrayLength(), Is.EqualTo(2));
-            Assert.That(serializedGeositeTags.ValueKind, Is.EqualTo(JsonValueKind.Array));
-            Assert.That(serializedGeositeTags.GetArrayLength(), Is.EqualTo(8));
+            Assert.That(serializedRuleSets.GetArrayLength(), Is.EqualTo(4));
+            Assert.That(serializedDustinWinTags.ValueKind, Is.EqualTo(JsonValueKind.Array));
+            Assert.That(serializedDustinWinTags.GetArrayLength(), Is.EqualTo(6));
             Assert.That(
                 serializedRuleSets[0].GetProperty("url").GetString(),
-                Is.EqualTo("https://fastly.jsdelivr.net/gh/SagerNet/sing-geosite@rule-set/{tag}.srs"));
+                Is.EqualTo("https://github.com/DustinWin/ruleset_geodata/releases/download/sing-box-ruleset/{tag}.srs"));
             Assert.That(
                 serializedRuleSets[1].GetProperty("tag").ValueKind,
                 Is.EqualTo(JsonValueKind.String));
+            Assert.That(json, Does.Not.Contain("SagerNet"));
+            Assert.That(json, Does.Not.Contain("geosite-"));
+            Assert.That(json, Does.Not.Contain("geoip-"));
+            Assert.That(json, Does.Not.Contain("Steam"));
         });
 
         Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config));
@@ -309,6 +313,44 @@ public sealed class SingboxConfigBuilderTests
             Assert.That(google.Default, Is.EqualTo(unitedStates));
             Assert.That(google.Outbounds, Does.Contain(unitedStates));
         });
+    }
+
+    [Test]
+    public void GamesServiceUsesDustinWinRuleSetAndDefaultsToHongKong()
+    {
+        ProxyOutbound first = CreateProxy("香港 01", "hk-1.example.com");
+        ProxyOutbound second = CreateProxy("香港 02", "hk-2.example.com");
+        var nodes = new NodeCatalog(
+            [first, second],
+            [first.Tag, second.Tag],
+            [first.Server, second.Server]);
+        ProfilePlan plan = ProfilePlanner.Plan(nodes);
+        SingboxConfig config = CreateBuilder().Build(new SingboxBuildRequest(
+            nodes,
+            TargetPlatform.Android,
+            new string('d', 64)));
+
+        SelectorOutbound games = plan.ServiceOutbounds.Single(outbound =>
+            outbound.Tag == ServiceGroupNames.Games);
+        string hongKong = ProfileDefinitions.Regions.Single(region =>
+            region.Id == RegionId.HongKong).DisplayName;
+        RouteRule gamesRoute = config.Route.Rules.Single(rule =>
+            rule.Outbound == ServiceGroupNames.Games);
+        SingboxRuleSet dustinWin = config.Route.RuleSet.Single(ruleSet =>
+            ruleSet.Tag?.Contains(RuleSetTags.Games) == true);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(games.Default, Is.EqualTo(hongKong));
+            Assert.That(games.Outbounds, Does.Contain(hongKong));
+            Assert.That(gamesRoute.RuleSet, Is.EqualTo(new[] { RuleSetTags.Games }));
+            Assert.That(dustinWin.Url,
+                Is.EqualTo("https://github.com/DustinWin/ruleset_geodata/releases/download/sing-box-ruleset/{tag}.srs"));
+            Assert.That(new ConfigSerializer().Serialize(config),
+                Does.Not.Contain("Steam"));
+        });
+
+        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config));
     }
 
     [Test]

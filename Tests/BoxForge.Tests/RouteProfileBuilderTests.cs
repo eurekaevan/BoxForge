@@ -9,20 +9,18 @@ namespace BoxForge.Tests;
 [TestFixture]
 public sealed class RouteProfileBuilderTests
 {
-    private const string GeositeRuleSetUrlTemplate =
-        "https://fastly.jsdelivr.net/gh/SagerNet/sing-geosite@rule-set/{tag}.srs";
-    private const string GeoIpRuleSetUrl =
-        "https://fastly.jsdelivr.net/gh/SagerNet/sing-geoip@rule-set/geoip-cn.srs";
-    private static readonly string[] GeositeRuleSetTags =
+    private const string DustinWinRuleSetUrlTemplate =
+        "https://github.com/DustinWin/ruleset_geodata/releases/download/sing-box-ruleset/{tag}.srs";
+    private const string MetaCubeXRuleSetUrlBase =
+        "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/";
+    private static readonly string[] DustinWinRuleSetTags =
     [
-        AdBlockingRuleSets.SagerAdsTag,
-        "geosite-category-pt",
-        "geosite-google",
-        "geosite-cn",
-        "geosite-spotify",
-        "geosite-steam",
-        "geosite-category-ai-!cn",
-        "geosite-microsoft"
+        RuleSetTags.Ads,
+        RuleSetTags.Ai,
+        RuleSetTags.Spotify,
+        RuleSetTags.Games,
+        RuleSetTags.Cn,
+        RuleSetTags.CnIp
     ];
 
     [Test]
@@ -170,7 +168,7 @@ public sealed class RouteProfileBuilderTests
                 Is.True);
             Assert.That(
                 earlyMatchers.Any(child =>
-                    child.RuleSet?.SequenceEqual(["geoip-cn"]) == true
+                    child.RuleSet?.SequenceEqual(["cnip"]) == true
                     && child.Invert == true),
                 Is.True);
             Assert.That(lateReject.Type, Is.Null);
@@ -179,27 +177,37 @@ public sealed class RouteProfileBuilderTests
     }
 
     [Test]
-    public void SagerNetRuleSetsGroupGeositeTagsAndRejectAds()
+    public void RemoteRuleSetsMapSemanticTagsToDustinWinAndMetaCubeX()
     {
         RouteConfig route = CreateBuilder().Build(TargetPlatform.Linux);
-        SingboxRuleSet geositeRuleSet = route.RuleSet.Single(ruleSet =>
-            ruleSet.Tag?.Contains(AdBlockingRuleSets.SagerAdsTag) == true);
-        SingboxRuleSet geoIpRuleSet = route.RuleSet.Single(ruleSet =>
-            ruleSet.Tag?.SequenceEqual(["geoip-cn"]) == true);
+        SingboxRuleSet dustinWinRuleSet = route.RuleSet.Single(ruleSet =>
+            ruleSet.Tag?.Contains(RuleSetTags.Ads) == true);
+        Dictionary<string, string?> metaCubeXUrls = route.RuleSet
+            .Where(ruleSet => ruleSet != dustinWinRuleSet)
+            .ToDictionary(ruleSet => ruleSet.Tag!.Single(), ruleSet => ruleSet.Url);
         RouteRule? adBlockingRejectRule = route.Rules.SingleOrDefault(rule =>
             rule.Action == RouteRuleAction.Reject
             && rule.RuleSet?.SequenceEqual(
-                [AdBlockingRuleSets.SagerAdsTag]) == true);
+                [RuleSetTags.Ads]) == true);
 
         Assert.Multiple(() =>
         {
-            Assert.That(route.RuleSet, Has.Count.EqualTo(2));
-            Assert.That(geositeRuleSet.Tag, Is.EqualTo(GeositeRuleSetTags));
-            Assert.That(geositeRuleSet.Type, Is.EqualTo(RuleSetType.Remote));
-            Assert.That(geositeRuleSet.Format, Is.EqualTo(RuleSetFormat.Binary));
-            Assert.That(geositeRuleSet.Url, Is.EqualTo(GeositeRuleSetUrlTemplate));
-            Assert.That(geositeRuleSet.UpdateInterval, Is.EqualTo("1d"));
-            Assert.That(geoIpRuleSet.Url, Is.EqualTo(GeoIpRuleSetUrl));
+            Assert.That(route.RuleSet, Has.Count.EqualTo(4));
+            Assert.That(dustinWinRuleSet.Tag, Is.EqualTo(DustinWinRuleSetTags));
+            Assert.That(dustinWinRuleSet.Type, Is.EqualTo(RuleSetType.Remote));
+            Assert.That(dustinWinRuleSet.Format, Is.EqualTo(RuleSetFormat.Binary));
+            Assert.That(dustinWinRuleSet.Url, Is.EqualTo(DustinWinRuleSetUrlTemplate));
+            Assert.That(dustinWinRuleSet.UpdateInterval, Is.EqualTo("1d"));
+            Assert.That(metaCubeXUrls, Is.EquivalentTo(new Dictionary<string, string?>
+            {
+                [RuleSetTags.Google] = MetaCubeXRuleSetUrlBase + "google.srs",
+                [RuleSetTags.Microsoft] = MetaCubeXRuleSetUrlBase + "microsoft.srs",
+                [RuleSetTags.Pt] = MetaCubeXRuleSetUrlBase + "category-pt.srs"
+            }));
+            Assert.That(route.RuleSet.All(ruleSet =>
+                ruleSet.Type == RuleSetType.Remote
+                && ruleSet.Format == RuleSetFormat.Binary
+                && ruleSet.UpdateInterval == "1d"), Is.True);
             Assert.That(adBlockingRejectRule, Is.Not.Null);
             Assert.That(
                 route.DefaultHttpClient,
@@ -220,27 +228,27 @@ public sealed class RouteProfileBuilderTests
         RouteConfig route = CreateBuilder().Build(TargetPlatform.Linux);
 
         SingboxRuleSet? googleRuleSet = route.RuleSet.SingleOrDefault(ruleSet =>
-            ruleSet.Tag?.Contains("geosite-google") == true);
+            ruleSet.Tag?.Contains("google") == true);
         int adBlockingIndex = route.Rules.FindIndex(rule =>
             rule.Action == RouteRuleAction.Reject
             && rule.RuleSet?.SequenceEqual(
-                [AdBlockingRuleSets.SagerAdsTag]) == true);
+                [RuleSetTags.Ads]) == true);
         int aiUdp443RejectIndex = route.Rules.FindIndex(rule =>
             rule.Action == RouteRuleAction.Reject
             && ContainsUdp443Condition(rule)
-            && rule.RuleSet?.Contains("geosite-category-ai-!cn") == true);
+            && rule.RuleSet?.Contains("ai") == true);
         int googleUdp443RejectIndex = route.Rules.FindIndex(rule =>
             rule.Action == RouteRuleAction.Reject
             && ContainsUdp443Condition(rule)
-            && rule.RuleSet?.Contains("geosite-google") == true);
+            && rule.RuleSet?.Contains("google") == true);
         int serviceResolveIndex = route.Rules.FindIndex(rule =>
             rule.Action == RouteRuleAction.Resolve
             && rule.Strategy == DnsStrategy.Ipv4Only
-            && rule.RuleSet?.Contains("geosite-google") == true);
+            && rule.RuleSet?.Contains("google") == true);
         int domesticResolveIndex = route.Rules.FindIndex(rule =>
             rule.Action == RouteRuleAction.Resolve
             && rule.Strategy == DnsStrategy.PreferIpv4
-            && rule.RuleSet?.Contains("geosite-cn") == true);
+            && rule.RuleSet?.Contains("cn") == true);
         int domesticIpv6DirectIndex = route.Rules.FindIndex(rule =>
             rule.Action == RouteRuleAction.Route
             && rule.Outbound == SingboxTags.DirectOutbound
@@ -250,16 +258,16 @@ public sealed class RouteProfileBuilderTests
             && rule.IpVersion == 6);
         int aiRouteIndex = FindRouteRuleIndex(
             route,
-            "geosite-category-ai-!cn");
-        int googleRouteIndex = FindRouteRuleIndex(route, "geosite-google");
-        int firstDomesticIpv4RuleIndex = FindRouteRuleIndex(route, "geosite-cn");
+            "ai");
+        int googleRouteIndex = FindRouteRuleIndex(route, "google");
+        int firstDomesticIpv4RuleIndex = FindRouteRuleIndex(route, "cn");
 
         Assert.Multiple(() =>
         {
             Assert.That(googleRuleSet, Is.Not.Null);
             Assert.That(googleRuleSet!.Type, Is.EqualTo(RuleSetType.Remote));
             Assert.That(googleRuleSet.Format, Is.EqualTo(RuleSetFormat.Binary));
-            Assert.That(googleRuleSet.Url, Is.EqualTo(GeositeRuleSetUrlTemplate));
+            Assert.That(googleRuleSet.Url, Is.EqualTo(MetaCubeXRuleSetUrlBase + "google.srs"));
             Assert.That(googleRuleSet.UpdateInterval, Is.EqualTo("1d"));
             Assert.That(
                 new[]
@@ -295,17 +303,17 @@ public sealed class RouteProfileBuilderTests
             .Where(item => item.Rule.Action == RouteRuleAction.Reject
                 && ContainsUdp443Condition(item.Rule))
             .ToList();
-        int geositeUdpDirectIndex = FindUdp443DirectIndex(route, "geosite-cn");
+        int geositeUdpDirectIndex = FindUdp443DirectIndex(route, "cn");
         int udpResolveIndex = FindUdp443ResolveIndex(route);
-        int geoipUdpDirectIndex = FindUdp443DirectIndex(route, "geoip-cn");
+        int geoipUdpDirectIndex = FindUdp443DirectIndex(route, "cnip");
         int foreignUdp443RejectIndex = route.Rules.FindIndex(rule =>
             rule.Action == RouteRuleAction.Reject
             && ContainsUdp443Condition(rule)
             && rule.RuleSet == null);
         int firstStandardServiceIndex = FindFirstStandardServiceIndex(route);
-        int geositeDirectIndex = FindRouteRuleIndex(route, "geosite-cn");
+        int geositeDirectIndex = FindRouteRuleIndex(route, "cn");
         int resolveIndex = FindGeneralResolveIndex(route);
-        int geoipDirectIndex = FindRouteRuleIndex(route, "geoip-cn");
+        int geoipDirectIndex = FindRouteRuleIndex(route, "cnip");
 
         Assert.That(udp443Rejects, Has.Count.EqualTo(3));
         RouteRule foreignUdp443Reject = route.Rules[foreignUdp443RejectIndex];
@@ -351,7 +359,7 @@ public sealed class RouteProfileBuilderTests
             rule.Action == RouteRuleAction.Route
             && rule.Outbound == SingboxTags.DirectOutbound
             && ContainsIpv6Condition(rule)
-            && ReferencedRuleSets(rule).SequenceEqual(["geoip-cn"]));
+            && ReferencedRuleSets(rule).SequenceEqual(["cnip"]));
         int publicIpv6RejectIndex = route.Rules.FindIndex(rule =>
             rule.Action == RouteRuleAction.Reject
             && rule.IpVersion == 6);
@@ -407,7 +415,7 @@ public sealed class RouteProfileBuilderTests
             rule.Action == RouteRuleAction.Resolve
             && rule.Strategy == DnsStrategy.PreferIpv4
             && rule.RuleSet?.SequenceEqual(
-                ["geosite-cn", "geosite-category-pt"]) == true);
+                ["cn", "pt"]) == true);
         RouteRule generalResolve = route.Rules.Single(rule =>
             rule.Action == RouteRuleAction.Resolve
             && !ContainsUdp443Condition(rule)
@@ -441,7 +449,7 @@ public sealed class RouteProfileBuilderTests
             && rule.IpIsPrivate == true
             && rule.Action == RouteRuleAction.Route
             && rule.Outbound == SingboxTags.DirectOutbound);
-        int geoipDirectIndex = FindRouteRuleIndex(route, "geoip-cn");
+        int geoipDirectIndex = FindRouteRuleIndex(route, "cnip");
 
         Assert.That(
             new[]
@@ -488,26 +496,26 @@ public sealed class RouteProfileBuilderTests
         int aiUdp443RejectIndex = route.Rules.FindIndex(rule =>
             rule.Action == RouteRuleAction.Reject
             && ContainsUdp443Condition(rule)
-            && rule.RuleSet?.Contains("geosite-category-ai-!cn") == true);
+            && rule.RuleSet?.Contains("ai") == true);
         int googleUdp443RejectIndex = route.Rules.FindIndex(rule =>
             rule.Action == RouteRuleAction.Reject
             && ContainsUdp443Condition(rule)
-            && rule.RuleSet?.Contains("geosite-google") == true);
+            && rule.RuleSet?.Contains("google") == true);
         int aiRouteIndex = FindRouteRuleIndex(
             route,
-            "geosite-category-ai-!cn");
-        int googleRouteIndex = FindRouteRuleIndex(route, "geosite-google");
-        int geositeUdpDirectIndex = FindUdp443DirectIndex(route, "geosite-cn");
+            "ai");
+        int googleRouteIndex = FindRouteRuleIndex(route, "google");
+        int geositeUdpDirectIndex = FindUdp443DirectIndex(route, "cn");
         int udpResolveIndex = FindUdp443ResolveIndex(route);
-        int geoipUdpDirectIndex = FindUdp443DirectIndex(route, "geoip-cn");
+        int geoipUdpDirectIndex = FindUdp443DirectIndex(route, "cnip");
         int foreignUdp443RejectIndex = route.Rules.FindIndex(rule =>
             rule.Action == RouteRuleAction.Reject
             && ContainsUdp443Condition(rule)
             && rule.RuleSet == null);
         int firstStandardServiceIndex = FindFirstStandardServiceIndex(route);
-        int geositeDirectIndex = FindRouteRuleIndex(route, "geosite-cn");
+        int geositeDirectIndex = FindRouteRuleIndex(route, "cn");
         int resolveIndex = FindGeneralResolveIndex(route);
-        int geoipDirectIndex = FindRouteRuleIndex(route, "geoip-cn");
+        int geoipDirectIndex = FindRouteRuleIndex(route, "cnip");
 
         Assert.That(
             new[]

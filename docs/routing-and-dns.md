@@ -16,23 +16,23 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
 1. 劫持 TUN 和 mixed inbound 的 DNS 流量。
 2. 启用 Tailscale 时，先路由 Tailscale endpoint 声明为首选的目标。
 3. 直连私网地址和 DoH bootstrap 的 IP 地址。
-4. 对 `tun-in` 的公网 IPv6，以 `ip_version: 6 AND NOT geoip-cn` 在 Pre-match
+4. 对 `tun-in` 的公网 IPv6，以 `ip_version: 6 AND NOT cnip` 在 Pre-match
    阶段拒绝外国地址；私网、Tailscale、bootstrap 与中国 IPv6 不受影响。
 5. 对未被上述前置路由处理的流量，分别嗅探 TCP HTTP/TLS 与 UDP QUIC/STUN。
-6. 拒绝识别出的 STUN 协议，然后拒绝 `geosite-category-ads-all`。
+6. 拒绝识别出的 STUN 协议，然后拒绝 `ads`。
 7. mixed inbound 对所有代理服务域名执行 `resolve` + `ipv4_only`；对国内域名
    执行 `resolve` + `prefer_ipv4`，以便后续按实际 IP 执行 IPv6 总闸门。
 8. 按服务定义顺序拒绝 AI、Google 的 UDP/443，促使 QUIC 回退 TCP；这两条及
    后续 UDP/443 兜底拒绝均设置 `no_drop: true`，不因触发频率切换为静默丢弃。
-9. 仅直连命中 `geoip-cn` 的公网 IPv6，然后通过后置 `ip_version: 6` 拒绝其他
+9. 仅直连命中 `cnip` 的公网 IPv6，然后通过后置 `ip_version: 6` 拒绝其他
    公网 IPv6。后置规则作为 mixed/domain 解析等非 Pre-match 路径的 fallback。
 10. 将 AI 路由到 `AI`，再将 Google 路由到 `Google`。它们位于后置公网 IPv6
    拒绝规则之后，因此即使应用直接提供 IPv6 地址也不会经代理出站。
-11. 放行国内域名的 UDP/443；mixed inbound 先以 `ipv4_only` 解析目标后再放行 `geoip-cn`，
+11. 放行国内域名的 UDP/443；mixed inbound 先以 `ipv4_only` 解析目标后再放行 `cnip`，
    其他 UDP/443 全部拒绝。
-12. 生成其他服务分流，当前为 Spotify、Steam 和 Microsoft。
-13. 直连 `geosite-cn`/`geosite-category-pt`；mixed inbound 对剩余目标执行
-    `resolve` + `ipv4_only`，解析后先复检并直连私网地址，再按 `geoip-cn`
+12. 生成其他服务分流，当前为 Spotify、Games 和 Microsoft。
+13. 直连 `cn`/`pt`；mixed inbound 对剩余目标执行
+    `resolve` + `ipv4_only`，解析后先复检并直连私网地址，再按 `cnip`
     直连。
 14. 未命中规则的流量使用主代理组。
 
@@ -48,7 +48,7 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
 ```
 
 代理服务的 `ipv4_only` 解析规则必须位于国内域名解析之前，因为
-`geosite-cn` 可能与 Google 等业务 rule-set 相交。所有代理服务路由则必须
+`cn` 可能与 Google 等业务 rule-set 相交。所有代理服务路由则必须
 位于公网 IPv6 拒绝之后，确保服务分流只处理 IPv4 目标。
 
 ## DNS 规则顺序
@@ -63,9 +63,9 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
 3. 广告域名直接返回 `NXDOMAIN`。
 4. 所有代理服务 rule-set 的 AAAA 请求返回空 `NOERROR`。这条规则位于
    Google 和国内 DNS 规则之前，避免 rule-set 交集返回代理业务 IPv6。
-5. `geosite-google` 的非 AAAA 查询首选 Cloudflare DNS，失败后使用 Google DNS，
+5. `google` 的非 AAAA 查询首选 Cloudflare DNS，失败后使用 Google DNS，
    两者都通过主代理组。
-6. `geosite-cn` 和 `geosite-category-pt` 首选 Tencent DNS，失败后使用 AliDNS。
+6. `cn` 和 `pt` 首选 Tencent DNS，失败后使用 AliDNS。
 7. 未命中上述国内规则的 AAAA 请求返回空 `NOERROR`。
 8. 其他查询首选 Cloudflare DNS，失败后使用 Google DNS。
 

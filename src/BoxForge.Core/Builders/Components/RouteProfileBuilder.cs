@@ -29,19 +29,18 @@ public sealed class RouteProfileBuilder(
         };
 
         route.RuleSet.AddRange([
-            CreateRemoteRuleSetGroup(
+            CreateDustinWinRuleSetGroup(
                 [
-                    AdBlockingRuleSets.SagerAdsTag,
-                    "geosite-category-pt",
-                    "geosite-google",
-                    "geosite-cn",
-                    "geosite-spotify",
-                    "geosite-steam",
-                    "geosite-category-ai-!cn",
-                    "geosite-microsoft"
-                ],
-                "geosite"),
-            CreateRemoteRuleSet("geoip-cn", "geoip", "geoip-cn"),
+                    RuleSetTags.Ads,
+                    RuleSetTags.Ai,
+                    RuleSetTags.Spotify,
+                    RuleSetTags.Games,
+                    RuleSetTags.Cn,
+                    RuleSetTags.CnIp
+                ]),
+            CreateMetaCubeXRuleSet(RuleSetTags.Google, "google"),
+            CreateMetaCubeXRuleSet(RuleSetTags.Microsoft, "microsoft"),
+            CreateMetaCubeXRuleSet(RuleSetTags.Pt, "category-pt")
         ]);
 
         var rules = new List<RouteRule>
@@ -94,7 +93,7 @@ public sealed class RouteProfileBuilder(
             },
             new()
             {
-                RuleSet = [AdBlockingRuleSets.SagerAdsTag],
+                RuleSet = [RuleSetTags.Ads],
                 Action = RouteRuleAction.Reject
             }
         ]);
@@ -109,7 +108,7 @@ public sealed class RouteProfileBuilder(
             proxyServiceRuleSets,
             DnsStrategy.Ipv4Only));
         rules.Add(CreateMixedResolveRule(
-            ["geosite-cn", "geosite-category-pt"],
+            [RuleSetTags.Cn, RuleSetTags.Pt],
             DnsStrategy.PreferIpv4));
 
         var prioritizedServices = ProfileDefinitions.Services.Where(
@@ -134,7 +133,7 @@ public sealed class RouteProfileBuilder(
 
         rules.AddRange([
             MarkDirectForwarding(
-                CreateDomesticUdp443DirectRule(["geosite-cn", "geosite-category-pt"], SingboxTags.DirectOutbound),
+                CreateDomesticUdp443DirectRule([RuleSetTags.Cn, RuleSetTags.Pt], SingboxTags.DirectOutbound),
                 DirectForwardingMode.PostUdpSniff),
             new RouteRule
             {
@@ -145,7 +144,7 @@ public sealed class RouteProfileBuilder(
                 Strategy = DnsStrategy.Ipv4Only
             },
             MarkDirectForwarding(
-                CreateDomesticUdp443DirectRule(["geoip-cn"], SingboxTags.DirectOutbound),
+                CreateDomesticUdp443DirectRule([RuleSetTags.CnIp], SingboxTags.DirectOutbound),
                 DirectForwardingMode.PostUdpSniff),
             CreateUdp443RejectRule()
         ]);
@@ -159,7 +158,7 @@ public sealed class RouteProfileBuilder(
 
         rules.AddRange([
             MarkDirectForwarding(
-                new RouteRule { RuleSet = ["geosite-cn", "geosite-category-pt"], Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound },
+                new RouteRule { RuleSet = [RuleSetTags.Cn, RuleSetTags.Pt], Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound },
                 DirectForwardingMode.PostUdpSniff),
             new RouteRule
             {
@@ -175,7 +174,7 @@ public sealed class RouteProfileBuilder(
                 Outbound = SingboxTags.DirectOutbound
             },
             MarkDirectForwarding(
-                new RouteRule { RuleSet = ["geoip-cn"], Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound },
+                new RouteRule { RuleSet = [RuleSetTags.CnIp], Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound },
                 DirectForwardingMode.PostUdpSniff)
         ]);
 
@@ -315,7 +314,7 @@ public sealed class RouteProfileBuilder(
                 new RouteRule { IpVersion = 6 },
                 new RouteRule
                 {
-                    RuleSet = ["geoip-cn"],
+                    RuleSet = [RuleSetTags.CnIp],
                     Invert = true
                 }
             ],
@@ -332,7 +331,7 @@ public sealed class RouteProfileBuilder(
                 new RouteRule { IpVersion = 6 },
                 new RouteRule
                 {
-                    RuleSet = ["geoip-cn"]
+                    RuleSet = [RuleSetTags.CnIp]
                 }
             ],
             Action = RouteRuleAction.Route,
@@ -390,18 +389,16 @@ public sealed class RouteProfileBuilder(
             Outbound = service.Name
         };
 
-    private static SingboxRuleSet CreateRemoteRuleSet(
+    private static SingboxRuleSet CreateDustinWinRuleSetGroup(
+        List<string> tags) => CreateRemoteBinaryRuleSet(
+            tags,
+            "https://github.com/DustinWin/ruleset_geodata/releases/download/sing-box-ruleset/{tag}.srs");
+
+    private static SingboxRuleSet CreateMetaCubeXRuleSet(
         string tag,
-        string repoType,
         string fileName) => CreateRemoteBinaryRuleSet(
             [tag],
-            $"https://fastly.jsdelivr.net/gh/SagerNet/sing-{repoType}@rule-set/{fileName}.srs");
-
-    private static SingboxRuleSet CreateRemoteRuleSetGroup(
-        List<string> tags,
-        string repoType) => CreateRemoteBinaryRuleSet(
-            tags,
-            $"https://fastly.jsdelivr.net/gh/SagerNet/sing-{repoType}@rule-set/{{tag}}.srs");
+            $"https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/{fileName}.srs");
 
     private static SingboxRuleSet CreateRemoteBinaryRuleSet(
         List<string> tags,
