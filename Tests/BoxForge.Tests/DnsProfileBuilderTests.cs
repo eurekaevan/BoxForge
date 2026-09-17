@@ -38,8 +38,8 @@ public sealed class DnsProfileBuilderTests
                 Is.EqualTo(new[]
                 {
                     "dns-node",
-                    "dns-cn-tencent",
                     "dns-cn-alidns",
+                    "dns-cn-tencent",
                     "dns-proxy-google",
                     "dns-proxy-cloudflare"
                 }));
@@ -49,7 +49,7 @@ public sealed class DnsProfileBuilderTests
                 Is.EqualTo(new[]
                 {
                     "response-google-cloudflare",
-                    "response-cn-tencent",
+                    "response-cn-alidns",
                     "response-global-cloudflare"
                 }));
         });
@@ -252,12 +252,12 @@ public sealed class DnsProfileBuilderTests
     public void PrimaryFallbackChainsUseBoundedSequentialQueries(TargetPlatform platform)
     {
         DnsConfig dns = CreateBuilder().Build(new NodeCatalog([], [], []), platform);
-        var expected = new[]
-        {
+        (string Tag, string Primary, string Fallback, string? Timeout)[] expected =
+        [
             (DnsResponseTags.GooglePrimary, SingboxTags.RemoteDns, SingboxTags.RemoteGoogleDns, "2s"),
-            (DnsResponseTags.ChinaPrimary, SingboxTags.LocalTencentDns, SingboxTags.LocalDns, "1s"),
+            (DnsResponseTags.ChinaPrimary, SingboxTags.LocalDns, SingboxTags.LocalTencentDns, null),
             (DnsResponseTags.GlobalPrimary, SingboxTags.RemoteDns, SingboxTags.RemoteGoogleDns, "2s")
-        };
+        ];
 
         Assert.That(dns.Timeout, Is.EqualTo("5s"));
         Assert.That(dns.Rules.Count(rule => rule.Action == DnsRuleAction.Evaluate), Is.EqualTo(3));
@@ -301,8 +301,15 @@ public sealed class DnsProfileBuilderTests
             if (rule.GetProperty("action").GetString() == "evaluate")
             {
                 string? server = rule.GetProperty("server").GetString();
-                Assert.That(rule.GetProperty("timeout").GetString(),
-                    Is.EqualTo(server == SingboxTags.LocalTencentDns ? "1s" : "2s"));
+                if (server == SingboxTags.LocalDns)
+                {
+                    Assert.That(rule.TryGetProperty("timeout", out _), Is.False,
+                        "Domestic primary inherits the global DNS timeout.");
+                }
+                else
+                {
+                    Assert.That(rule.GetProperty("timeout").GetString(), Is.EqualTo("2s"));
+                }
             }
         }
     }

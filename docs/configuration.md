@@ -53,7 +53,7 @@ kebab-case，并按对象用途区分。地区组固定为：
 | sing-box API service | `api` |
 
 DNS evaluate/respond 的首选响应 tag 使用 `response-场景-提供方`：
-`response-google-cloudflare`、`response-cn-tencent`、`response-global-cloudflare`。
+`response-google-cloudflare`、`response-cn-alidns`、`response-global-cloudflare`。
 规则集使用 BoxForge 语义 tag：`ads`、`ai`、`google`、`microsoft`、
 `spotify`、`games`、`cn`、`cnip`、`pt`。外部文件名由来源映射决定，
 不作为内部命名约定。

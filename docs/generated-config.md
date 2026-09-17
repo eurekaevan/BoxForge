@@ -52,9 +52,10 @@ SFA 工作目录下的 `Taildrop`，Windows 使用
 ## DNS 与持久化缓存
 
 - 生成配置包含官方 `$schema`。
-- DNS 查询默认超时为 `5s`；国内首选 Tencent（`1s`），失败后使用 AliDNS；
-  远程首选 Cloudflare（`2s`），失败后使用 Google DNS。备用查询继承 `5s`，
-  各组按顺序执行，不启用 race 或 speculative；详见 [DNS 顺序与回退](routing-and-dns.md)。
+- DNS 查询默认超时为 `5s`；国内首选 AliDNS，失败后使用 Tencent DNS，
+  两者均继承 `5s`。远程首选 Cloudflare（`2s`），失败后使用 Google DNS；
+  远程备用继承 `5s`。各组按顺序执行，不启用 race 或 speculative；详见
+  [DNS 顺序与回退](routing-and-dns.md)。
 - DNS 默认使用 `prefer_ipv4`，缓存容量为 `4096`，并启用超时为 `3d` 的
   optimistic 缓存和 reverse mapping。
 - 代理节点域名固定通过 `dns-node` 以 `ipv4_only` 解析；所有代理出站的

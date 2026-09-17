@@ -42,7 +42,7 @@ public sealed class NodeCatalogBuilderTests
     [TestCase("🚀 PROXIES")]
     [TestCase("🇺🇸 US AUTO")]
     [TestCase("dns-node")]
-    [TestCase("response-cn-tencent")]
+    [TestCase("response-cn-alidns")]
     [TestCase("cn")]
     public void StrictValidationRejectsReservedGeneratedTagNames(
         string reservedTag)

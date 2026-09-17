@@ -65,7 +65,7 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
    Google 和国内 DNS 规则之前，避免 rule-set 交集返回代理业务 IPv6。
 5. `google` 的非 AAAA 查询首选 Cloudflare DNS，失败后使用 Google DNS，
    两者都通过主代理组。
-6. `cn` 和 `pt` 首选 Tencent DNS，失败后使用 AliDNS。
+6. `cn` 和 `pt` 首选 AliDNS，失败后使用 Tencent DNS。
 7. 未命中上述国内规则的 AAAA 请求返回空 `NOERROR`。
 8. 其他查询首选 Cloudflare DNS，失败后使用 Google DNS。
 
@@ -82,9 +82,9 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
   时直接返回，不启动备用查询。NXDOMAIN 不再等待另一家上游确认。
 - 首选超时、传输失败或返回其他 rcode（如 SERVFAIL/REFUSED）时，才查询备用。
   备用的响应或错误直接结束该组，不重复查询，也不落入其他 DNS 分流。
-- `dns.timeout = 5s` 是每次上游查询的默认超时。国内首选覆盖为 `1s`，
-  两个远程场景首选覆盖为 `2s`；备用继承 `5s`。因此两次都超时时，
-  整条链可能约需 `6s` / `7s`，并非全链共享 5s 截止时间。
+- `dns.timeout = 5s` 是每次上游查询的默认超时。国内首选和备用均继承
+  `5s`；两个远程场景首选覆盖为 `2s`，备用继承 `5s`。因此两次都超时时，
+  国内链可能约需 `10s`，远程链约需 `7s`，并非全链共享 5s 截止时间。
 - 正常 TTL 缓存与 optimistic 缓存保持启用；命中缓存不代表发生了上游查询。
   显式指定 server 的节点、Tailscale 或内部解析不经过这些回退链。
 

@@ -16,8 +16,8 @@ public sealed class DnsProfileBuilder(
 
         dns.Servers.AddRange([
             CreateHttpsServer(SingboxTags.NodeResolverDns, "223.5.5.5", "dns.alidns.com"),
-            CreateHttpsServer(SingboxTags.LocalTencentDns, "119.29.29.29", "doh.pub"),
             CreateHttpsServer(SingboxTags.LocalDns, "223.5.5.5", "dns.alidns.com"),
+            CreateHttpsServer(SingboxTags.LocalTencentDns, "119.29.29.29", "doh.pub"),
             CreateHttpsServer(
                 SingboxTags.RemoteGoogleDns,
                 "8.8.8.8",
@@ -103,10 +103,9 @@ public sealed class DnsProfileBuilder(
         AddPrimaryFallback(
             dns.Rules,
             [RuleSetTags.Cn, RuleSetTags.Pt],
-            SingboxTags.LocalTencentDns,
             SingboxTags.LocalDns,
-            DnsResponseTags.ChinaPrimary,
-            "1s");
+            SingboxTags.LocalTencentDns,
+            DnsResponseTags.ChinaPrimary);
 
         // 国内域名先由本地 DNS 返回 A/AAAA；其余 AAAA 仍返回空结果，
         // 防止非国内公网 IPv6 绕过后续的 IPv6 拒绝策略。
@@ -145,7 +144,7 @@ public sealed class DnsProfileBuilder(
         string primaryServer,
         string fallbackServer,
         string responseTag,
-        string primaryTimeout)
+        string? primaryTimeout = null)
     {
         rules.Add(new DnsRule
         {
