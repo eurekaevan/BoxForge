@@ -24,7 +24,7 @@ Linux 和 Windows 额外生成 sing-box 1.15 `bridge` outbound，并按规则可
 
 - 私网地址和 `223.5.5.5` 在首个 `sniff` 之前预匹配；原 `DIRECT` 前增加带
   `preferred_by: bridge-out` 门控的 L3 route。
-- 国内 IPv6、国内 UDP/443、`cn`/`pt` 和 `cnip`
+- 国内 IPv6、国内 UDP/443、`cn` 和 `cnip`
   在 UDP sniff 之后、各自原始规则所在位置增加仅匹配 `tun-in` + UDP 的 L3
   route。它们不会被搬到 sniff 之前，因此仍保留原有服务优先级和域名嗅探语义。
 
@@ -89,12 +89,12 @@ SFA 工作目录下的 `Taildrop`，Windows 使用
   `DIRECT`，rule-set 下载也不会随之改走直连。下载域名仍由本地 DNS 以
   `ipv4_only` 解析，以免代理 DNS 成为冷启动依赖。
 - 规则集来源与内部 tag 的映射如下；代码中的 DNS/route 引用只使用内部 tag，
-  不依赖上游文件名。九个 tag 均唯一声明并按 `1d` 更新。
+  不依赖上游文件名。八个 tag 均唯一声明并按 `1d` 更新。
 
   | 来源 | 内部 tag → 文件名 | URL 基础路径 |
   | --- | --- | --- |
   | DustinWin release | `ads→ads.srs`、`ai→ai.srs`、`spotify→spotify.srs`、`games→games.srs`、`cn→cn.srs`、`cnip→cnip.srs` | `https://github.com/DustinWin/ruleset_geodata/releases/download/sing-box-ruleset/` |
-  | MetaCubeX `sing` 分支 | `google→google.srs`、`microsoft→microsoft.srs`、`pt→category-pt.srs` | `https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/` |
+  | MetaCubeX `sing` 分支 | `google→google.srs`、`microsoft→microsoft.srs` | `https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/` |
 
   DustinWin 同名文件共用 `{tag}.srs` 模板；MetaCubeX 的文件逐项声明。
   广告过滤使用 `ads`；Games 使用 `games`，覆盖范围由上游规则维护，

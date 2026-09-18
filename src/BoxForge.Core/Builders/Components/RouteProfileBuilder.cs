@@ -39,8 +39,7 @@ public sealed class RouteProfileBuilder(
                     RuleSetTags.CnIp
                 ]),
             CreateMetaCubeXRuleSet(RuleSetTags.Google, "google"),
-            CreateMetaCubeXRuleSet(RuleSetTags.Microsoft, "microsoft"),
-            CreateMetaCubeXRuleSet(RuleSetTags.Pt, "category-pt")
+            CreateMetaCubeXRuleSet(RuleSetTags.Microsoft, "microsoft")
         ]);
 
         var rules = new List<RouteRule>
@@ -108,7 +107,7 @@ public sealed class RouteProfileBuilder(
             proxyServiceRuleSets,
             DnsStrategy.Ipv4Only));
         rules.Add(CreateMixedResolveRule(
-            [RuleSetTags.Cn, RuleSetTags.Pt],
+            [RuleSetTags.Cn],
             DnsStrategy.PreferIpv4));
 
         var prioritizedServices = ProfileDefinitions.Services.Where(
@@ -133,7 +132,7 @@ public sealed class RouteProfileBuilder(
 
         rules.AddRange([
             MarkDirectForwarding(
-                CreateDomesticUdp443DirectRule([RuleSetTags.Cn, RuleSetTags.Pt], SingboxTags.DirectOutbound),
+                CreateDomesticUdp443DirectRule([RuleSetTags.Cn], SingboxTags.DirectOutbound),
                 DirectForwardingMode.PostUdpSniff),
             new RouteRule
             {
@@ -158,7 +157,7 @@ public sealed class RouteProfileBuilder(
 
         rules.AddRange([
             MarkDirectForwarding(
-                new RouteRule { RuleSet = [RuleSetTags.Cn, RuleSetTags.Pt], Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound },
+                new RouteRule { RuleSet = [RuleSetTags.Cn], Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound },
                 DirectForwardingMode.PostUdpSniff),
             new RouteRule
             {

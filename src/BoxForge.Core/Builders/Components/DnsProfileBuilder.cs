@@ -102,7 +102,7 @@ public sealed class DnsProfileBuilder(
 
         AddPrimaryFallback(
             dns.Rules,
-            [RuleSetTags.Cn, RuleSetTags.Pt],
+            [RuleSetTags.Cn],
             SingboxTags.LocalDns,
             SingboxTags.LocalTencentDns,
             DnsResponseTags.ChinaPrimary);

@@ -192,7 +192,7 @@ public sealed class RouteProfileBuilderTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(route.RuleSet, Has.Count.EqualTo(4));
+            Assert.That(route.RuleSet, Has.Count.EqualTo(3));
             Assert.That(dustinWinRuleSet.Tag, Is.EqualTo(DustinWinRuleSetTags));
             Assert.That(dustinWinRuleSet.Type, Is.EqualTo(RuleSetType.Remote));
             Assert.That(dustinWinRuleSet.Format, Is.EqualTo(RuleSetFormat.Binary));
@@ -201,8 +201,7 @@ public sealed class RouteProfileBuilderTests
             Assert.That(metaCubeXUrls, Is.EquivalentTo(new Dictionary<string, string?>
             {
                 [RuleSetTags.Google] = MetaCubeXRuleSetUrlBase + "google.srs",
-                [RuleSetTags.Microsoft] = MetaCubeXRuleSetUrlBase + "microsoft.srs",
-                [RuleSetTags.Pt] = MetaCubeXRuleSetUrlBase + "category-pt.srs"
+                [RuleSetTags.Microsoft] = MetaCubeXRuleSetUrlBase + "microsoft.srs"
             }));
             Assert.That(route.RuleSet.All(ruleSet =>
                 ruleSet.Type == RuleSetType.Remote
@@ -415,7 +414,7 @@ public sealed class RouteProfileBuilderTests
             rule.Action == RouteRuleAction.Resolve
             && rule.Strategy == DnsStrategy.PreferIpv4
             && rule.RuleSet?.SequenceEqual(
-                ["cn", "pt"]) == true);
+                [RuleSetTags.Cn]) == true);
         RouteRule generalResolve = route.Rules.Single(rule =>
             rule.Action == RouteRuleAction.Resolve
             && !ContainsUdp443Condition(rule)

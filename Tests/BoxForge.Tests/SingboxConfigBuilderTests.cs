@@ -125,8 +125,10 @@ public sealed class SingboxConfigBuilderTests
         Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config));
     }
 
-    [Test]
-    public void RuleSetsUseAnIpv4OnlyProxyHttpClient()
+    [TestCase(TargetPlatform.Android)]
+    [TestCase(TargetPlatform.Linux)]
+    [TestCase(TargetPlatform.Windows)]
+    public void RuleSetsUseAnIpv4OnlyProxyHttpClient(TargetPlatform platform)
     {
         ProxyOutbound first = CreateProxy("美国 01", "us-1.example.com");
         ProxyOutbound second = CreateProxy("美国 02", "us-2.example.com");
@@ -135,7 +137,7 @@ public sealed class SingboxConfigBuilderTests
                 [first, second],
                 [first.Tag, second.Tag],
                 [first.Server, second.Server]),
-            TargetPlatform.Android,
+            platform,
             new string('a', 64)));
 
         HttpClientConfig proxyClient = config.HttpClients.Single();
@@ -177,7 +179,7 @@ public sealed class SingboxConfigBuilderTests
             Assert.That(json, Does.Not.Contain("anti-ad"));
             Assert.That(json, Does.Not.Contain("anti-ad.net"));
             Assert.That(json, Does.Not.Contain("adguard-dns"));
-            Assert.That(serializedRuleSets.GetArrayLength(), Is.EqualTo(4));
+            Assert.That(serializedRuleSets.GetArrayLength(), Is.EqualTo(3));
             Assert.That(serializedDustinWinTags.ValueKind, Is.EqualTo(JsonValueKind.Array));
             Assert.That(serializedDustinWinTags.GetArrayLength(), Is.EqualTo(6));
             Assert.That(
@@ -189,6 +191,7 @@ public sealed class SingboxConfigBuilderTests
             Assert.That(json, Does.Not.Contain("SagerNet"));
             Assert.That(json, Does.Not.Contain("geosite-"));
             Assert.That(json, Does.Not.Contain("geoip-"));
+            Assert.That(json, Does.Not.Contain("category-pt"));
             Assert.That(json, Does.Not.Contain("Steam"));
         });
 

@@ -31,7 +31,7 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
 11. 放行国内域名的 UDP/443；mixed inbound 先以 `ipv4_only` 解析目标后再放行 `cnip`，
    其他 UDP/443 全部拒绝。
 12. 生成其他服务分流，当前为 Spotify、Games 和 Microsoft。
-13. 直连 `cn`/`pt`；mixed inbound 对剩余目标执行
+13. 直连 `cn`；mixed inbound 对剩余目标执行
     `resolve` + `ipv4_only`，解析后先复检并直连私网地址，再按 `cnip`
     直连。
 14. 未命中规则的流量使用主代理组。
@@ -65,7 +65,7 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
    Google 和国内 DNS 规则之前，避免 rule-set 交集返回代理业务 IPv6。
 5. `google` 的非 AAAA 查询首选 Cloudflare DNS，失败后使用 Google DNS，
    两者都通过主代理组。
-6. `cn` 和 `pt` 首选 AliDNS，失败后使用 Tencent DNS。
+6. `cn` 首选 AliDNS，失败后使用 Tencent DNS。
 7. 未命中上述国内规则的 AAAA 请求返回空 `NOERROR`。
 8. 其他查询首选 Cloudflare DNS，失败后使用 Google DNS。
 

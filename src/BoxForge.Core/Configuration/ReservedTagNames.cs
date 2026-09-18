@@ -32,7 +32,6 @@ public static class ReservedTagNames
             DnsResponseTags.ChinaPrimary,
             DnsResponseTags.GlobalPrimary,
             RuleSetTags.Ads,
-            RuleSetTags.Pt,
             RuleSetTags.Cn,
             RuleSetTags.CnIp
         ];

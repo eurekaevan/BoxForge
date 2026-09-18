@@ -10,5 +10,4 @@ public static class RuleSetTags
     public const string Games = "games";
     public const string Cn = "cn";
     public const string CnIp = "cnip";
-    public const string Pt = "pt";
 }
