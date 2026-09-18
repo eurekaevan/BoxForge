@@ -126,18 +126,25 @@ public sealed class SingboxConfigBuilderTests
     }
 
     [Test]
-    public void RuleSetsUseAnIpv4OnlyDirectHttpClient()
+    public void RuleSetsUseAnIpv4OnlyProxyHttpClient()
     {
+        ProxyOutbound first = CreateProxy("美国 01", "us-1.example.com");
+        ProxyOutbound second = CreateProxy("美国 02", "us-2.example.com");
         SingboxConfig config = CreateBuilder().Build(new SingboxBuildRequest(
-            new NodeCatalog([], [], []),
+            new NodeCatalog(
+                [first, second],
+                [first.Tag, second.Tag],
+                [first.Server, second.Server]),
             TargetPlatform.Android,
             new string('a', 64)));
 
-        HttpClientConfig directClient = config.HttpClients.Single(client =>
-            client.Tag == HttpClientTags.RuleSetDirect);
+        HttpClientConfig proxyClient = config.HttpClients.Single();
+        UrlTestOutbound regionAuto = config.Outbounds.OfType<UrlTestOutbound>().Single();
 
         string json = new ConfigSerializer().Serialize(config);
         using JsonDocument document = JsonDocument.Parse(json);
+        JsonElement serializedClient = document.RootElement
+            .GetProperty("http_clients")[0];
         JsonElement serializedRuleSets = document.RootElement
             .GetProperty("route")
             .GetProperty("rule_set");
@@ -147,16 +154,20 @@ public sealed class SingboxConfigBuilderTests
         Assert.Multiple(() =>
         {
             Assert.That(config.HttpClients, Has.Count.EqualTo(1));
-            Assert.That(directClient.Detour, Is.Null);
+            Assert.That(proxyClient.Tag, Is.EqualTo(HttpClientTags.RuleSetProxy));
+            Assert.That(proxyClient.Detour, Is.EqualTo(regionAuto.Tag));
+            Assert.That(serializedClient.GetProperty("detour").GetString(),
+                Is.EqualTo(regionAuto.Tag));
+            Assert.That(regionAuto.Outbounds, Is.EqualTo(new[] { first.Tag, second.Tag }));
             Assert.That(
-                directClient.DomainResolver?.Server,
+                proxyClient.DomainResolver?.Server,
                 Is.EqualTo(SingboxTags.LocalDns));
             Assert.That(
-                directClient.DomainResolver?.Strategy,
+                proxyClient.DomainResolver?.Strategy,
                 Is.EqualTo(DnsStrategy.Ipv4Only));
             Assert.That(
                 config.Route.DefaultHttpClient,
-                Is.EqualTo(HttpClientTags.RuleSetDirect));
+                Is.EqualTo(HttpClientTags.RuleSetProxy));
             Assert.That(
                 config.Route.RuleSet.All(ruleSet => ruleSet.HttpClient == null),
                 Is.True);
@@ -179,6 +190,26 @@ public sealed class SingboxConfigBuilderTests
             Assert.That(json, Does.Not.Contain("geosite-"));
             Assert.That(json, Does.Not.Contain("geoip-"));
             Assert.That(json, Does.Not.Contain("Steam"));
+        });
+
+        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config));
+    }
+
+    [Test]
+    public void RuleSetDownloadsUseLeafNodeWhenRegionAutoIsUnavailable()
+    {
+        ProxyOutbound node = CreateProxy("美国 01", "us-1.example.com");
+        SingboxConfig config = CreateBuilder().Build(new SingboxBuildRequest(
+            new NodeCatalog([node], [node.Tag], [node.Server]),
+            TargetPlatform.Linux,
+            new string('a', 64)));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(config.Outbounds.OfType<UrlTestOutbound>(), Is.Empty);
+            Assert.That(config.HttpClients.Single().Detour, Is.EqualTo(node.Tag));
+            Assert.That(config.Route.DefaultHttpClient,
+                Is.EqualTo(HttpClientTags.RuleSetProxy));
         });
 
         Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config));
@@ -246,7 +277,11 @@ public sealed class SingboxConfigBuilderTests
             Assert.That(api.Dashboard?.Path, Is.EqualTo("dashboard"));
             Assert.That(
                 api.Dashboard?.HttpClient,
-                Is.EqualTo(HttpClientTags.RuleSetDirect));
+                Is.EqualTo(HttpClientTags.DashboardDirect));
+            Assert.That(disabled.HttpClients, Has.Count.EqualTo(1));
+            Assert.That(enabled.HttpClients, Has.Count.EqualTo(2));
+            Assert.That(enabled.HttpClients.Single(client =>
+                client.Tag == HttpClientTags.DashboardDirect).Detour, Is.Null);
         });
 
         Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(enabled));

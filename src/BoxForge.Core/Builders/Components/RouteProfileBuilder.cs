@@ -25,7 +25,7 @@ public sealed class RouteProfileBuilder(
         var route = new RouteConfig
         {
             Final = SingboxTags.MainProxyGroup,
-            DefaultHttpClient = HttpClientTags.RuleSetDirect
+            DefaultHttpClient = HttpClientTags.RuleSetProxy
         };
 
         route.RuleSet.AddRange([

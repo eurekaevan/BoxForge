@@ -35,7 +35,7 @@ public sealed class SingboxApiServiceBuilder(
                 {
                     Enabled = true,
                     Path = "dashboard",
-                    HttpClient = HttpClientTags.RuleSetDirect
+                    HttpClient = HttpClientTags.DashboardDirect
                 }
             }
         ];

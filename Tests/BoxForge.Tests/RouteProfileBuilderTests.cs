@@ -211,7 +211,7 @@ public sealed class RouteProfileBuilderTests
             Assert.That(adBlockingRejectRule, Is.Not.Null);
             Assert.That(
                 route.DefaultHttpClient,
-                Is.EqualTo(HttpClientTags.RuleSetDirect));
+                Is.EqualTo(HttpClientTags.RuleSetProxy));
             Assert.That(
                 route.RuleSet.All(ruleSet => ruleSet.HttpClient == null),
                 Is.True);

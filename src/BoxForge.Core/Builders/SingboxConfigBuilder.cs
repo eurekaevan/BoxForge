@@ -21,6 +21,36 @@ public sealed class SingboxConfigBuilder(
         var profiles = ProfilePlanner.Plan(request.Nodes);
         var endpoints = tailscaleEndpointBuilder.Build(request.Platform);
         var services = singboxApiServiceBuilder.Build();
+        string ruleSetDetour = profiles.RegionAutoOutbounds.Count > 0
+            ? profiles.RegionAutoOutbounds[0].Tag
+            : request.Nodes.Names.Count > 0
+                ? request.Nodes.Names[0]
+                : SingboxTags.MainProxyGroup;
+        var httpClients = new List<HttpClientConfig>
+        {
+            new()
+            {
+                Tag = HttpClientTags.RuleSetProxy,
+                Detour = ruleSetDetour,
+                DomainResolver = new DnsResolverOptions
+                {
+                    Server = SingboxTags.LocalDns,
+                    Strategy = DnsStrategy.Ipv4Only
+                }
+            }
+        };
+        if (services.Count > 0)
+        {
+            httpClients.Add(new HttpClientConfig
+            {
+                Tag = HttpClientTags.DashboardDirect,
+                DomainResolver = new DnsResolverOptions
+                {
+                    Server = SingboxTags.LocalDns,
+                    Strategy = DnsStrategy.Ipv4Only
+                }
+            });
+        }
 
         var orderedOutbounds = new List<Outbound>();
         orderedOutbounds.Add(profiles.MainOutbound);
@@ -42,18 +72,7 @@ public sealed class SingboxConfigBuilder(
         {
             Log = new LogConfig(),
             Dns = dnsProfileBuilder.Build(request.Nodes, request.Platform),
-            HttpClients =
-            [
-                new HttpClientConfig
-                {
-                    Tag = HttpClientTags.RuleSetDirect,
-                    DomainResolver = new DnsResolverOptions
-                    {
-                        Server = SingboxTags.LocalDns,
-                        Strategy = DnsStrategy.Ipv4Only
-                    }
-                }
-            ],
+            HttpClients = httpClients,
             Inbounds = InboundBuilder.Build(request.Platform),
             Endpoints = endpoints.Count > 0 ? endpoints : null,
             Outbounds = orderedOutbounds,

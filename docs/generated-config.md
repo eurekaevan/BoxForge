@@ -84,9 +84,10 @@ SFA 工作目录下的 `Taildrop`，Windows 使用
   直接报告，不再生成空字段。
 - Hysteria2 出站使用 `hop_interval: 30s`、`hop_interval_max: 60s` 和
   `bbr_profile: standard`。
-- 远程 rule-set 每天更新，通过默认 HTTP client `http-ruleset-direct` 直接拨号下载；
-  该 HTTP client 使用本地 DNS 的 `ipv4_only` 解析，不经 `DIRECT` outbound
-  二次解析。
+- 远程 rule-set 每天更新，通过默认 HTTP client `http-ruleset-proxy` 走代理下载。
+  有地区 AUTO 时选择首个地区 AUTO，否则选择首个真实节点；即使主组被手动切到
+  `DIRECT`，rule-set 下载也不会随之改走直连。下载域名仍由本地 DNS 以
+  `ipv4_only` 解析，以免代理 DNS 成为冷启动依赖。
 - 规则集来源与内部 tag 的映射如下；代码中的 DNS/route 引用只使用内部 tag，
   不依赖上游文件名。九个 tag 均唯一声明并按 `1d` 更新。
 
@@ -113,8 +114,9 @@ SFA 工作目录下的 `Taildrop`，Windows 使用
 
 API 默认不生成。启用 `SingboxApi:Enabled` 后，顶层增加一个仅监听
 `127.0.0.1:9090` 的 `api` service，并启用工作目录下的 `dashboard`。
-Dashboard 下载复用 `http-ruleset-direct` HTTP client；允许的浏览器 origin 被限制为
-同端口的 `127.0.0.1` 与 `localhost`，`access_control_allow_private_network` 保持
+Dashboard 下载使用独立的 `http-dashboard-direct` 直连 HTTP client；允许的浏览器
+origin 被限制为同端口的 `127.0.0.1` 与 `localhost`，
+`access_control_allow_private_network` 保持
 `false`。禁用时顶层 `services` 字段完全省略。
 
 ## 节点与分组

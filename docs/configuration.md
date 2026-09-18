@@ -18,9 +18,10 @@ BoxForge 提供两个 Tailscale 运行时设置，并提供一个全平台 sing-
 
 `SingboxApi:Enabled` 同样只接受 `true` 或 `false`。启用后，三个目标平台都会生成
 `type: api` service，固定监听 `127.0.0.1:9090`。Dashboard 文件由目标机器上的
-sing-box 下载到工作目录下的 `dashboard`，下载使用现有
-`http-ruleset-direct` HTTP client。CORS 只允许该端口的 `127.0.0.1` 和
-`localhost` origin，且不允许浏览器私网跨域访问。
+sing-box 下载到工作目录下的 `dashboard`，下载使用独立的
+`http-dashboard-direct` HTTP client；远程 rule-set 则通过
+`http-ruleset-proxy` 经地区 AUTO（若无则首个节点）下载。CORS 只允许该端口的
+`127.0.0.1` 和 `localhost` origin，且不允许浏览器私网跨域访问。
 
 首版 API 配置不开放监听地址、端口或远程访问，也不生成共享 secret。尽管只监听
 loopback，同机进程仍可访问该控制面；不需要 Dashboard、远程控制或 Tailscale
@@ -49,7 +50,8 @@ kebab-case，并按对象用途区分。地区组固定为：
 | 节点 / Tailscale bootstrap DNS | `dns-node`、`dns-bootstrap` |
 | 国内 DNS | `dns-cn-tencent`、`dns-cn-alidns` |
 | 代理 DNS | `dns-proxy-google`、`dns-proxy-cloudflare` |
-| rule-set HTTP client | `http-ruleset-direct` |
+| rule-set HTTP client | `http-ruleset-proxy` |
+| 可选 Dashboard HTTP client | `http-dashboard-direct` |
 | sing-box API service | `api` |
 
 DNS evaluate/respond 的首选响应 tag 使用 `response-场景-提供方`：
