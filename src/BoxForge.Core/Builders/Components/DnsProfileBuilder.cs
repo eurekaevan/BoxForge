@@ -14,6 +14,15 @@ public sealed class DnsProfileBuilder(
     {
         var dns = new DnsConfig();
 
+        // Keep every DNS client on IPv4, including Tailscale split DNS and
+        // callers that explicitly request AAAA records.
+        dns.Rules.Add(new DnsRule
+        {
+            QueryType = ["AAAA"],
+            Action = DnsRuleAction.Predefined,
+            Rcode = DnsResponseCode.NoError
+        });
+
         dns.Servers.AddRange([
             CreateHttpsServer(SingboxTags.NodeResolverDns, "223.5.5.5", "dns.alidns.com"),
             CreateHttpsServer(SingboxTags.LocalDns, "223.5.5.5", "dns.alidns.com"),
@@ -77,21 +86,6 @@ public sealed class DnsProfileBuilder(
             Rcode = DnsResponseCode.NameError
         });
 
-        // 所有代理服务域名都禁止 AAAA。Google 等服务规则必须位于国内
-        // DNS 之前，避免被国内域名规则的交集提前返回 IPv6。
-        dns.Rules.Add(new DnsRule
-        {
-            RuleSet =
-            [
-                .. ProfileDefinitions.Services
-                    .SelectMany(service => service.RuleSets)
-                    .Distinct(StringComparer.Ordinal)
-            ],
-            QueryType = ["AAAA"],
-            Action = DnsRuleAction.Predefined,
-            Rcode = DnsResponseCode.NoError
-        });
-
         AddPrimaryFallback(
             dns.Rules,
             [RuleSetTags.Google],
@@ -106,15 +100,6 @@ public sealed class DnsProfileBuilder(
             SingboxTags.LocalDns,
             SingboxTags.LocalTencentDns,
             DnsResponseTags.ChinaPrimary);
-
-        // 国内域名先由本地 DNS 返回 A/AAAA；其余 AAAA 仍返回空结果，
-        // 防止非国内公网 IPv6 绕过后续的 IPv6 拒绝策略。
-        dns.Rules.Add(new DnsRule
-        {
-            QueryType = ["AAAA"],
-            Action = DnsRuleAction.Predefined,
-            Rcode = DnsResponseCode.NoError
-        });
 
         AddPrimaryFallback(
             dns.Rules,

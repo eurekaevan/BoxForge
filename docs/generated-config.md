@@ -24,15 +24,14 @@ Linux 和 Windows 额外生成 sing-box 1.15 `bridge` outbound，并按规则可
 
 - 私网地址和 `223.5.5.5` 在首个 `sniff` 之前预匹配；原 `DIRECT` 前增加带
   `preferred_by: bridge-out` 门控的 L3 route。
-- 国内 IPv6、国内 UDP/443、`cn` 和 `cnip`
+- 国内 UDP/443、`cn` 和 `cnip`
   在 UDP sniff 之后、各自原始规则所在位置增加仅匹配 `tun-in` + UDP 的 L3
   route。它们不会被搬到 sniff 之前，因此仍保留原有服务优先级和域名嗅探语义。
 
-两条 pre-sniff DIRECT 之后还会生成仅限 `tun-in` 的外国公网 IPv6 早期拒绝：
-`ip_version: 6` 与反向 `cnip` rule-set 必须同时匹配。该规则在 TCP/UDP
-sniff 之前终止明显不允许的 TUN 流量；中国 IPv6 会继续进入后续 QUIC/服务
-优先级和国内直连规则。后置的全局 `ip_version: 6` 拒绝仍然保留，用于 mixed
-域名解析及其他无法在 Pre-match 阶段判定的路径。
+TUN 仍配置 `fd00::1/126`，但它只用于让操作系统把 IPv6 流量送入 sing-box，
+不是 IPv6 连通能力。DNS 劫持之后立即生成全局 `ip_version: 6` 拒绝，在任何
+DIRECT、Tailscale、bridge、bypass 或 sniff 之前终止 IPv6。解析阶段之后再生成
+同样的兜底拒绝，覆盖 mixed/domain 等无法在 Pre-match 阶段判定的路径。
 
 Linux 在每条上述 L3 route 之前再生成无 `outbound` 的 `bypass` 动作，使
 `auto_redirect` 流量在相同条件下从内核层直接绕过 sing-box；该动作在其他
@@ -56,7 +55,7 @@ SFA 工作目录下的 `Taildrop`，Windows 使用
   两者均继承 `5s`。远程首选 Cloudflare（`2s`），失败后使用 Google DNS；
   远程备用继承 `5s`。各组按顺序执行，不启用 race 或 speculative；详见
   [DNS 顺序与回退](routing-and-dns.md)。
-- DNS 默认使用 `prefer_ipv4`，缓存容量为 `4096`，并启用超时为 `3d` 的
+- DNS 默认使用 `ipv4_only`，缓存容量为 `4096`，并启用超时为 `3d` 的
   optimistic 缓存和 reverse mapping。
 - 代理节点域名固定通过 `dns-node` 以 `ipv4_only` 解析；所有代理出站的
   `domain_resolver` 也显式指定 `ipv4_only` 并禁用 optimistic 过期缓存。
@@ -66,7 +65,7 @@ SFA 工作目录下的 `Taildrop`，Windows 使用
   查询也显式禁用它，避免地址变更后继续使用旧记录。
 - `dns-bootstrap` 仅在目标平台启用 Tailscale endpoint 时生成；它是 endpoint 的
   独立直连 DoH 启动解析器，不会在未启用 Tailscale 的配置中占位。
-- 代理服务域名的 AAAA 查询返回空 `NOERROR`；国内 DNS 规则仍允许 A/AAAA。
+- 所有 AAAA 查询在规则链首部返回空 `NOERROR`，国内 DNS 也只提供 IPv4。
 - `experimental.cache_file` 使用 `cache.db`，并通过 `store_dns` 持久化 DNS 缓存。
 - `cache_id` 是 YAML `proxies` 列表的规范化 SHA-256；字段顺序不影响身份。
   只要核心代理列表相同，不同平台或其他 Clash 配置项会复用同一缓存身份。
@@ -100,15 +99,14 @@ SFA 工作目录下的 `Taildrop`，Windows 使用
   广告过滤使用 `ads`；Games 使用 `games`，覆盖范围由上游规则维护，
   不再限于单一游戏平台。DustinWin 的 `ads` 来源于 anti-AD，`games` 明确排除
   `games-cn`；两者的实际命中范围与迁移前的单项分类不同。
-- mixed inbound 的代理业务域名和最终代理回退域名在路由前执行
-  `resolve` + `ipv4_only`。公网 IPv6 只有命中 `cnip` 时才进入 `DIRECT`；
-  其他公网 IPv6 使用原生 `ip_version: 6` 匹配并在所有代理业务路由之前被
-  拒绝。私网和 Tailscale 路径不受这条公网限制影响。
+- mixed inbound 的代理业务域名、国内域名和最终代理回退域名在路由前执行
+  `resolve` + `ipv4_only`。全部 IPv6 使用原生 `ip_version: 6` 匹配，并在
+  DIRECT、Tailscale 和所有代理业务路由之前被拒绝。
 - 未被前置 Tailscale、私网或 bootstrap 直连规则处理的 UDP 流量会同时嗅探
   QUIC 和 STUN，并拒绝识别出的 STUN 协议；不再根据 3478、3479、19302 或
   19303 等固定端口拒绝普通 UDP 流量。
 - AI、Google 和最终兜底的 UDP/443 拒绝规则写入 `no_drop: true`，持续返回拒绝
-  响应以促使 QUIC 回退 TCP；STUN、广告和早期/后置 IPv6 拒绝不启用该字段。
+  响应以促使 QUIC 回退 TCP；STUN、广告和两道 IPv6 拒绝不启用该字段。
 
 ## sing-box API
 

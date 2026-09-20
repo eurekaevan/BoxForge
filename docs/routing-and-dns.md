@@ -14,20 +14,19 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
 伴随规则。每条原 `DIRECT` 都保留为回退，仅针对 `mixed-in` 的直连规则不扩展。
 
 1. 劫持 TUN 和 mixed inbound 的 DNS 流量。
-2. 启用 Tailscale 时，先路由 Tailscale endpoint 声明为首选的目标。
-3. 直连私网地址和 DoH bootstrap 的 IP 地址。
-4. 对 `tun-in` 的公网 IPv6，以 `ip_version: 6 AND NOT cnip` 在 Pre-match
-   阶段拒绝外国地址；私网、Tailscale、bootstrap 与中国 IPv6 不受影响。
-5. 对未被上述前置路由处理的流量，分别嗅探 TCP HTTP/TLS 与 UDP QUIC/STUN。
+2. 以 `ip_version: 6` 在 Pre-match 阶段拒绝全部 IPv6，包括私网、Tailscale
+   和国内 IPv6；这条规则位于任何 DIRECT、bridge 或 bypass 之前。
+3. 启用 Tailscale 时，路由 Tailscale endpoint 声明为首选的 IPv4 目标。
+4. 直连私网地址和 DoH bootstrap 的 IPv4 地址。
+5. 对未被上述 IPv6 总闸门处理的流量，分别嗅探 TCP HTTP/TLS 与 UDP QUIC/STUN。
 6. 拒绝识别出的 STUN 协议，然后拒绝 `ads`。
-7. mixed inbound 对所有代理服务域名执行 `resolve` + `ipv4_only`；对国内域名
-   执行 `resolve` + `prefer_ipv4`，以便后续按实际 IP 执行 IPv6 总闸门。
+7. mixed inbound 对所有代理服务域名和国内域名执行 `resolve` + `ipv4_only`。
 8. 按服务定义顺序拒绝 AI、Google 的 UDP/443，促使 QUIC 回退 TCP；这两条及
    后续 UDP/443 兜底拒绝均设置 `no_drop: true`，不因触发频率切换为静默丢弃。
-9. 仅直连命中 `cnip` 的公网 IPv6，然后通过后置 `ip_version: 6` 拒绝其他
-   公网 IPv6。后置规则作为 mixed/domain 解析等非 Pre-match 路径的 fallback。
-10. 将 AI 路由到 `AI`，再将 Google 路由到 `Google`。它们位于后置公网 IPv6
-   拒绝规则之后，因此即使应用直接提供 IPv6 地址也不会经代理出站。
+9. 再次通过后置 `ip_version: 6` 拒绝 IPv6，覆盖 mixed/domain 解析等非
+   Pre-match 路径。
+10. 将 AI 路由到 `AI`，再将 Google 路由到 `Google`。它们位于后置 IPv6
+   拒绝规则之后，因此 IPv6 地址不会进入代理出站。
 11. 放行国内域名的 UDP/443；mixed inbound 先以 `ipv4_only` 解析目标后再放行 `cnip`，
    其他 UDP/443 全部拒绝。
 12. 生成其他服务分流，当前为 Spotify、Games 和 Microsoft。
@@ -36,42 +35,39 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
     直连。
 14. 未命中规则的流量使用主代理组。
 
-第 9、11、13 步中的国内 `DIRECT` 在 Linux/Windows 会紧邻原规则之前生成 L3
+第 11、13 步中的国内 `DIRECT` 在 Linux/Windows 会紧邻原规则之前生成 L3
 伴随规则：Windows 为 bridge，Linux 为 bypass 后接 bridge。伴随规则仅匹配
-`tun-in` UDP，原规则的 rule-set、端口、IPv6 与服务顺序条件不变；TCP 在 sniff
+`tun-in` UDP，原规则的 rule-set、端口与服务顺序条件不变；TCP 在 sniff
 后不会尝试这些 L3 层，仍由原 `DIRECT` 处理。Android 不生成伴随规则。
 
 对业务分流而言，核心优先级是：
 
 ```text
-广告拒绝 → 域名解析 → 国内 IPv6 / 其他 IPv6 拒绝 → 代理服务 → 国内 IPv4 → 最终代理
+IPv6 早期拒绝 → 广告拒绝 → IPv4-only 域名解析 → IPv6 兜底拒绝 → 代理服务 → 国内 IPv4 → 最终代理
 ```
 
 代理服务的 `ipv4_only` 解析规则必须位于国内域名解析之前，因为
 `cn` 可能与 Google 等业务 rule-set 相交。所有代理服务路由则必须
-位于公网 IPv6 拒绝之后，确保服务分流只处理 IPv4 目标。
+位于后置 IPv6 拒绝之后，确保服务分流只处理 IPv4 目标。
 
 ## DNS 规则顺序
 
 `DnsProfileBuilder` 的顶层顺序是：
 
-1. 启用 Tailscale 时，将 MagicDNS 和分流后缀交给 Tailscale DNS，并禁用
+1. 所有 AAAA 查询直接返回空 `NOERROR`，不进入任何上游 DNS。
+2. 启用 Tailscale 时，将 MagicDNS 和分流后缀交给 Tailscale DNS，并禁用
    optimistic 过期缓存。
-2. 普通 DNS 查询命中代理节点域名时，使用专用本地解析器，仅请求 A 记录，
+3. 普通 DNS 查询命中代理节点域名时，使用专用本地解析器，仅请求 A 记录，
    并禁用 optimistic 过期缓存。代理出站解析自己的服务器域名时不会经过这条
    规则，而由各出站的 `domain_resolver` 独立施加同样约束。
-3. 广告域名直接返回 `NXDOMAIN`。
-4. 所有代理服务 rule-set 的 AAAA 请求返回空 `NOERROR`。这条规则位于
-   Google 和国内 DNS 规则之前，避免 rule-set 交集返回代理业务 IPv6。
+4. 广告域名直接返回 `NXDOMAIN`。
 5. `google` 的非 AAAA 查询首选 Cloudflare DNS，失败后使用 Google DNS，
    两者都通过主代理组。
 6. `cn` 首选 AliDNS，失败后使用 Tencent DNS。
-7. 未命中上述国内规则的 AAAA 请求返回空 `NOERROR`。
-8. 其他查询首选 Cloudflare DNS，失败后使用 Google DNS。
+7. 其他查询首选 Cloudflare DNS，失败后使用 Google DNS。
 
-这保证 Google 以及其他代理业务不会先命中国内 DNS 规则而获得 AAAA。
-国内域名仍允许 A/AAAA；其他 AAAA 被空答复，路由层再拒绝应用内置 DoH、
-缓存或硬编码地址带来的非国内公网 IPv6。
+全局 `dns.strategy` 为 `ipv4_only`，国内域名也不再获得 AAAA。路由层的双重
+IPv6 拒绝继续覆盖应用内置 DoH、缓存或硬编码地址等绕过 sing-box DNS 的情况。
 
 ## DNS 顺序回退语义
 

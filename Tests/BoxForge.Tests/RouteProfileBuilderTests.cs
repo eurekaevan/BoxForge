@@ -40,7 +40,7 @@ public sealed class RouteProfileBuilderTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(androidDirect, Has.Count.EqualTo(8));
+            Assert.That(androidDirect, Has.Count.EqualTo(7));
             Assert.That(preSniffDirect, Has.Count.EqualTo(2));
             Assert.That(
                 preSniffDirect.Any(rule => rule.IpIsPrivate == true),
@@ -51,9 +51,9 @@ public sealed class RouteProfileBuilderTests
                 Is.True);
             Assert.That(DirectRules(windows), Has.Count.EqualTo(androidDirect.Count));
             Assert.That(DirectRules(linux), Has.Count.EqualTo(androidDirect.Count));
-            Assert.That(windowsBridge, Has.Count.EqualTo(7));
-            Assert.That(linuxBridge, Has.Count.EqualTo(7));
-            Assert.That(linuxBypass, Has.Count.EqualTo(7));
+            Assert.That(windowsBridge, Has.Count.EqualTo(6));
+            Assert.That(linuxBridge, Has.Count.EqualTo(6));
+            Assert.That(linuxBypass, Has.Count.EqualTo(6));
             Assert.That(
                 windows.Rules.Any(rule => rule.Action == RouteRuleAction.Bypass),
                 Is.False);
@@ -85,11 +85,11 @@ public sealed class RouteProfileBuilderTests
             Assert.That(
                 windowsBridge.Count(rule => windows.Rules.IndexOf(rule)
                     > FindSniffIndex(windows, "udp")),
-                Is.EqualTo(5));
+                Is.EqualTo(4));
             Assert.That(
                 linuxBypass.Count(rule => linux.Rules.IndexOf(rule)
                     > FindSniffIndex(linux, "udp")),
-                Is.EqualTo(5));
+                Is.EqualTo(4));
             Assert.That(
                 windowsBridge.Where(rule => windows.Rules.IndexOf(rule)
                     > FindSniffIndex(windows, "udp"))
@@ -126,53 +126,42 @@ public sealed class RouteProfileBuilderTests
     [TestCase(TargetPlatform.Android)]
     [TestCase(TargetPlatform.Linux)]
     [TestCase(TargetPlatform.Windows)]
-    public void ForeignIpv6IsRejectedForTunBeforeSniffWithLateFallbackPreserved(
+    public void AllIpv6IsRejectedBeforeSniffWithLateFallbackPreserved(
         TargetPlatform platform)
     {
         RouteConfig route = CreateBuilder().Build(platform);
-        RouteRule earlyReject = route.Rules.Single(rule =>
-            rule.Type == RouteRuleType.Logical
-            && rule.Action == RouteRuleAction.Reject
-            && rule.Rules?.Any(child => child.Invert == true) == true);
-        IReadOnlyList<RouteRule> earlyMatchers = earlyReject.Rules!;
-        int earlyRejectIndex = route.Rules.IndexOf(earlyReject);
-        int bootstrapDirectIndex = route.Rules.FindIndex(rule =>
-            rule.Action == RouteRuleAction.Route
-            && rule.Outbound == SingboxTags.DirectOutbound
-            && rule.IpCidr?.SequenceEqual(["223.5.5.5/32"]) == true);
-        RouteRule lateReject = route.Rules.Single(rule =>
+        List<RouteRule> ipv6Rejects = route.Rules.Where(rule =>
             rule.Action == RouteRuleAction.Reject
-            && rule.IpVersion == 6);
-        int lateRejectIndex = route.Rules.IndexOf(lateReject);
+            && rule.IpVersion == 6).ToList();
+        RouteRule earlyReject = ipv6Rejects[0];
+        int earlyRejectIndex = route.Rules.FindIndex(rule =>
+            rule.Action == RouteRuleAction.Reject && rule.IpVersion == 6);
+        RouteRule lateReject = ipv6Rejects[1];
+        int lateRejectIndex = route.Rules.FindLastIndex(rule =>
+            rule.Action == RouteRuleAction.Reject && rule.IpVersion == 6);
+        int domesticResolveIndex = route.Rules.FindIndex(rule =>
+            rule.Action == RouteRuleAction.Resolve
+            && rule.RuleSet?.SequenceEqual([RuleSetTags.Cn]) == true);
 
         Assert.Multiple(() =>
         {
             Assert.That(
                 new[]
                 {
-                    bootstrapDirectIndex,
                     earlyRejectIndex,
                     FindFirstSniffIndex(route),
+                    domesticResolveIndex,
                     lateRejectIndex
                 },
                 Is.Ordered.And.All.GreaterThanOrEqualTo(0));
-            Assert.That(earlyReject.Mode, Is.EqualTo(RouteLogicalMode.And));
+            Assert.That(ipv6Rejects, Has.Count.EqualTo(2));
+            Assert.That(earlyReject.Type, Is.Null);
             Assert.That(earlyReject.NoDrop, Is.Null);
-            Assert.That(earlyMatchers, Has.Count.EqualTo(3));
-            Assert.That(
-                earlyMatchers.Any(child =>
-                    child.Inbound?.SequenceEqual([SingboxTags.TunInbound]) == true),
-                Is.True);
-            Assert.That(
-                earlyMatchers.Any(child => child.IpVersion == 6),
-                Is.True);
-            Assert.That(
-                earlyMatchers.Any(child =>
-                    child.RuleSet?.SequenceEqual(["cnip"]) == true
-                    && child.Invert == true),
-                Is.True);
             Assert.That(lateReject.Type, Is.Null);
             Assert.That(lateReject.NoDrop, Is.Null);
+            Assert.That(route.Rules.Any(rule =>
+                rule.Action == RouteRuleAction.Route
+                && ContainsIpv6Condition(rule)), Is.False);
         });
     }
 
@@ -246,13 +235,9 @@ public sealed class RouteProfileBuilderTests
             && rule.RuleSet?.Contains("google") == true);
         int domesticResolveIndex = route.Rules.FindIndex(rule =>
             rule.Action == RouteRuleAction.Resolve
-            && rule.Strategy == DnsStrategy.PreferIpv4
+            && rule.Strategy == DnsStrategy.Ipv4Only
             && rule.RuleSet?.Contains("cn") == true);
-        int domesticIpv6DirectIndex = route.Rules.FindIndex(rule =>
-            rule.Action == RouteRuleAction.Route
-            && rule.Outbound == SingboxTags.DirectOutbound
-            && ContainsIpv6Condition(rule));
-        int publicIpv6RejectIndex = route.Rules.FindIndex(rule =>
+        int lateIpv6RejectIndex = route.Rules.FindLastIndex(rule =>
             rule.Action == RouteRuleAction.Reject
             && rule.IpVersion == 6);
         int aiRouteIndex = FindRouteRuleIndex(
@@ -276,8 +261,7 @@ public sealed class RouteProfileBuilderTests
                     domesticResolveIndex,
                     aiUdp443RejectIndex,
                     googleUdp443RejectIndex,
-                    domesticIpv6DirectIndex,
-                    publicIpv6RejectIndex,
+                    lateIpv6RejectIndex,
                     aiRouteIndex,
                     googleRouteIndex,
                     firstDomesticIpv4RuleIndex
@@ -350,18 +334,16 @@ public sealed class RouteProfileBuilderTests
     }
 
     [Test]
-    public void DomesticIpv6IsDirectBeforeOtherPublicIpv6IsRejected()
+    public void NoIpv6RouteCanReachDirectOrProxyOutbounds()
     {
         RouteConfig route = CreateBuilder().Build(TargetPlatform.Linux);
 
-        int domesticIpv6DirectIndex = route.Rules.FindIndex(rule =>
-            rule.Action == RouteRuleAction.Route
-            && rule.Outbound == SingboxTags.DirectOutbound
-            && ContainsIpv6Condition(rule)
-            && ReferencedRuleSets(rule).SequenceEqual(["cnip"]));
-        int publicIpv6RejectIndex = route.Rules.FindIndex(rule =>
-            rule.Action == RouteRuleAction.Reject
-            && rule.IpVersion == 6);
+        List<int> ipv6RejectIndexes = route.Rules
+            .Select((rule, index) => (Rule: rule, Index: index))
+            .Where(item => item.Rule.Action == RouteRuleAction.Reject
+                && item.Rule.IpVersion == 6)
+            .Select(item => item.Index)
+            .ToList();
         List<int> proxyServiceRouteIndexes = route.Rules
             .Select((rule, index) => (Rule: rule, Index: index))
             .Where(item => item.Rule.Action == RouteRuleAction.Route
@@ -373,25 +355,17 @@ public sealed class RouteProfileBuilderTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(
-                new[] { domesticIpv6DirectIndex, publicIpv6RejectIndex },
-                Is.Ordered.And.All.GreaterThanOrEqualTo(0));
+            Assert.That(ipv6RejectIndexes, Has.Count.EqualTo(2));
             Assert.That(proxyServiceRouteIndexes, Is.Not.Empty);
             Assert.That(
                 proxyServiceRouteIndexes,
-                Is.All.GreaterThan(publicIpv6RejectIndex),
-                "Every proxy service route must be behind the public IPv6 gate.");
+                Is.All.GreaterThan(ipv6RejectIndexes[^1]),
+                "Every proxy service route must be behind the late IPv6 gate.");
             Assert.That(
-                route.Rules[domesticIpv6DirectIndex].Type,
-                Is.EqualTo(RouteRuleType.Logical));
-            Assert.That(
-                route.Rules[domesticIpv6DirectIndex].Mode,
-                Is.EqualTo(RouteLogicalMode.And));
-            Assert.That(
-                route.Rules.Any(rule => ContainsIpv6Condition(rule)
-                    && ContainsUdp443Condition(rule)),
+                route.Rules.Any(rule => rule.Action == RouteRuleAction.Route
+                    && ContainsIpv6Condition(rule)),
                 Is.False,
-                "Domestic IPv6 UDP/443 must be routed directly, not rejected.");
+                "IPv6 must never be routed to an outbound.");
         });
     }
 
@@ -412,7 +386,7 @@ public sealed class RouteProfileBuilderTests
             && rule.RuleSet?.SequenceEqual(expectedProxyRuleSets) == true);
         RouteRule domesticResolve = route.Rules.Single(rule =>
             rule.Action == RouteRuleAction.Resolve
-            && rule.Strategy == DnsStrategy.PreferIpv4
+            && rule.Strategy == DnsStrategy.Ipv4Only
             && rule.RuleSet?.SequenceEqual(
                 [RuleSetTags.Cn]) == true);
         RouteRule generalResolve = route.Rules.Single(rule =>

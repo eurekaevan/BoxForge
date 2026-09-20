@@ -143,7 +143,7 @@ public sealed class DnsProfileBuilderTests
     }
 
     [Test]
-    public void GoogleRemoteDnsPrecedesDomesticDns()
+    public void GlobalAaaaBlockPrecedesGoogleAndDomesticDns()
     {
         DnsConfig dns = CreateBuilder().Build(
             new NodeCatalog([], [], []),
@@ -151,9 +151,8 @@ public sealed class DnsProfileBuilderTests
 
         int adBlockingIndex = dns.Rules.FindIndex(rule =>
             rule.RuleSet?.Contains(RuleSetTags.Ads) == true);
-        int serviceAaaaBlockIndex = dns.Rules.FindIndex(rule =>
+        int globalAaaaBlockIndex = dns.Rules.FindIndex(rule =>
             rule.QueryType?.Contains("AAAA") == true
-            && rule.RuleSet?.Contains("google") == true
             && rule.Action == DnsRuleAction.Predefined);
         int googleFirstIndex = dns.Rules.FindIndex(rule =>
             rule.Action == DnsRuleAction.Evaluate
@@ -169,8 +168,8 @@ public sealed class DnsProfileBuilderTests
             Assert.That(
                 new[]
                 {
+                    globalAaaaBlockIndex,
                     adBlockingIndex,
-                    serviceAaaaBlockIndex,
                     googleFirstIndex,
                     googleLastIndex,
                     domesticFirstIndex
@@ -183,15 +182,13 @@ public sealed class DnsProfileBuilderTests
                 dns.Rules[googleFirstIndex].Server,
                 Is.EqualTo(SingboxTags.RemoteDns));
             Assert.That(
-                dns.Rules[serviceAaaaBlockIndex].RuleSet,
-                Is.EquivalentTo(ProfileDefinitions.Services
-                    .SelectMany(service => service.RuleSets)
-                    .Distinct(StringComparer.Ordinal)));
+                dns.Rules[globalAaaaBlockIndex].RuleSet,
+                Is.Null);
         });
     }
 
     [Test]
-    public void DomesticRulesAnswerAaaaBeforeOtherAaaaIsBlocked()
+    public void AllAaaaQueriesAreBlockedBeforeSpecializedDnsRules()
     {
         var nodes = new NodeCatalog([], [], ["node.example.cn"]);
         DnsConfig dns = CreateBuilder().Build(nodes, TargetPlatform.Linux);
@@ -207,25 +204,20 @@ public sealed class DnsProfileBuilderTests
             rule.QueryType?.Contains("AAAA") == true
             && rule.Action == DnsRuleAction.Predefined
             && rule.RuleSet == null);
-        int serviceAaaaBlockIndex = dns.Rules.FindIndex(rule =>
-            rule.QueryType?.Contains("AAAA") == true
-            && rule.Action == DnsRuleAction.Predefined
-            && rule.RuleSet != null);
         int globalFirstIndex = dns.Rules.FindIndex(rule =>
             rule.Action == DnsRuleAction.Evaluate
             && rule.Tag == DnsResponseTags.GlobalPrimary);
 
         Assert.Multiple(() =>
         {
-            Assert.That(dns.Strategy, Is.EqualTo(DnsStrategy.PreferIpv4));
+            Assert.That(dns.Strategy, Is.EqualTo(DnsStrategy.Ipv4Only));
             Assert.That(
                 new[]
                 {
+                    otherAaaaBlockIndex,
                     nodeAResolverIndex,
-                    serviceAaaaBlockIndex,
                     domesticFirstIndex,
                     domesticLastIndex,
-                    otherAaaaBlockIndex,
                     globalFirstIndex
                 },
                 Is.Ordered.And.All.GreaterThanOrEqualTo(0));
@@ -234,7 +226,8 @@ public sealed class DnsProfileBuilderTests
                 dns.Rules.Count(rule =>
                     rule.QueryType?.Contains("AAAA") == true
                     && rule.Action == DnsRuleAction.Predefined),
-                Is.EqualTo(2));
+                Is.EqualTo(1));
+            Assert.That(dns.Rules[otherAaaaBlockIndex].RuleSet, Is.Null);
         });
     }
 

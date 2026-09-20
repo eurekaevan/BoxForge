@@ -58,7 +58,8 @@ public sealed class RouteProfileBuilder(
                     }
                 ],
                 Action = RouteRuleAction.HijackDns
-            }
+            },
+            CreateIpv6RejectRule()
         };
 
         if (tailscale.IsEnabled(platform))
@@ -80,7 +81,6 @@ public sealed class RouteProfileBuilder(
             MarkDirectForwarding(
                 new RouteRule { IpCidr = ["223.5.5.5/32"], Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound },
                 DirectForwardingMode.PreSniff),
-            CreateEarlyForeignIpv6RejectRule(),
             CreateSniffRule("tcp", ["http", "tls"]),
             CreateSniffRule("udp", ["quic", "stun"]),
             new()
@@ -108,7 +108,7 @@ public sealed class RouteProfileBuilder(
             DnsStrategy.Ipv4Only));
         rules.Add(CreateMixedResolveRule(
             [RuleSetTags.Cn],
-            DnsStrategy.PreferIpv4));
+            DnsStrategy.Ipv4Only));
 
         var prioritizedServices = ProfileDefinitions.Services.Where(
             service => service.PrecedesDomesticRoutes
@@ -118,12 +118,9 @@ public sealed class RouteProfileBuilder(
             rules.Add(CreateUdp443RejectRule([.. service.RuleSets]));
         }
 
-        rules.AddRange([
-            MarkDirectForwarding(
-                CreateDomesticIpv6DirectRule(SingboxTags.DirectOutbound),
-                DirectForwardingMode.PostUdpSniff),
-            new() { IpVersion = 6, Action = RouteRuleAction.Reject }
-        ]);
+        // Re-check after non-final resolve actions so a domain can never turn
+        // into an IPv6 route target later in evaluation.
+        rules.Add(CreateIpv6RejectRule());
 
         foreach (var service in prioritizedServices)
         {
@@ -302,39 +299,11 @@ public sealed class RouteProfileBuilder(
             Timeout = "300ms"
         };
 
-    private static RouteRule CreateEarlyForeignIpv6RejectRule() =>
+    private static RouteRule CreateIpv6RejectRule() =>
         new()
         {
-            Type = RouteRuleType.Logical,
-            Mode = RouteLogicalMode.And,
-            Rules =
-            [
-                new RouteRule { Inbound = [SingboxTags.TunInbound] },
-                new RouteRule { IpVersion = 6 },
-                new RouteRule
-                {
-                    RuleSet = [RuleSetTags.CnIp],
-                    Invert = true
-                }
-            ],
+            IpVersion = 6,
             Action = RouteRuleAction.Reject
-        };
-
-    private static RouteRule CreateDomesticIpv6DirectRule(string directOutbound) =>
-        new()
-        {
-            Type = RouteRuleType.Logical,
-            Mode = RouteLogicalMode.And,
-            Rules =
-            [
-                new RouteRule { IpVersion = 6 },
-                new RouteRule
-                {
-                    RuleSet = [RuleSetTags.CnIp]
-                }
-            ],
-            Action = RouteRuleAction.Route,
-            Outbound = directOutbound
         };
 
     private static RouteRule CreateMixedResolveRule(

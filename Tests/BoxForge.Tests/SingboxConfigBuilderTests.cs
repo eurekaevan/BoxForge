@@ -35,6 +35,8 @@ public sealed class SingboxConfigBuilderTests
         Assert.Multiple(() =>
         {
             Assert.That(tunInbound.Type, Is.EqualTo("tun"));
+            Assert.That(tunInbound.Address,
+                Is.EqualTo(new[] { "172.19.0.1/30", "fd00::1/126" }));
             Assert.That(mixedInbound.Type, Is.EqualTo("mixed"));
             Assert.That(mixedInbound.Listen, Is.EqualTo("127.0.0.1"));
             Assert.That(mixedInbound.ListenPort, Is.EqualTo(8848));
@@ -219,7 +221,7 @@ public sealed class SingboxConfigBuilderTests
     }
 
     [Test]
-    public void RouteSerializesIpv6PreMatchAndQuicRejectSemantics()
+    public void RouteSerializesGlobalIpv6RejectAndQuicRejectSemantics()
     {
         SingboxConfig config = CreateBuilder().Build(new SingboxBuildRequest(
             new NodeCatalog([], [], []),
@@ -231,14 +233,15 @@ public sealed class SingboxConfigBuilderTests
         Assert.Multiple(() =>
         {
             Assert.That(json, Does.Contain("\"ip_version\": 6"));
+            Assert.That(
+                json.Split("\"ip_version\": 6", StringSplitOptions.None).Length - 1,
+                Is.EqualTo(2));
             Assert.That(json, Does.Not.Contain("::/0"));
             Assert.That(
                 json.Split("\"no_drop\": true", StringSplitOptions.None).Length - 1,
                 Is.EqualTo(3));
             Assert.That(json, Does.Not.Contain("\"no_drop\": false"));
-            Assert.That(
-                json.Split("\"invert\": true", StringSplitOptions.None).Length - 1,
-                Is.EqualTo(1));
+            Assert.That(json, Does.Not.Contain("\"invert\": true"));
             Assert.That(json, Does.Not.Contain("\"invert\": false"));
         });
 

@@ -8,8 +8,8 @@ CLI 会为 Windows、Android 和 Linux 批量生成平台化配置，并在
 
 - 支持 `trojan`、`vless`、`hysteria2`、`shadowsocks` (`ss`) 和 `anytls`
 - 自动生成地区 URLTest AUTO、人工 selector、DNS、路由规则和远程 rule-set
-- 强制代理节点与代理业务使用 IPv4，仅允许命中 `cnip` 的公网 IPv6 直连
-- TUN 外国公网 IPv6 在 sniff 前直接拒绝，并保留后置 IPv6 correctness fallback
+- 全局 DNS 与域名解析只使用 IPv4，所有 AAAA 查询返回空 `NOERROR`
+- TUN 保留仅用于捕获的 IPv6 地址，并在 sniff 前拒绝全部 IPv6；解析后另有兜底拒绝，防止硬编码地址、缓存和内置 DoH 逃逸
 - Linux/Windows 为 sniff 前快路径及 sniff 后 UDP 国内直连提供 `bridge` L3
   forwarding，Linux 优先使用 `auto_redirect` kernel-level `bypass`
 - 默认生成 sing-box 内置 Tailscale endpoint，支持按需连接、MagicDNS、子网路由和 Taildrop
