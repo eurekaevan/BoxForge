@@ -37,7 +37,6 @@ public record UrlTestOutbound : Outbound
 
 public record DirectOutbound : Outbound
 {
-    [JsonPropertyName("domain_resolver")] public required string DomainResolver { get; init; }
 }
 
 public record BridgeOutbound : Outbound;
@@ -47,13 +46,6 @@ public abstract record ProxyOutbound : Outbound
     [JsonPropertyName("server")] public required string Server { get; init; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [JsonPropertyName("server_port")] public int? ServerPort { get; init; }
-    [JsonPropertyName("domain_resolver")]
-    public DnsResolverOptions DomainResolver { get; init; } = new()
-    {
-        Server = SingboxTags.NodeResolverDns,
-        Strategy = DnsStrategy.Ipv4Only,
-        DisableOptimisticCache = true
-    };
     [JsonPropertyName("connect_timeout")] public string ConnectTimeout { get; init; } = "5s";
     [JsonPropertyName("tcp_keep_alive")] public string? TcpKeepAlive { get; init; }
     [JsonPropertyName("tcp_keep_alive_interval")] public string? TcpKeepAliveInterval { get; init; }

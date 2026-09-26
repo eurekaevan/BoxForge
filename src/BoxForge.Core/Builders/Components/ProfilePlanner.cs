@@ -16,11 +16,7 @@ public static class ProfilePlanner
             regionAutoOutbounds);
         var mainOutbound = BuildMainOutbound(nodes, regionOutbounds);
         var serviceOutbounds = BuildServiceOutbounds(nodes, generatedRegions);
-        var directOutbound = new DirectOutbound
-        {
-            Tag = SingboxTags.DirectOutbound,
-            DomainResolver = SingboxTags.LocalDns
-        };
+        var directOutbound = new DirectOutbound { Tag = SingboxTags.DirectOutbound };
 
         return new ProfilePlan(
             mainOutbound,

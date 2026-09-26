@@ -9,6 +9,8 @@ public record RouteConfig
     [JsonPropertyName("final")] public string? Final { get; init; }
     [JsonPropertyName("auto_detect_interface")] public bool AutoDetectInterface { get; init; } = true;
     [JsonPropertyName("default_http_client")] public string? DefaultHttpClient { get; init; }
+    [JsonPropertyName("default_domain_resolver")]
+    public DnsResolverOptions? DefaultDomainResolver { get; init; }
 }
 
 public record SingboxRuleSet

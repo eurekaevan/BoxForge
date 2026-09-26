@@ -32,11 +32,7 @@ public sealed class SingboxConfigBuilder(
             {
                 Tag = HttpClientTags.RuleSetProxy,
                 Detour = ruleSetDetour,
-                DomainResolver = new DnsResolverOptions
-                {
-                    Server = SingboxTags.LocalDns,
-                    Strategy = DnsStrategy.Ipv4Only
-                }
+                DomainResolver = ControlPlaneDnsPolicy.CreateResolver(request.Platform)
             }
         };
         if (services.Count > 0)
@@ -44,11 +40,7 @@ public sealed class SingboxConfigBuilder(
             httpClients.Add(new HttpClientConfig
             {
                 Tag = HttpClientTags.DashboardDirect,
-                DomainResolver = new DnsResolverOptions
-                {
-                    Server = SingboxTags.LocalDns,
-                    Strategy = DnsStrategy.Ipv4Only
-                }
+                DomainResolver = ControlPlaneDnsPolicy.CreateResolver(request.Platform)
             });
         }
 
@@ -71,7 +63,7 @@ public sealed class SingboxConfigBuilder(
         return new SingboxConfig
         {
             Log = new LogConfig(),
-            Dns = dnsProfileBuilder.Build(request.Nodes, request.Platform),
+            Dns = dnsProfileBuilder.Build(request.Platform),
             HttpClients = httpClients,
             Inbounds = InboundBuilder.Build(request.Platform),
             Endpoints = endpoints.Count > 0 ? endpoints : null,

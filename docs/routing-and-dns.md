@@ -50,44 +50,52 @@ IPv6 早期拒绝 → 广告拒绝 → IPv4-only 域名解析 → IPv6 兜底拒
 `cn` 可能与 Google 等业务 rule-set 相交。所有代理服务路由则必须
 位于后置 IPv6 拒绝之后，确保服务分流只处理 IPv4 目标。
 
-## DNS 规则顺序
+## DNS Architecture v2
 
-`DnsProfileBuilder` 的顶层顺序是：
+`AddressFamilyPolicies` 为 Linux、Windows、Android 统一选择 `Ipv4Only`。
+它同时生成 `dns.strategy = ipv4_only`、最前面的全局 AAAA 空 `NOERROR`，
+以及 route 的早期和解析后 IPv6 reject。保留 `DualStack` 策略入口，但当前
+没有平台使用它。路由 reject 仍覆盖字面量 IPv6 和不经 sing-box DNS 的连接。
 
-1. 所有 AAAA 查询直接返回空 `NOERROR`，不进入任何上游 DNS。
-2. 启用 Tailscale 时，将 MagicDNS 和分流后缀交给 Tailscale DNS，并禁用
-   optimistic 过期缓存。
-3. 普通 DNS 查询命中代理节点域名时，使用专用本地解析器，仅请求 A 记录，
-   并禁用 optimistic 过期缓存。代理出站解析自己的服务器域名时不会经过这条
-   规则，而由各出站的 `domain_resolver` 独立施加同样约束。
-4. 广告域名直接返回 `NXDOMAIN`。
-5. `google` 的非 AAAA 查询首选 Cloudflare DNS，失败后使用 Google DNS，
-   两者都通过主代理组。
-6. `cn` 首选 AliDNS，失败后使用 Tencent DNS。
-7. 其他查询首选 Cloudflare DNS，失败后使用 Google DNS。
+控制平面域名由 `route.default_domain_resolver` 解析：直连
+`dns-direct-alidns`、`ipv4_only`、`disable_optimistic_cache = true`。
+代理节点、直连出站和 Tailscale endpoint 继承该设置；rule-set 和 Dashboard
+HTTP client 显式使用相同 resolver。节点域名不加入 client DNS 规则。
 
-全局 `dns.strategy` 为 `ipv4_only`，国内域名也不再获得 AAAA。路由层的双重
-IPv6 拒绝继续覆盖应用内置 DoH、缓存或硬编码地址等绕过 sing-box DNS 的情况。
+client DNS 依次分类：
 
-## DNS 顺序回退语义
+1. 所有 AAAA 查询返回空 `NOERROR`。
+2. 启用 Tailscale 时，`preferred_by` 命中的 MagicDNS 和 split DNS 交给
+   `dns-tailscale`，禁用 optimistic 缓存。
+3. `ads` 返回 `NXDOMAIN`。
+4. 从 `ProfileDefinitions.Services` 中所有 `PrecedesDomesticRoutes` 服务导出
+   rule-set；当前 AI 和 Google 进入 GLOBAL pool，优先于 `cn`。
+5. `cn` 进入 DOMESTIC pool。
+6. 其余查询进入 GLOBAL pool。
 
-每组生成一个首选 `evaluate`、两个 `respond` 和一个备用 `route`，
-不生成 `race` 或 `speculative`：
+## Resolver pool 响应语义
 
-- 首选返回 `NOERROR`（包括 NODATA 和 TXT/HTTPS 等非地址答案）或 `NXDOMAIN`
-  时直接返回，不启动备用查询。NXDOMAIN 不再等待另一家上游确认。
-- 首选超时、传输失败或返回其他 rcode（如 SERVFAIL/REFUSED）时，才查询备用。
-  备用的响应或错误直接结束该组，不重复查询，也不落入其他 DNS 分流。
-- `dns.timeout = 5s` 是每次上游查询的默认超时。国内首选和备用均继承
-  `5s`；两个远程场景首选覆盖为 `2s`，备用继承 `5s`。因此两次都超时时，
-  国内链可能约需 `10s`，远程链约需 `7s`，并非全链共享 5s 截止时间。
-- 正常 TTL 缓存与 optimistic 缓存保持启用；命中缓存不代表发生了上游查询。
-  显式指定 server 的节点、Tailscale 或内部解析不经过这些回退链。
+DOMESTIC 的首选为直连 AliDNS、备用为直连 Tencent；GLOBAL 的首选为经主代理
+Cloudflare、备用为经主代理 Google。每个 pool 编译为两个带独立响应 tag 的
+`evaluate`、首选 `NOERROR` / `NXDOMAIN` 两条 `respond`、备用的同两条
+`respond`，最后是该分类范围内的 `predefined SERVFAIL`。
 
-字段依据：[DNS timeout](https://sing-box.sagernet.org/configuration/dns/#timeout_1)、
-[evaluate / respond](https://sing-box.sagernet.org/configuration/dns/rule_action/)。
+两个 `evaluate` 异步启动；`respond` 不启用 `race`，因此即使备用先返回，
+仍先等待首选。首选 `NOERROR`（包括 NODATA、TXT 和 HTTPS 等答案）或
+`NXDOMAIN` 直接返回；首选传输失败、超时、SERVFAIL 或 REFUSED 时采用备用的
+成功或 NXDOMAIN。双方都失败则明确返回 SERVFAIL，priority 和 CN 失败不会
+穿透到后一分类。`dns.final = dns-proxy-cloudflare` 仅为异常兜底，正常 client
+查询由各自 pool 结束。默认单次查询超时 `5s`；并行查询的总等待通常受较慢
+的首选结果或备用截止时间影响。
 
-`RouteProfileBuilderTests` 和 `DnsProfileBuilderTests` 会校验关键规则的实际索引。
-修改服务定义或国内规则时，应同时更新实现、顺序测试和本文。
+正常 TTL 缓存和容量 4096 的 reverse mapping 保留；optimistic 缓存超时为
+`6h`。控制平面解析和 Tailscale split DNS 禁用 optimistic 缓存。
+
+上述规则依据 sing-box 1.15.0-alpha.8 的
+[DNS rule action](https://sing-box.sagernet.org/configuration/dns/rule_action/)、
+[DNS rule](https://sing-box.sagernet.org/configuration/dns/rule/) 和
+[route default_domain_resolver](https://sing-box.sagernet.org/configuration/route/)。
+本阶段不生成 `dns_server_address`、`dns_search_domain`、DHCP 或 local
+resolver。
 
 [返回 README](../README.md)

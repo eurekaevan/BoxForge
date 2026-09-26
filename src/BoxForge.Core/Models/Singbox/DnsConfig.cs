@@ -8,8 +8,8 @@ public record DnsConfig
     [JsonPropertyName("timeout")] public string Timeout { get; init; } = "5s";
     [JsonPropertyName("servers")] public List<DnsServer> Servers { get; init; } = [];
     [JsonPropertyName("rules")] public List<DnsRule> Rules { get; init; } = [];
-    [JsonPropertyName("final")] public string Final { get; init; } = SingboxTags.RemoteDns;
-    [JsonPropertyName("strategy")] public DnsStrategy Strategy { get; init; } = DnsStrategy.Ipv4Only;
+    [JsonPropertyName("final")] public string Final { get; init; } = SingboxTags.ProxyCloudflareDns;
+    [JsonPropertyName("strategy")] public DnsStrategy? Strategy { get; init; }
     [JsonPropertyName("cache_capacity")] public uint CacheCapacity { get; init; } = 4096;
     [JsonPropertyName("optimistic")] public DnsOptimisticConfig Optimistic { get; init; } = new();
     [JsonPropertyName("reverse_mapping")] public bool ReverseMapping { get; init; } = true;
@@ -18,7 +18,7 @@ public record DnsConfig
 public record DnsOptimisticConfig
 {
     [JsonPropertyName("enabled")] public bool Enabled { get; init; } = true;
-    [JsonPropertyName("timeout")] public string Timeout { get; init; } = "3d";
+    [JsonPropertyName("timeout")] public string Timeout { get; init; } = "6h";
 }
 
 public record DnsResolverOptions
@@ -38,11 +38,6 @@ public abstract record DnsServer
     [JsonPropertyName("tls")] public virtual DnsTlsConfig? Tls => null;
     [JsonPropertyName("endpoint")] public virtual string? Endpoint => null;
     [JsonPropertyName("accept_default_resolvers")] public virtual bool? AcceptDefaultResolvers => null;
-}
-
-public record LocalDnsServer : DnsServer
-{
-    public override string Type => "local";
 }
 
 public record HttpsDnsServer : DnsServer

@@ -12,6 +12,7 @@ public sealed class RouteProfileBuilder(
 
     public RouteConfig Build(TargetPlatform platform)
     {
+        AddressFamilyPolicy addressFamily = AddressFamilyPolicies.For(platform);
         var directForwardingModes = new Dictionary<RouteRule, DirectForwardingMode>(
             ReferenceEqualityComparer.Instance);
         RouteRule MarkDirectForwarding(
@@ -25,7 +26,8 @@ public sealed class RouteProfileBuilder(
         var route = new RouteConfig
         {
             Final = SingboxTags.MainProxyGroup,
-            DefaultHttpClient = HttpClientTags.RuleSetProxy
+            DefaultHttpClient = HttpClientTags.RuleSetProxy,
+            DefaultDomainResolver = ControlPlaneDnsPolicy.CreateResolver(platform)
         };
 
         route.RuleSet.AddRange([
@@ -58,9 +60,12 @@ public sealed class RouteProfileBuilder(
                     }
                 ],
                 Action = RouteRuleAction.HijackDns
-            },
-            CreateIpv6RejectRule()
+            }
         };
+        if (addressFamily == AddressFamilyPolicy.Ipv4Only)
+        {
+            rules.Add(CreateIpv6RejectRule());
+        }
 
         if (tailscale.IsEnabled(platform))
         {
@@ -105,10 +110,10 @@ public sealed class RouteProfileBuilder(
         ];
         rules.Add(CreateMixedResolveRule(
             proxyServiceRuleSets,
-            DnsStrategy.Ipv4Only));
+            addressFamily.ToDnsStrategy()));
         rules.Add(CreateMixedResolveRule(
             [RuleSetTags.Cn],
-            DnsStrategy.Ipv4Only));
+            addressFamily.ToDnsStrategy()));
 
         var prioritizedServices = ProfileDefinitions.Services.Where(
             service => service.PrecedesDomesticRoutes
@@ -120,7 +125,10 @@ public sealed class RouteProfileBuilder(
 
         // Re-check after non-final resolve actions so a domain can never turn
         // into an IPv6 route target later in evaluation.
-        rules.Add(CreateIpv6RejectRule());
+        if (addressFamily == AddressFamilyPolicy.Ipv4Only)
+        {
+            rules.Add(CreateIpv6RejectRule());
+        }
 
         foreach (var service in prioritizedServices)
         {
@@ -137,7 +145,7 @@ public sealed class RouteProfileBuilder(
                 Port = [443],
                 Network = ["udp"],
                 Action = RouteRuleAction.Resolve,
-                Strategy = DnsStrategy.Ipv4Only
+                Strategy = addressFamily.ToDnsStrategy()
             },
             MarkDirectForwarding(
                 CreateDomesticUdp443DirectRule([RuleSetTags.CnIp], SingboxTags.DirectOutbound),
@@ -160,7 +168,7 @@ public sealed class RouteProfileBuilder(
             {
                 Inbound = [SingboxTags.MixedInbound],
                 Action = RouteRuleAction.Resolve,
-                Strategy = DnsStrategy.Ipv4Only
+                Strategy = addressFamily.ToDnsStrategy()
             },
             new RouteRule
             {
@@ -308,7 +316,7 @@ public sealed class RouteProfileBuilder(
 
     private static RouteRule CreateMixedResolveRule(
         List<string> ruleSets,
-        DnsStrategy strategy) =>
+        DnsStrategy? strategy) =>
         new()
         {
             Inbound = [SingboxTags.MixedInbound],

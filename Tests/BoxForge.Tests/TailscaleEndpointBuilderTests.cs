@@ -27,9 +27,7 @@ public sealed class TailscaleEndpointBuilderTests
         Assert.Multiple(() =>
         {
             Assert.That(endpoint.Tag, Is.EqualTo(SingboxTags.TailscaleEndpoint));
-            Assert.That(
-                endpoint.DomainResolver,
-                Is.EqualTo(SingboxTags.BootstrapDns));
+            Assert.That(json, Does.Not.Contain("\"domain_resolver\""));
             Assert.That(
                 endpoint.StateDirectory,
                 Is.EqualTo(SingboxTags.TailscaleStateDirectory));

@@ -72,8 +72,8 @@ public sealed class SingboxConfigBuilderTests
         bool hasDnsServer = config.Dns.Servers
             .OfType<TailscaleDnsServer>()
             .Any();
-        bool hasBootstrap = config.Dns.Servers.Any(server =>
-            server.Tag == SingboxTags.BootstrapDns);
+        bool hasDirectBootstrap = config.Dns.Servers.Any(server =>
+            server.Tag == SingboxTags.DirectAliDns);
         bool hasRoute = config.Route.Rules.Any(rule =>
             rule.PreferredBy?.Contains(SingboxTags.TailscaleEndpoint) == true);
         string json = new ConfigSerializer().Serialize(config);
@@ -83,7 +83,9 @@ public sealed class SingboxConfigBuilderTests
             Assert.That(endpoint, Is.Not.Null);
             Assert.That(endpoint!.OnDemand, Is.True);
             Assert.That(hasDnsServer, Is.True);
-            Assert.That(hasBootstrap, Is.True);
+            Assert.That(hasDirectBootstrap, Is.True);
+            Assert.That(config.Route.DefaultDomainResolver?.Server,
+                Is.EqualTo(SingboxTags.DirectAliDns));
             Assert.That(hasRoute, Is.True);
             Assert.That(json, Does.Contain("\"on_demand\": true"));
         });
@@ -165,7 +167,7 @@ public sealed class SingboxConfigBuilderTests
             Assert.That(regionAuto.Outbounds, Is.EqualTo(new[] { first.Tag, second.Tag }));
             Assert.That(
                 proxyClient.DomainResolver?.Server,
-                Is.EqualTo(SingboxTags.LocalDns));
+                Is.EqualTo(SingboxTags.DirectAliDns));
             Assert.That(
                 proxyClient.DomainResolver?.Strategy,
                 Is.EqualTo(DnsStrategy.Ipv4Only));
@@ -294,7 +296,7 @@ public sealed class SingboxConfigBuilderTests
     }
 
     [Test]
-    public void ProxyServerDomainsUseFreshIpv4OnlyResolverObjects()
+    public void ProxyServerDomainsInheritFreshIpv4OnlyControlPlaneResolver()
     {
         var proxy = new VlessOutbound
         {
@@ -308,23 +310,22 @@ public sealed class SingboxConfigBuilderTests
             TargetPlatform.Linux,
             new string('b', 64)));
 
-        ProxyOutbound generated = config.Outbounds
-            .OfType<ProxyOutbound>()
-            .Single();
         string json = new ConfigSerializer().Serialize(config);
 
         Assert.Multiple(() =>
         {
             Assert.That(
-                generated.DomainResolver.Server,
-                Is.EqualTo(SingboxTags.NodeResolverDns));
+                config.Route.DefaultDomainResolver?.Server,
+                Is.EqualTo(SingboxTags.DirectAliDns));
             Assert.That(
-                generated.DomainResolver.Strategy,
+                config.Route.DefaultDomainResolver?.Strategy,
                 Is.EqualTo(DnsStrategy.Ipv4Only));
             Assert.That(
-                generated.DomainResolver.DisableOptimisticCache,
+                config.Route.DefaultDomainResolver?.DisableOptimisticCache,
                 Is.True);
-            Assert.That(json, Does.Contain("\"domain_resolver\": {"));
+            Assert.That(json, Does.Contain("\"default_domain_resolver\": {"));
+            Assert.That(config.Dns.Rules.Any(rule =>
+                rule.Domain?.Contains(proxy.Server) == true), Is.False);
             Assert.That(json, Does.Contain("\"strategy\": \"ipv4_only\""));
             Assert.That(
                 json,

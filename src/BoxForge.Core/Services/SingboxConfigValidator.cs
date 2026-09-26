@@ -108,6 +108,27 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
             "route.default_http_client",
             "引用了不存在的 HTTP client。",
             context.Diagnostics);
+        ValidateReference(
+            route.DefaultDomainResolver?.Server,
+            context.DnsTags,
+            "SB004",
+            "route.default_domain_resolver.server",
+            "引用了不存在的 DNS server。",
+            context.Diagnostics);
+        if (route.DefaultDomainResolver?.Strategy != DnsStrategy.Ipv4Only)
+        {
+            context.Diagnostics.Add(new ConfigDiagnostic(
+                "SB061",
+                "route.default_domain_resolver.strategy",
+                "代理节点域名必须使用 ipv4_only 解析策略。"));
+        }
+        if (route.DefaultDomainResolver?.DisableOptimisticCache != true)
+        {
+            context.Diagnostics.Add(new ConfigDiagnostic(
+                "SB064",
+                "route.default_domain_resolver.disable_optimistic_cache",
+                "代理节点域名解析必须禁用 optimistic 过期缓存。"));
+        }
     }
 
     private static void ValidateHttpClients(
@@ -333,28 +354,6 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
                 "SB020",
                 $"outbounds[{index}].server_port",
                 "代理节点必须配置有效端口。"));
-        }
-
-        ValidateReference(
-            proxy.DomainResolver.Server,
-            context.DnsTags,
-            "SB004",
-            $"outbounds[{index}].domain_resolver.server",
-            "引用了不存在的 DNS server。",
-            context.Diagnostics);
-        if (proxy.DomainResolver.Strategy != DnsStrategy.Ipv4Only)
-        {
-            context.Diagnostics.Add(new ConfigDiagnostic(
-                "SB061",
-                $"outbounds[{index}].domain_resolver.strategy",
-                "代理节点域名必须使用 ipv4_only 解析策略。"));
-        }
-        if (proxy.DomainResolver.DisableOptimisticCache != true)
-        {
-            context.Diagnostics.Add(new ConfigDiagnostic(
-                "SB064",
-                $"outbounds[{index}].domain_resolver.disable_optimistic_cache",
-                "代理节点域名解析必须禁用 optimistic 过期缓存。"));
         }
 
         if (IPAddress.TryParse(proxy.Server, out IPAddress? serverAddress)

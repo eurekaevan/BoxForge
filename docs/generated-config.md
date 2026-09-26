@@ -51,20 +51,18 @@ SFA 工作目录下的 `Taildrop`，Windows 使用
 ## DNS 与持久化缓存
 
 - 生成配置包含官方 `$schema`。
-- DNS 查询默认超时为 `5s`；国内首选 AliDNS，失败后使用 Tencent DNS，
-  两者均继承 `5s`。远程首选 Cloudflare（`2s`），失败后使用 Google DNS；
-  远程备用继承 `5s`。各组按顺序执行，不启用 race 或 speculative；详见
-  [DNS 顺序与回退](routing-and-dns.md)。
-- DNS 默认使用 `ipv4_only`，缓存容量为 `4096`，并启用超时为 `3d` 的
+- DNS 查询默认超时为 `5s`；国内 AliDNS/Tencent 与远程 Cloudflare/Google
+  在各自 resolver pool 内同时发起查询，按首选响应优先级返回，不启用 race。
+  两家都失败时明确返回 `SERVFAIL`；详见
+  [DNS 分类与回退](routing-and-dns.md)。
+- DNS 默认使用 `ipv4_only`，缓存容量为 `4096`，并启用超时为 `6h` 的
   optimistic 缓存和 reverse mapping。
-- 代理节点域名固定通过 `dns-node` 以 `ipv4_only` 解析；所有代理出站的
-  `domain_resolver` 也显式指定 `ipv4_only` 并禁用 optimistic 过期缓存。
-  代理出站的内部解析不会经过普通 DNS 规则，因此该约束直接写在每个出站上；
-  IPv6 字面量代理节点会在生成时被校验器拒绝。
-- 普通 DNS 查询命中代理节点域名时同样禁用 optimistic 过期缓存；Tailscale DNS
-  查询也显式禁用它，避免地址变更后继续使用旧记录。
-- `dns-bootstrap` 仅在目标平台启用 Tailscale endpoint 时生成；它是 endpoint 的
-  独立直连 DoH 启动解析器，不会在未启用 Tailscale 的配置中占位。
+- 代理节点、Tailscale endpoint 和直连出站继承
+  `route.default_domain_resolver`：直连 AliDNS、`ipv4_only`、禁用 optimistic
+  过期缓存。它们的域名解析不进入 client DNS 分类规则。IPv6 字面量代理节点
+  会在生成时被校验器拒绝。
+- rule-set 和 Dashboard HTTP client 显式使用同一 AliDNS 解析设置；
+  Tailscale split DNS 也禁用 optimistic 过期缓存。
 - 所有 AAAA 查询在规则链首部返回空 `NOERROR`，国内 DNS 也只提供 IPv4。
 - `experimental.cache_file` 使用 `cache.db`，并通过 `store_dns` 持久化 DNS 缓存。
 - `cache_id` 是 YAML `proxies` 列表的规范化 SHA-256；字段顺序不影响身份。
@@ -85,7 +83,8 @@ SFA 工作目录下的 `Taildrop`，Windows 使用
   `bbr_profile: standard`。
 - 远程 rule-set 每天更新，通过默认 HTTP client `http-ruleset-proxy` 走代理下载。
   有地区 AUTO 时选择首个地区 AUTO，否则选择首个真实节点；即使主组被手动切到
-  `DIRECT`，rule-set 下载也不会随之改走直连。下载域名仍由本地 DNS 以
+  `DIRECT`，rule-set 下载也不会随之改走直连。下载域名仍由
+  `dns-direct-alidns` 以
   `ipv4_only` 解析，以免代理 DNS 成为冷启动依赖。
 - 规则集来源与内部 tag 的映射如下；代码中的 DNS/route 引用只使用内部 tag，
   不依赖上游文件名。八个 tag 均唯一声明并按 `1d` 更新。

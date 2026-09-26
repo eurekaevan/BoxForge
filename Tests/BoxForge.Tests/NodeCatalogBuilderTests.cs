@@ -41,8 +41,8 @@ public sealed class NodeCatalogBuilderTests
 
     [TestCase("🚀 PROXIES")]
     [TestCase("🇺🇸 US AUTO")]
-    [TestCase("dns-node")]
-    [TestCase("response-cn-alidns")]
+    [TestCase("dns-direct-alidns")]
+    [TestCase("response-domestic-primary")]
     [TestCase("cn")]
     public void StrictValidationRejectsReservedGeneratedTagNames(
         string reservedTag)

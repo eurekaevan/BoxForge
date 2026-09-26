@@ -47,15 +47,16 @@ kebab-case，并按对象用途区分。地区组固定为：
 | TUN / mixed inbound | `tun-in`、`mixed-in` |
 | L3 bridge outbound | `bridge-out` |
 | Tailscale endpoint / DNS | `tailscale`、`dns-tailscale` |
-| 节点 / Tailscale bootstrap DNS | `dns-node`、`dns-bootstrap` |
-| 国内 DNS | `dns-cn-tencent`、`dns-cn-alidns` |
+| 直连 DNS | `dns-direct-alidns`、`dns-direct-tencent` |
 | 代理 DNS | `dns-proxy-google`、`dns-proxy-cloudflare` |
 | rule-set HTTP client | `http-ruleset-proxy` |
 | 可选 Dashboard HTTP client | `http-dashboard-direct` |
 | sing-box API service | `api` |
 
-DNS evaluate/respond 的首选响应 tag 使用 `response-场景-提供方`：
-`response-google-cloudflare`、`response-cn-alidns`、`response-global-cloudflare`。
+DNS evaluate/respond 的响应 tag 使用 `response-范围-优先级`：
+`response-priority-primary`、`response-priority-secondary`、
+`response-domestic-primary`、`response-domestic-secondary`、
+`response-global-primary`、`response-global-secondary`。
 规则集使用 BoxForge 语义 tag：`ads`、`ai`、`google`、`microsoft`、
 `spotify`、`games`、`cn`、`cnip`。外部文件名由来源映射决定，
 不作为内部命名约定。
@@ -86,7 +87,8 @@ Dashboard 中基于旧地区 tag 保存的选择不会迁移，需要重新选�
 VPN/TUN，不创建第二个系统 VPN 接口，并通过 `on_demand: true` 允许 endpoint
 在无需使用时断开。登录状态保存在 `StateDirectory`，不会写入 `config.json`。
 
-Tailscale 控制平面域名通过 `dns-bootstrap` 解析器建立初始连接。该解析器
+Tailscale 控制平面域名继承 `route.default_domain_resolver`，通过
+`dns-direct-alidns` 建立初始连接。该解析器
 固定以 IP 字面量 `223.5.5.5` 直连 AliDNS DoH，TLS `server_name` 为
 `dns.alidns.com`；它不调用系统解析器，也不经主代理组，避免明文
 DNS 和冷启动循环依赖。

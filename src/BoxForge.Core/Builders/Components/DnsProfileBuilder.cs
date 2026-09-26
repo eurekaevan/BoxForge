@@ -5,56 +5,40 @@ using Microsoft.Extensions.Options;
 
 namespace BoxForge.Builders.Components;
 
-public sealed class DnsProfileBuilder(
-    IOptions<TailscaleOptions> tailscaleOptions)
+public sealed class DnsProfileBuilder(IOptions<TailscaleOptions> tailscaleOptions)
 {
     private readonly TailscaleOptions tailscale = tailscaleOptions.Value;
 
-    public DnsConfig Build(NodeCatalog nodes, TargetPlatform platform)
+    public DnsConfig Build(TargetPlatform platform)
     {
-        var dns = new DnsConfig();
-
-        // Keep every DNS client on IPv4, including Tailscale split DNS and
-        // callers that explicitly request AAAA records.
-        dns.Rules.Add(new DnsRule
-        {
-            QueryType = ["AAAA"],
-            Action = DnsRuleAction.Predefined,
-            Rcode = DnsResponseCode.NoError
-        });
+        AddressFamilyPolicy addressFamily = AddressFamilyPolicies.For(platform);
+        var dns = new DnsConfig { Strategy = addressFamily.ToDnsStrategy() };
 
         dns.Servers.AddRange([
-            CreateHttpsServer(SingboxTags.NodeResolverDns, "223.5.5.5", "dns.alidns.com"),
-            CreateHttpsServer(SingboxTags.LocalDns, "223.5.5.5", "dns.alidns.com"),
-            CreateHttpsServer(SingboxTags.LocalTencentDns, "119.29.29.29", "doh.pub"),
-            CreateHttpsServer(
-                SingboxTags.RemoteGoogleDns,
-                "8.8.8.8",
-                "dns.google",
-                SingboxTags.MainProxyGroup),
-            CreateHttpsServer(
-                SingboxTags.RemoteDns,
-                "1.1.1.1",
-                "cloudflare-dns.com",
-                SingboxTags.MainProxyGroup)
+            CreateHttpsServer(SingboxTags.DirectAliDns, "223.5.5.5", "dns.alidns.com"),
+            CreateHttpsServer(SingboxTags.DirectTencentDns, "119.29.29.29", "doh.pub"),
+            CreateHttpsServer(SingboxTags.ProxyCloudflareDns, "1.1.1.1", "cloudflare-dns.com", SingboxTags.MainProxyGroup),
+            CreateHttpsServer(SingboxTags.ProxyGoogleDns, "8.8.8.8", "dns.google", SingboxTags.MainProxyGroup)
         ]);
+
+        if (addressFamily == AddressFamilyPolicy.Ipv4Only)
+        {
+            dns.Rules.Add(new DnsRule
+            {
+                QueryType = ["AAAA"],
+                Action = DnsRuleAction.Predefined,
+                Rcode = DnsResponseCode.NoError
+            });
+        }
 
         if (tailscale.IsEnabled(platform))
         {
-            dns.Servers.Insert(
-                0,
-                CreateHttpsServer(
-                    SingboxTags.BootstrapDns,
-                    "223.5.5.5",
-                    "dns.alidns.com"));
             dns.Servers.Add(new TailscaleDnsServer
             {
                 Tag = SingboxTags.TailscaleDns,
                 EndpointTag = SingboxTags.TailscaleEndpoint,
                 AcceptDefaultResolversValue = false
             });
-
-            // sing-box 直接根据 Tailscale 的 MagicDNS 域名与分流后缀匹配。
             dns.Rules.Add(new DnsRule
             {
                 PreferredBy = [SingboxTags.TailscaleDns],
@@ -64,50 +48,33 @@ public sealed class DnsProfileBuilder(
             });
         }
 
-        if (nodes.ServerDomains.Count > 0)
-        {
-            dns.Rules.Add(new DnsRule
-            {
-                Domain = [.. nodes.ServerDomains],
-                QueryType = ["A"],
-                Action = DnsRuleAction.Route,
-                Server = SingboxTags.NodeResolverDns,
-                DisableOptimisticCache = true
-            });
-        }
-
         dns.Rules.Add(new DnsRule
         {
-            RuleSet =
-            [
-                RuleSetTags.Ads
-            ],
+            RuleSet = [RuleSetTags.Ads],
             Action = DnsRuleAction.Predefined,
             Rcode = DnsResponseCode.NameError
         });
 
-        AddPrimaryFallback(
-            dns.Rules,
-            [RuleSetTags.Google],
-            SingboxTags.RemoteDns,
-            SingboxTags.RemoteGoogleDns,
-            DnsResponseTags.GooglePrimary,
-            "2s");
+        List<string> priorityRuleSets =
+        [
+            .. ProfileDefinitions.Services
+                .Where(service => service.PrecedesDomesticRoutes)
+                .SelectMany(service => service.RuleSets)
+                .Distinct(StringComparer.Ordinal)
+        ];
+        if (priorityRuleSets.Count > 0)
+        {
+            CompilePool(dns.Rules, new ResolverPoolDefinition(
+                priorityRuleSets, SingboxTags.ProxyCloudflareDns, SingboxTags.ProxyGoogleDns,
+                DnsResponseTags.PriorityPrimary, DnsResponseTags.PrioritySecondary));
+        }
 
-        AddPrimaryFallback(
-            dns.Rules,
-            [RuleSetTags.Cn],
-            SingboxTags.LocalDns,
-            SingboxTags.LocalTencentDns,
-            DnsResponseTags.ChinaPrimary);
-
-        AddPrimaryFallback(
-            dns.Rules,
-            null,
-            SingboxTags.RemoteDns,
-            SingboxTags.RemoteGoogleDns,
-            DnsResponseTags.GlobalPrimary,
-            "2s");
+        CompilePool(dns.Rules, new ResolverPoolDefinition(
+            [RuleSetTags.Cn], SingboxTags.DirectAliDns, SingboxTags.DirectTencentDns,
+            DnsResponseTags.DomesticPrimary, DnsResponseTags.DomesticSecondary));
+        CompilePool(dns.Rules, new ResolverPoolDefinition(
+            null, SingboxTags.ProxyCloudflareDns, SingboxTags.ProxyGoogleDns,
+            DnsResponseTags.GlobalPrimary, DnsResponseTags.GlobalSecondary));
         return dns;
     }
 
@@ -123,41 +90,58 @@ public sealed class DnsProfileBuilder(
             TlsConfig = new DnsTlsConfig { ServerName = serverName }
         };
 
-    private static void AddPrimaryFallback(
-        List<DnsRule> rules,
-        List<string>? ruleSet,
-        string primaryServer,
-        string fallbackServer,
-        string responseTag,
-        string? primaryTimeout = null)
+    private static void CompilePool(List<DnsRule> rules, ResolverPoolDefinition pool)
     {
+        // Both queries start before response matching. Matching remains ordered:
+        // a healthy primary wins even when the secondary finishes first.
         rules.Add(new DnsRule
         {
-            RuleSet = ruleSet,
+            RuleSet = pool.RuleSets,
             Action = DnsRuleAction.Evaluate,
-            Server = primaryServer,
-            Tag = responseTag,
-            Timeout = primaryTimeout
+            Server = pool.PrimaryServer,
+            Tag = pool.PrimaryResponse
         });
         rules.Add(new DnsRule
         {
-            RuleSet = ruleSet,
-            MatchResponse = responseTag,
-            ResponseRcode = DnsResponseCode.NoError,
-            Action = DnsRuleAction.Respond
+            RuleSet = pool.RuleSets,
+            Action = DnsRuleAction.Evaluate,
+            Server = pool.SecondaryServer,
+            Tag = pool.SecondaryResponse
         });
+        AddAcceptedResponses(rules, pool.RuleSets, pool.PrimaryResponse);
+        AddAcceptedResponses(rules, pool.RuleSets, pool.SecondaryResponse);
+
+        // This scope boundary handles transport errors and unwanted rcodes.
         rules.Add(new DnsRule
         {
-            RuleSet = ruleSet,
-            MatchResponse = responseTag,
-            ResponseRcode = DnsResponseCode.NameError,
-            Action = DnsRuleAction.Respond
-        });
-        rules.Add(new DnsRule
-        {
-            RuleSet = ruleSet,
-            Action = DnsRuleAction.Route,
-            Server = fallbackServer
+            RuleSet = pool.RuleSets,
+            Action = DnsRuleAction.Predefined,
+            Rcode = DnsResponseCode.ServerFailure
         });
     }
+
+    private static void AddAcceptedResponses(
+        List<DnsRule> rules,
+        List<string>? ruleSets,
+        string responseTag)
+    {
+        foreach (DnsResponseCode rcode in new[]
+                 { DnsResponseCode.NoError, DnsResponseCode.NameError })
+        {
+            rules.Add(new DnsRule
+            {
+                RuleSet = ruleSets,
+                MatchResponse = responseTag,
+                ResponseRcode = rcode,
+                Action = DnsRuleAction.Respond
+            });
+        }
+    }
+
+    private sealed record ResolverPoolDefinition(
+        List<string>? RuleSets,
+        string PrimaryServer,
+        string SecondaryServer,
+        string PrimaryResponse,
+        string SecondaryResponse);
 }

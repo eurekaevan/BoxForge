@@ -337,7 +337,7 @@ public sealed class SingboxConfigValidatorTests
     }
 
     [Test]
-    public void ProxyServersMustUseIpv4OnlyResolutionAndRejectIpv6Literals()
+    public void ControlPlaneMustUseFreshIpv4OnlyResolutionAndRejectIpv6Literals()
     {
         SingboxConfig valid = CreateValidConfig();
         SingboxConfig config = valid with
@@ -350,25 +350,28 @@ public sealed class SingboxConfigValidatorTests
                     Tag = "ipv6-proxy",
                     Server = "2001:db8::1",
                     ServerPort = 443,
-                    DomainResolver = new DnsResolverOptions
-                    {
-                        Server = "dns",
-                        Strategy = DnsStrategy.PreferIpv4
-                    },
                     Uuid = "00000000-0000-4000-8000-000000000001"
                 }
-            ]
+            ],
+            Route = valid.Route with
+            {
+                DefaultDomainResolver = new DnsResolverOptions
+                {
+                    Server = "dns",
+                    Strategy = DnsStrategy.PreferIpv4
+                }
+            }
         };
 
         AssertDiagnostics(
             config,
             new ConfigDiagnostic(
                 "SB061",
-                "outbounds[2].domain_resolver.strategy",
+                "route.default_domain_resolver.strategy",
                 "代理节点域名必须使用 ipv4_only 解析策略。"),
             new ConfigDiagnostic(
                 "SB064",
-                "outbounds[2].domain_resolver.disable_optimistic_cache",
+                "route.default_domain_resolver.disable_optimistic_cache",
                 "代理节点域名解析必须禁用 optimistic 过期缓存。"),
             new ConfigDiagnostic(
                 "SB062",
@@ -396,11 +399,6 @@ public sealed class SingboxConfigValidatorTests
                     Tag = "proxy",
                     Server = "",
                     ServerPort = 0,
-                    DomainResolver = new DnsResolverOptions
-                    {
-                        Server = "missing-dns",
-                        Strategy = DnsStrategy.Ipv4Only
-                    },
                     Uuid = "",
                     Tls = new OutboundTls
                     {
@@ -447,6 +445,12 @@ public sealed class SingboxConfigValidatorTests
             {
                 Final = "missing-target",
                 DefaultHttpClient = "missing-http",
+                DefaultDomainResolver = new DnsResolverOptions
+                {
+                    Server = "dns",
+                    Strategy = DnsStrategy.Ipv4Only,
+                    DisableOptimisticCache = true
+                },
                 RuleSet =
                 [
                     new SingboxRuleSet
@@ -487,8 +491,6 @@ public sealed class SingboxConfigValidatorTests
             new("SB015", "http_clients[0].detour", "引用了不存在的 outbound 或 endpoint。"),
             new("SB019", "outbounds[0].server", "代理服务器地址不能为空。"),
             new("SB020", "outbounds[0].server_port", "代理节点必须配置有效端口。"),
-            new("SB004", "outbounds[0].domain_resolver.server", "引用了不存在的 DNS server。"),
-            new("SB064", "outbounds[0].domain_resolver.disable_optimistic_cache", "代理节点域名解析必须禁用 optimistic 过期缓存。"),
             new("SB044", "outbounds[0].tls.server_name", "TLS server_name 不能为空。"),
             new("SB045", "outbounds[0].uuid", "VLESS UUID 不能为空。"),
             new("SB022", "inbounds[0].listen_port", "inbound 监听端口必须在 1-65535 之间。"),
@@ -719,6 +721,12 @@ public sealed class SingboxConfigValidatorTests
             {
                 Final = "selector",
                 DefaultHttpClient = "http",
+                DefaultDomainResolver = new DnsResolverOptions
+                {
+                    Server = "dns",
+                    Strategy = DnsStrategy.Ipv4Only,
+                    DisableOptimisticCache = true
+                },
                 RuleSet =
                 [
                     new SingboxRuleSet
@@ -753,17 +761,12 @@ public sealed class SingboxConfigValidatorTests
         };
 
     private static DirectOutbound CreateDirectOutbound() =>
-        new()
-        {
-            Tag = "direct",
-            DomainResolver = "dns"
-        };
+        new() { Tag = "direct" };
 
     private static TailscaleEndpoint CreateEndpoint(string tag) =>
         new()
         {
             Tag = tag,
-            DomainResolver = "dns",
             StateDirectory = "tailscale",
             AcceptRoutes = true,
             TaildropDirectory = "Taildrop"
@@ -775,12 +778,6 @@ public sealed class SingboxConfigValidatorTests
             Tag = tag,
             Server = "node.example.com",
             ServerPort = 443,
-            DomainResolver = new DnsResolverOptions
-            {
-                Server = "dns",
-                Strategy = DnsStrategy.Ipv4Only,
-                DisableOptimisticCache = true
-            },
             Method = "aes-128-gcm",
             Password = "test-only"
         };
