@@ -9,6 +9,16 @@ namespace BoxForge.Tests;
 [TestFixture]
 public sealed class DnsProfileBuilderTests
 {
+    [TestCase(TargetPlatform.Android, DnsResolverSelectionMode.SequentialFallback)]
+    [TestCase(TargetPlatform.Linux, DnsResolverSelectionMode.ParallelFastest)]
+    [TestCase(TargetPlatform.Windows, DnsResolverSelectionMode.ParallelFastest)]
+    public void ResolverSelectionPolicyMapsPlatforms(
+        TargetPlatform platform,
+        DnsResolverSelectionMode expected)
+    {
+        Assert.That(DnsResolverSelectionPolicies.For(platform), Is.EqualTo(expected));
+    }
+
     [TestCase(TargetPlatform.Android, DnsStrategy.Ipv4Only, true)]
     [TestCase(TargetPlatform.Linux, DnsStrategy.Ipv4Only, true)]
     [TestCase(TargetPlatform.Windows, DnsStrategy.Ipv4Only, true)]
@@ -84,30 +94,30 @@ public sealed class DnsProfileBuilderTests
     }
 
     [Test]
-    public void EveryResolverPoolStartsBothQueriesThenMatchesPrimaryBeforeSecondary()
+    public void AndroidPoolsQuerySecondaryOnlyAfterPrimaryIsUnacceptable()
     {
-        DnsConfig dns = CreateBuilder().Build(TargetPlatform.Linux);
+        DnsConfig dns = CreateBuilder().Build(TargetPlatform.Android);
         List<string> priorityRuleSets = ProfileDefinitions.Services
             .Where(service => service.PrecedesDomesticRoutes)
             .SelectMany(service => service.RuleSets)
             .Distinct(StringComparer.Ordinal)
             .ToList();
 
-        AssertResolverPool(
+        AssertSequentialFallbackPool(
             dns.Rules,
             DnsResponseTags.PriorityPrimary,
             DnsResponseTags.PrioritySecondary,
             priorityRuleSets,
             SingboxTags.ProxyCloudflareDns,
             SingboxTags.ProxyGoogleDns);
-        AssertResolverPool(
+        AssertSequentialFallbackPool(
             dns.Rules,
             DnsResponseTags.DomesticPrimary,
             DnsResponseTags.DomesticSecondary,
             [RuleSetTags.Cn],
             SingboxTags.DirectAliDns,
             SingboxTags.DirectTencentDns);
-        AssertResolverPool(
+        AssertSequentialFallbackPool(
             dns.Rules,
             DnsResponseTags.GlobalPrimary,
             DnsResponseTags.GlobalSecondary,
@@ -116,47 +126,90 @@ public sealed class DnsProfileBuilderTests
             SingboxTags.ProxyGoogleDns);
     }
 
-    [TestCase(DnsResponseCode.NoError, DnsResponseCode.NoError,
-        DnsResponseCode.NoError, DnsResponseTags.PriorityPrimary)]
-    [TestCase(DnsResponseCode.NameError, DnsResponseCode.NoError,
-        DnsResponseCode.NameError, DnsResponseTags.PriorityPrimary)]
-    [TestCase(null, DnsResponseCode.NoError,
-        DnsResponseCode.NoError, DnsResponseTags.PrioritySecondary)]
-    [TestCase(DnsResponseCode.ServerFailure, DnsResponseCode.NameError,
-        DnsResponseCode.NameError, DnsResponseTags.PrioritySecondary)]
-    [TestCase(DnsResponseCode.Refused, DnsResponseCode.ServerFailure,
-        DnsResponseCode.ServerFailure, null)]
-    [TestCase(null, null, DnsResponseCode.ServerFailure, null)]
-    public void PriorityPoolResponsesStayWithinTheirScope(
-        DnsResponseCode? primary,
-        DnsResponseCode? secondary,
-        DnsResponseCode expected,
-        string? expectedTag)
+    [TestCase(TargetPlatform.Linux)]
+    [TestCase(TargetPlatform.Windows)]
+    public void DesktopPoolsRaceOnlyNoErrorAndPreferPrimaryNxDomain(
+        TargetPlatform platform)
+    {
+        DnsConfig dns = CreateBuilder().Build(platform);
+        List<string> priorityRuleSets = ProfileDefinitions.Services
+            .Where(service => service.PrecedesDomesticRoutes)
+            .SelectMany(service => service.RuleSets)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        AssertParallelFastestPool(
+            dns.Rules,
+            DnsResponseTags.PriorityPrimary,
+            DnsResponseTags.PrioritySecondary,
+            priorityRuleSets,
+            SingboxTags.ProxyCloudflareDns,
+            SingboxTags.ProxyGoogleDns);
+        AssertParallelFastestPool(
+            dns.Rules,
+            DnsResponseTags.DomesticPrimary,
+            DnsResponseTags.DomesticSecondary,
+            [RuleSetTags.Cn],
+            SingboxTags.DirectAliDns,
+            SingboxTags.DirectTencentDns);
+        AssertParallelFastestPool(
+            dns.Rules,
+            DnsResponseTags.GlobalPrimary,
+            DnsResponseTags.GlobalSecondary,
+            null,
+            SingboxTags.ProxyCloudflareDns,
+            SingboxTags.ProxyGoogleDns);
+    }
+
+    [Test]
+    public void DesktopPriorityRuleShapeEncodesPositiveRaceAndOrderedNxDomain()
     {
         DnsConfig dns = CreateBuilder().Build(TargetPlatform.Linux);
-        int start = dns.Rules.FindIndex(rule =>
-            rule.Tag == DnsResponseTags.PriorityPrimary);
-        int end = dns.Rules.FindIndex(start, rule =>
-            rule.Action == DnsRuleAction.Predefined
-            && rule.Rcode == DnsResponseCode.ServerFailure);
-        var upstream = new Dictionary<string, DnsResponseCode?>
-        {
-            [DnsResponseTags.PriorityPrimary] = primary,
-            [DnsResponseTags.PrioritySecondary] = secondary
-        };
-        DnsRule selected = dns.Rules
-            .Skip(start)
-            .Take(end - start + 1)
-            .First(rule => rule.Action == DnsRuleAction.Predefined
-                || rule.Action == DnsRuleAction.Respond
-                && rule.MatchResponse is not null
-                && upstream[rule.MatchResponse] == rule.ResponseRcode);
+        List<DnsRule> pool = GetPoolRules(
+            dns.Rules,
+            DnsResponseTags.PriorityPrimary);
+
+        List<DnsRule> bothPositive = MatchingResponses(
+            pool, DnsResponseCode.NoError, DnsResponseCode.NoError);
+        List<DnsRule> primaryNxSecondaryPositive = MatchingResponses(
+            pool, DnsResponseCode.NameError, DnsResponseCode.NoError);
+        List<DnsRule> bothNx = MatchingResponses(
+            pool, DnsResponseCode.NameError, DnsResponseCode.NameError);
+        List<DnsRule> primaryFailureSecondaryPositive = MatchingResponses(
+            pool, null, DnsResponseCode.NoError);
+        List<DnsRule> bothFailure = MatchingResponses(pool, null, null);
 
         Assert.Multiple(() =>
         {
-            Assert.That(selected.MatchResponse, Is.EqualTo(expectedTag));
-            Assert.That(selected.ResponseRcode ?? selected.Rcode,
-                Is.EqualTo(expected));
+            Assert.That(bothPositive.Select(rule => rule.MatchResponse),
+                Is.EqualTo(new[]
+                {
+                    DnsResponseTags.PriorityPrimary,
+                    DnsResponseTags.PrioritySecondary
+                }));
+            Assert.That(bothPositive.All(rule => rule.Race == true), Is.True);
+            Assert.That(primaryNxSecondaryPositive.Select(rule =>
+                    (rule.MatchResponse, rule.ResponseRcode, rule.Race)),
+                Is.EqualTo(new[]
+                {
+                    (DnsResponseTags.PrioritySecondary,
+                        (DnsResponseCode?)DnsResponseCode.NoError, (bool?)true),
+                    (DnsResponseTags.PriorityPrimary,
+                        (DnsResponseCode?)DnsResponseCode.NameError, (bool?)null)
+                }));
+            Assert.That(bothNx.Select(rule => rule.MatchResponse),
+                Is.EqualTo(new[]
+                {
+                    DnsResponseTags.PriorityPrimary,
+                    DnsResponseTags.PrioritySecondary
+                }));
+            Assert.That(bothNx.All(rule => rule.Race is null), Is.True);
+            Assert.That(primaryFailureSecondaryPositive.Single().MatchResponse,
+                Is.EqualTo(DnsResponseTags.PrioritySecondary));
+            Assert.That(primaryFailureSecondaryPositive.Single().Race, Is.True);
+            Assert.That(bothFailure, Is.Empty);
+            Assert.That(pool[^1].Action, Is.EqualTo(DnsRuleAction.Predefined));
+            Assert.That(pool[^1].Rcode, Is.EqualTo(DnsResponseCode.ServerFailure));
         });
     }
 
@@ -263,7 +316,70 @@ public sealed class DnsProfileBuilderTests
         Assert.That(tailscaleRule.DisableOptimisticCache, Is.True);
     }
 
-    private static void AssertResolverPool(
+    private static void AssertSequentialFallbackPool(
+        List<DnsRule> rules,
+        string primaryTag,
+        string secondaryTag,
+        List<string>? expectedRuleSets,
+        string expectedPrimaryServer,
+        string expectedSecondaryServer)
+    {
+        int primaryIndex = rules.FindIndex(rule => rule.Tag == primaryTag);
+        int secondaryIndex = rules.FindIndex(rule => rule.Tag == secondaryTag);
+        Assert.That(primaryIndex, Is.GreaterThanOrEqualTo(0), primaryTag);
+        Assert.That(secondaryIndex, Is.EqualTo(primaryIndex + 3), secondaryTag);
+
+        DnsRule primary = rules[primaryIndex];
+        DnsRule secondary = rules[secondaryIndex];
+        List<DnsRule> primaryResponses = rules
+            .Skip(primaryIndex + 1)
+            .Take(2)
+            .ToList();
+        List<DnsRule> secondaryResponses = rules
+            .Skip(secondaryIndex + 1)
+            .Take(2)
+            .ToList();
+        int terminalIndex = secondaryIndex + 3;
+
+        Assert.Multiple(() =>
+        {
+            AssertEvaluate(primary, expectedRuleSets, expectedPrimaryServer,
+                primaryTag, "2s");
+            AssertEvaluate(secondary, expectedRuleSets, expectedSecondaryServer,
+                secondaryTag, null);
+            AssertResponses(primaryResponses, expectedRuleSets,
+                [primaryTag, primaryTag],
+                [DnsResponseCode.NoError, DnsResponseCode.NameError],
+                [null, null]);
+            AssertResponses(secondaryResponses, expectedRuleSets,
+                [secondaryTag, secondaryTag],
+                [DnsResponseCode.NoError, DnsResponseCode.NameError],
+                [null, null]);
+            AssertTerminalServfail(rules[terminalIndex], expectedRuleSets);
+        });
+    }
+
+    private static List<DnsRule> GetPoolRules(
+        List<DnsRule> rules,
+        string primaryTag)
+    {
+        int start = rules.FindIndex(rule => rule.Tag == primaryTag);
+        int end = rules.FindIndex(start, rule =>
+            rule.Action == DnsRuleAction.Predefined
+            && rule.Rcode == DnsResponseCode.ServerFailure);
+        return rules.Skip(start).Take(end - start + 1).ToList();
+    }
+
+    private static List<DnsRule> MatchingResponses(
+        List<DnsRule> pool,
+        DnsResponseCode? primary,
+        DnsResponseCode? secondary) =>
+        pool.Where(rule => rule.Action == DnsRuleAction.Respond
+                && rule.ResponseRcode == (rule.MatchResponse ==
+                    DnsResponseTags.PriorityPrimary ? primary : secondary))
+            .ToList();
+
+    private static void AssertParallelFastestPool(
         List<DnsRule> rules,
         string primaryTag,
         string secondaryTag,
@@ -278,38 +394,84 @@ public sealed class DnsProfileBuilderTests
 
         DnsRule primary = rules[primaryIndex];
         DnsRule secondary = rules[secondaryIndex];
-        List<DnsRule> responses = rules
-            .Skip(secondaryIndex + 1)
-            .TakeWhile(rule => rule.MatchResponse is not null)
-            .ToList();
+        List<DnsRule> responses = rules.Skip(secondaryIndex + 1).Take(4).ToList();
+        int terminalIndex = secondaryIndex + 5;
         string[] responseOrder =
         [
             primaryTag,
-            primaryTag,
             secondaryTag,
+            primaryTag,
             secondaryTag
         ];
         DnsResponseCode[] responseCodes =
         [
             DnsResponseCode.NoError,
-            DnsResponseCode.NameError,
             DnsResponseCode.NoError,
+            DnsResponseCode.NameError,
             DnsResponseCode.NameError
         ];
 
         Assert.Multiple(() =>
         {
-            Assert.That(primary.Action, Is.EqualTo(DnsRuleAction.Evaluate));
-            Assert.That(secondary.Action, Is.EqualTo(DnsRuleAction.Evaluate));
-            Assert.That(primary.Server, Is.EqualTo(expectedPrimaryServer));
-            Assert.That(secondary.Server, Is.EqualTo(expectedSecondaryServer));
-            Assert.That(primary.RuleSet, Is.EqualTo(expectedRuleSets));
-            Assert.That(secondary.RuleSet, Is.EqualTo(expectedRuleSets));
-            Assert.That(responses.Select(rule => rule.MatchResponse), Is.EqualTo(responseOrder));
-            Assert.That(responses.Select(rule => rule.ResponseRcode), Is.EqualTo(responseCodes));
-            Assert.That(responses.All(rule => rule.Action == DnsRuleAction.Respond), Is.True);
-            Assert.That(responses.All(rule => rule.RuleSet?.SequenceEqual(expectedRuleSets ?? [])
-                ?? expectedRuleSets is null), Is.True);
+            AssertEvaluate(primary, expectedRuleSets, expectedPrimaryServer,
+                primaryTag, null);
+            AssertEvaluate(secondary, expectedRuleSets, expectedSecondaryServer,
+                secondaryTag, null);
+            AssertResponses(responses, expectedRuleSets, responseOrder, responseCodes,
+                [true, true, null, null]);
+            AssertTerminalServfail(rules[terminalIndex], expectedRuleSets);
+        });
+    }
+
+    private static void AssertEvaluate(
+        DnsRule rule,
+        List<string>? expectedRuleSets,
+        string expectedServer,
+        string expectedTag,
+        string? expectedTimeout)
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(rule.Action, Is.EqualTo(DnsRuleAction.Evaluate));
+            Assert.That(rule.Server, Is.EqualTo(expectedServer));
+            Assert.That(rule.Tag, Is.EqualTo(expectedTag));
+            Assert.That(rule.RuleSet, Is.EqualTo(expectedRuleSets));
+            Assert.That(rule.Timeout, Is.EqualTo(expectedTimeout));
+        });
+    }
+
+    private static void AssertResponses(
+        List<DnsRule> responses,
+        List<string>? expectedRuleSets,
+        string[] expectedTags,
+        DnsResponseCode[] expectedCodes,
+        bool?[] expectedRace)
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(responses.Select(rule => rule.MatchResponse),
+                Is.EqualTo(expectedTags));
+            Assert.That(responses.Select(rule => rule.ResponseRcode),
+                Is.EqualTo(expectedCodes));
+            Assert.That(responses.Select(rule => rule.Race), Is.EqualTo(expectedRace));
+            Assert.That(responses.All(rule => rule.Action == DnsRuleAction.Respond),
+                Is.True);
+            Assert.That(responses.All(rule =>
+                    rule.RuleSet?.SequenceEqual(expectedRuleSets ?? [])
+                    ?? expectedRuleSets is null),
+                Is.True);
+        });
+    }
+
+    private static void AssertTerminalServfail(
+        DnsRule rule,
+        List<string>? expectedRuleSets)
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(rule.Action, Is.EqualTo(DnsRuleAction.Predefined));
+            Assert.That(rule.Rcode, Is.EqualTo(DnsResponseCode.ServerFailure));
+            Assert.That(rule.RuleSet, Is.EqualTo(expectedRuleSets));
         });
     }
 

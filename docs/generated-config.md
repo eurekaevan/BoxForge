@@ -51,9 +51,10 @@ SFA 工作目录下的 `Taildrop`，Windows 使用
 ## DNS 与持久化缓存
 
 - 生成配置包含官方 `$schema`。
-- DNS 查询默认超时为 `5s`；国内 AliDNS/Tencent 与远程 Cloudflare/Google
-  在各自 resolver pool 内同时发起查询，按首选响应优先级返回，不启用 race。
-  两家都失败时明确返回 `SERVFAIL`；详见
+- DNS 查询默认超时为 `5s`。Android 正常只查询首选 resolver，首选查询使用
+  `2s` 超时，失败后才查询备用；Linux/Windows 同时查询两家，并让最快的
+  `NOERROR` 胜出。NXDOMAIN 不参与竞速，双方没有 `NOERROR` 时仍首选 primary
+  NXDOMAIN。两家都失败时明确返回 `SERVFAIL`；详见
   [DNS 分类与回退](routing-and-dns.md)。
 - DNS 默认使用 `ipv4_only`，缓存容量为 `4096`，并启用超时为 `6h` 的
   optimistic 缓存和 reverse mapping。

@@ -76,17 +76,26 @@ client DNS 依次分类：
 ## Resolver pool 响应语义
 
 DOMESTIC 的首选为直连 AliDNS、备用为直连 Tencent；GLOBAL 的首选为经主代理
-Cloudflare、备用为经主代理 Google。每个 pool 编译为两个带独立响应 tag 的
-`evaluate`、首选 `NOERROR` / `NXDOMAIN` 两条 `respond`、备用的同两条
-`respond`，最后是该分类范围内的 `predefined SERVFAIL`。
+Cloudflare、备用为经主代理 Google。`DnsResolverSelectionPolicies` 按平台选择
+pool compiler：Android 使用 `SequentialFallback`，Linux/Windows 使用
+`ParallelFastest`；`ParallelPrimaryPreferred` 保留为明确的非默认策略。
 
-两个 `evaluate` 异步启动；`respond` 不启用 `race`，因此即使备用先返回，
-仍先等待首选。首选 `NOERROR`（包括 NODATA、TXT 和 HTTPS 等答案）或
-`NXDOMAIN` 直接返回；首选传输失败、超时、SERVFAIL 或 REFUSED 时采用备用的
-成功或 NXDOMAIN。双方都失败则明确返回 SERVFAIL，priority 和 CN 失败不会
-穿透到后一分类。`dns.final = dns-proxy-cloudflare` 仅为异常兜底，正常 client
-查询由各自 pool 结束。默认单次查询超时 `5s`；并行查询的总等待通常受较慢
-的首选结果或备用截止时间影响。
+Android 先 `evaluate` primary（`timeout: 2s`），随后按顺序判断 primary 的
+`NOERROR` 和 `NXDOMAIN`。只有这两个规则都不接受 primary 结果时，才会执行
+secondary `evaluate`；secondary 继承全局 `dns.timeout = 5s`。健康情况下因此
+只产生一个上游请求。
+
+Linux/Windows 先连续执行两个 `evaluate`，让 primary 和 secondary 并行查询。
+两条 `NOERROR` `respond` 启用 `race: true`，最快有效答案立即提交并取消其余
+查询。primary、secondary 的 NXDOMAIN `respond` 不启用 race；它们会被未决的
+NOERROR race 阻挡，直到两条正向竞速均未命中，再按 primary、secondary 顺序
+判断。因此快速 NXDOMAIN 不会压掉稍慢的 NOERROR，双方均 NXDOMAIN 时仍返回
+primary NXDOMAIN。
+
+每个 pool 最后都有同 scope 的 `predefined SERVFAIL`。双方传输失败、超时、
+SERVFAIL 或 REFUSED 时在本 pool 终止，priority 和 CN 不会穿透到后一分类。
+`dns.final = dns-proxy-cloudflare` 仅为异常兜底，正常 client 查询由各自 pool
+结束。
 
 正常 TTL 缓存和容量 4096 的 reverse mapping 保留；optimistic 缓存超时为
 `6h`。控制平面解析和 Tailscale split DNS 禁用 optimistic 缓存。
