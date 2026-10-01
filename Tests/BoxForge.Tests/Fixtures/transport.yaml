@@ -1,0 +1,86 @@
+# Synthetic credentials only. Used by engine tests and official-core checks.
+proxies:
+  - name: vless-ws
+    type: vless
+    server: node.example.com
+    port: 443
+    uuid: 00000000-0000-4000-8000-000000000001
+    tls: true
+    network: ws
+    alpn: [http/1.1]
+    ws-opts:
+      path: /ws
+      headers:
+        Host: ws.example.com
+        X-Transport: example
+      max-early-data: 2048
+      early-data-header-name: Sec-WebSocket-Protocol
+  - name: vless-grpc
+    type: vless
+    server: node.example.com
+    port: 443
+    uuid: 00000000-0000-4000-8000-000000000001
+    tls: true
+    alpn: [h2]
+    network: grpc
+    grpc-opts:
+      grpc-service-name: example
+  - name: trojan-ws
+    type: trojan
+    server: node.example.com
+    port: 443
+    password: test-only
+    network: ws
+    ws-opts:
+      path: /ws
+      headers:
+        Host: ws.example.com
+  - name: trojan-alpn
+    type: trojan
+    server: node.example.com
+    port: 443
+    password: test-only
+    alpn: [h2, http/1.1]
+  - name: vless-reality-grpc
+    type: vless
+    server: node.example.com
+    port: 443
+    uuid: 00000000-0000-4000-8000-000000000001
+    tls: true
+    alpn: [h2]
+    client-fingerprint: chrome
+    reality-opts:
+      public-key: jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0
+      short-id: "00"
+    network: grpc
+    grpc-opts:
+      grpc-service-name: example
+  - name: vless-alpn
+    type: vless
+    server: node.example.com
+    port: 443
+    uuid: 00000000-0000-4000-8000-000000000001
+    tls: true
+    alpn: [h2, http/1.1, h2]
+  - name: vless-httpupgrade
+    type: vless
+    server: node.example.com
+    port: 443
+    uuid: 00000000-0000-4000-8000-000000000001
+    tls: true
+    network: ws
+    ws-opts:
+      path: /upgrade
+      headers:
+        Host: ws.example.com
+      v2ray-http-upgrade: true
+      v2ray-http-upgrade-fast-open: false
+  - name: trojan-httpupgrade
+    type: trojan
+    server: node.example.com
+    port: 443
+    password: test-only
+    network: ws
+    ws-opts:
+      path: /upgrade
+      v2ray-http-upgrade: true

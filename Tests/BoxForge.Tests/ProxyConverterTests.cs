@@ -138,7 +138,7 @@ public sealed class ProxyConverterTests
         Assert.That(result, Is.TypeOf<InvalidNode>());
         Assert.That(
             ((InvalidNode)result).ErrorMessage,
-            Does.Contain("AnyTLS idle-session-timeout"));
+            Does.Contain("AnyTLS").And.Contain("idle-session-timeout"));
     }
 
     private static ClashProxyNode CreateNode(string type, Hashtable extra)

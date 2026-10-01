@@ -5,7 +5,9 @@
 ## 平台差异
 
 每个平台都包含一个 TUN inbound 和一个仅监听 `127.0.0.1:8848` 的 mixed inbound。
-TUN 固定启用 `auto_route`、`strict_route` 和 `dns_mode: hijack`，平台差异如下。
+TUN 固定启用 `auto_route` 和 `dns_mode: hijack`。`strict_route` 仅在 Linux/
+Windows 显式启用；指定版本 Android feature matrix 标记该能力未实现，因此省略。
+平台差异如下。
 全平台仍生成仅监听 `127.0.0.1:8848` 的 `mixed-in`，供显式配置的 SOCKS/HTTP
 客户端使用，但不生成 `set_system_proxy` 或 `platform.http_proxy`，因此不会由
 sing-box 自动修改系统 HTTP 代理设置。
@@ -78,20 +80,26 @@ SFA 工作目录下的 `Taildrop`，Windows 使用
   已知的 UI 元数据和确认无连接作用的值会被明确列为忽略项。
 - 出站模型不携带 BoxForge 调优默认值。正式生成时仅对缺失字段填入
   `connect_timeout: 5s`、Linux/Windows TCP keepalive `1m`/`30s`，
-  以及 HY2 的 `hop_interval: 30s`、`hop_interval_max: 60s`、
-  `bbr_profile: standard`。已有显式出站值不会被调优覆盖；Android 不注入
+  以及未指定跳端口间隔的 HY2 `hop_interval: 30s`、`hop_interval_max: 60s`。
+  没有正显式带宽时才补 `bbr_profile: standard`；显式固定间隔不补随机上限。
+  已有显式出站值不会被调优覆盖；Android 不注入
   桌面 keepalive。
 - AnyTLS 的 `idle-session-timeout`、下划线别名以及旧
   `idle-timeout` 输入统一生成官方 `idle_session_timeout`；纯数字输入按秒转换。
+  `idle-session-check-interval` 使用同一正 duration 校验；`min-idle-session`
+  映射非负整数，`client-metadata` 保留字符串并检查 settings frame 安全边界。
+  所有新增字段未提供时省略，不主动注入会话维护值。
 - VLESS `packet-encoding`（兼容 `packet_encoding`）会按来源生成 `xudp`、
   `packetaddr` 或显式空值；未提供时保持既有 `xudp` 默认。
 - Reality 转换要求有效的 32 字节 Base64URL 公钥和显式 short ID。short ID
   可以为空，否则必须是最多 8 字节的偶数位十六进制字符串；错误会在节点转换阶段
   直接报告，不再生成空字段。
-- Hysteria2 YAML 显式 `up`/`down`、`hop-interval`、`bbr-profile` 等尚未
-  映射时会报错，不会静默生成使用 BoxForge BBR/跳端口调优的不同节点。
-- VLESS/Trojan 的非 TCP transport、尚未映射的 TLS 字段、AnyTLS 额外
-  会话字段、Shadowsocks UoT 真值或版本配置以及不能精确传递的插件配置
+- Hysteria2 显式 `up`/`down` 转为精确整数 Mbps；无法精确转换时拒绝。
+  显式 `hop-interval` 为整数秒或范围，固定间隔不注入随机上限；缺失时保留
+  BoxForge 的 `30s/60s` 调优，没有正显式带宽才补 `standard`。Gecko 保留包大小和密码，
+  QUIC/Realm 的未支持扩展仍拒绝，不会静默降级。
+- 未支持的 transport/TLS 组合（见下节）、AnyTLS disable-reuse
+  以及不能精确传递的 Shadowsocks 插件配置
   当前均 fail-fast；详见[来源语义与调优优先级](architecture.md#来源语义与调优优先级)。
 - 远程 rule-set 每天更新，通过默认 HTTP client `http-ruleset-proxy` 走代理下载。
   有地区 AUTO 时选择首个地区 AUTO，否则选择首个真实节点；即使主组被手动切到
@@ -119,6 +127,108 @@ SFA 工作目录下的 `Taildrop`，Windows 使用
 - AI、Google 和最终兜底的 UDP/443 拒绝规则写入 `no_drop: true`，持续返回拒绝
   响应以促使 QUIC 回退 TCP；STUN、广告和两道 IPv6 拒绝不启用该字段。
 
+## Transport 与 shared TLS
+
+VLESS 支持省略/`tcp`、`ws`、受限基础 `grpc`；Trojan 支持省略/`tcp` 和
+`ws`。两者可通过 WS 选项启用无 fast-open 的 HTTPUpgrade。未知 network
+不会降级为 TCP，不注入自定义 path、service-name 或 ALPN。
+
+| 来源字段 | sing-box 字段 | 条件 |
+| --- | --- | --- |
+| `ws-opts.path` | `transport.path` | 普通路径；缺失时省略 |
+| `ws-opts.headers` | `transport.headers` | 字符串值，不裁剪或合并 |
+| `ws-opts.max-early-data` | `transport.max_early_data` | 0 到 2147483647 的整数；缺失时省略 |
+| `ws-opts.early-data-header-name` | `transport.early_data_header_name` | 空/缺失时沿用路径携带 early-data 的行为 |
+| `ws-opts.v2ray-http-upgrade: true` | `transport.type: httpupgrade` | HTTP 101 后使用原始字节流，而非 WS framing |
+| HTTPUpgrade 的 `headers.Host` | `transport.host` | 其他 headers 保留，Host 不重复生成 |
+| `grpc-opts.grpc-service-name` | `transport.service_name` | 仅 VLESS，非空普通服务名 |
+| `alpn` | `tls.alpn` | 保留顺序、重复项和值；缺失时省略 |
+
+`ws_opts`/`grpc_opts` 及已支持的连字符子字段兼容下划线别名。双别名同时出现
+仍会失败。header 名称不是配置别名，不做连字符转换。嵌套未知字段会报告完整
+路径，例如 `ws-opts.future-field`；无法转换时 non-strict 也只会跳过整个节点。
+
+HTTP Host 按来源实际行为生成：无显式 Host 时，VLESS TLS 使用 server，
+Trojan 使用 SNI/server。VLESS WS 的 TLS SNI 在未指定 `sni`/`servername`
+时使用 headers.Host。这是来源默认行为的映射，不是 BoxForge tuning。
+无 TLS 的 VLESS WS 必须提供 Host，否则 Mihomo 随机 Host 无法等价表达。
+
+继续拒绝的 transport 输入：
+
+- URL authority/scheme/query/fragment/percent-escape 路径，包括 `?ed=`；两端
+  URL 解析不同，本轮仅支持普通路径与显式 early-data 字段。
+- 列表/对象 header、大小写重复或无效 header、握手保留 header；active
+  early-data 不得覆盖 Host 或握手保留字段。
+- `v2ray-http-upgrade-fast-open: true`；HTTPUpgrade 与非零 early-data 或
+  非空 early-data-header-name 的组合，目标没有等价字段。
+- 缺失/空 gRPC service-name、自定义完整 RPC path；`grpc-user-agent`、
+  `ping-interval`、`max-connections`、`min-streams`、`max-streams`。
+- VLESS gRPC 显式 `sni`/`servername`：指定官方核心使用 grpc-lite，将 TLS
+  server_name 拼成 `host:port` authority，而 Mihomo 对显式名称不加端口。
+  目标没有独立 authority 字段，只接受来源默认 `server:port` authority。
+- **Trojan gRPC**：Mihomo 默认使用裸 SNI/server authority，grpc-lite 会增加端口。
+  经确认，本阶段保留拒绝，不为支持率接受这个差异。
+- Reality + WS/HTTPUpgrade：Mihomo WS 分支不应用 Reality，目标会应用。
+  此组合经确认拒绝；Reality 仍可用于现有 TCP 和满足限制的 VLESS gRPC。
+- VLESS WS 或带 uTLS 的 Trojan WS/HTTPUpgrade 显式 ALPN 不等于
+  `[http/1.1]`；VLESS gRPC 显式 ALPN 不等于 `[h2]`；transport 下显式空 ALPN。
+  它们无法同时保留来源的强制/空值行为和目标的显式列表行为。
+- HTTP/http-opts：Mihomo 首包 Content-Length HTTP 伪装与目标的原始/流式载荷
+  不同，单 path 也不能证明等价。H2/h2-opts 的非 TLS 模式在来源中使用 h2c，
+  目标无 TLS 的 HTTP transport 却使用 HTTP/1；TLS 子集虽有相似 PUT framing，
+  来源逐 stream 建立/关闭物理连接，目标复用 HTTP/2 连接，生命周期差异未获
+  精确映射与跨核心验证，因此继续拒绝。xHTTP 没有对应目标 transport，
+  不近似转换为 HTTP/WS。
+
+TLS 仍拒绝 `fingerprint`、`name-cert-verify`、`certificate`/`private-key`，以及
+ShadowTLS、Restls、JLS、tlsmirror、ECH；非空 VLESS encryption 和 Trojan
+ss-opts 也不支持。name-cert-verify 不能映射为改变 SNI 的 server_name；mTLS
+的路径/inline PEM、链与密钥处理未完成可靠转换。
+
+证书指纹的两端 hash 都可使用整张 DER 的 SHA-256，叶证书 pin 都替代普通
+CA/名称验证，而非叠加校验。但 Mihomo 还能匹配中间/根证书，并在该分支验证
+证书链和名称；目标 `certificate_sha256` 只匹配叶证书。仅凭源 hash 无法判断
+层级，所以本轮不生成该字段，也不进行未经证明的 hex→base64 转换。
+
+### 源码依据与验证边界
+
+研究基线：Mihomo Meta `88dcbf7f1614a67c3b36b848ee3592dfa92ada36`，
+sing-box `1.15.0-alpha.8` / `b609f959f57ce34416c51c7b87ce4a76f2e1df56`。
+官方 [Mihomo transport](https://wiki.metacubex.one/en/config/proxies/transport/)、
+[TLS](https://wiki.metacubex.one/en/config/proxies/tls/) 文档与固定源码交叉核对：
+
+- Mihomo [VLESS](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/vless.go)、
+  [Trojan](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/trojan.go)、
+  [WS](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/transport/vmess/websocket.go)、
+  [gRPC](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/transport/gun/gun.go)、
+  [证书链 pin](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/component/ca/fingerprint.go)。
+- sing-box [transport model](https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/option/v2ray_transport.go)、
+  [WS](https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/transport/v2raywebsocket/client.go)、
+  [HTTPUpgrade](https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/transport/v2rayhttpupgrade/client.go)、
+  [grpc-lite](https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/transport/v2raygrpclite/client.go)、
+  [leaf pin](https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/common/tls/std_client.go)。
+
+带 `with_grpc` 的非官方构建具有不同 authority 行为，不属于本轮验证范围。
+`Tests/BoxForge.Tests/Fixtures/transport.yaml` 使用虚构凭据，经过正式 YAML →
+engine → Android/Linux/Windows JSON 路径；测试断言实际字段值、嵌套拒绝、
+别名冲突、ALPN 与 uTLS/Reality 组合及 source-wins。原 tuning/DNS/route 不变。
+
+```bash
+dotnet run --project src/BoxForge.Cli -- generate \
+  --input-dir Tests/BoxForge.Tests/Fixtures \
+  --output-dir /tmp/boxforge-transport-output --platform all
+# 分别对 transport/{Android,Linux,Windows}/config.json 使用指定官方核心 check。
+node scripts/verify-transports.mjs /absolute/path/to/sing-box \
+  /tmp/boxforge-transport-output/transport/Linux/config.json
+```
+
+loopback 脚本检查版本/revision，提取真实生成节点，仅替换 loopback 地址/端口并
+信任临时证书，保留 transport、ALPN、SNI 和 tuning。它启动临时 sing-box
+server/client，验证 VLESS WS/gRPC/HTTPUpgrade 和 Trojan WS/HTTPUpgrade
+共五条 HTTP 响应链路，结束后清理进程和临时凭据。依赖 Node.js、OpenSSL、curl
+和指定 sing-box CLI；不启用 TUN、不访问外网。它不是 Mihomo↔sing-box 跨核心
+验证，也不能证明 Reality、所有 uTLS 指纹或真实服务器部署均兼容。
+
 ## sing-box API
 
 API 默认不生成。启用 `SingboxApi:Enabled` 后，顶层增加一个仅监听
@@ -142,8 +252,11 @@ origin 被限制为同端口的 `127.0.0.1` 与 `localhost`，
   否则默认第一个已生成的地区组。没有地区组时，有节点则选择第一个节点，
   没有节点则选择 `DIRECT`。
 - AI、Google、Spotify 和 Microsoft 服务组在美国地区组存在时默认选择它；
-  Games 在香港地区组存在时默认选择它。Service selector 不直接引用地区 AUTO，
-  而由地区 selector 默认到 AUTO；没有偏好地区组时仍回退主代理组。
+  Games 在香港地区组存在时默认选择它。偏好地区仅有一个 leaf 时直接选择该节点，
+  零个 leaf 才回退主代理组；偏好定义仅来自 `ProfileDefinitions.Services`。
+  Service selector 不直接引用地区 AUTO，而由地区 selector 默认到 AUTO。
+  主组仍保持上述“已生成地区组优先”的默认规则：单个 US 与多个 JP 并存时，
+  主组默认 JP，偏好 US 的服务默认 US leaf；不新增单个 US 改写主组的策略。
 - 真实代理节点保留订阅名称，但不得与 BoxForge 固定分组、内部基础设施、DNS
   响应或 rule-set tag 冲突；冲突会在节点转换阶段直接报错，不自动改名。
 

@@ -32,13 +32,13 @@ public sealed class ConversionService(
         PreparedConversion prepared,
         TargetPlatform platform)
     {
-        SingboxConfig config = configBuilder.Build(
-            new SingboxBuildRequest(
+        var request = new SingboxBuildRequest(
                 prepared.Nodes,
                 platform,
-                prepared.CacheId));
+                prepared.CacheId);
+        SingboxConfig config = configBuilder.Build(request);
 
-        configValidator.Validate(config);
+        configValidator.Validate(config, request.AddressFamily);
         return configSerializer.Serialize(config);
     }
 }

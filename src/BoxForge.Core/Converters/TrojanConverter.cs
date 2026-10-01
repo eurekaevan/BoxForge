@@ -9,7 +9,7 @@ public sealed class TrojanConverter()
 {
     private static readonly SourceFieldSchema SourceFields = SourceFieldSchemas.Common()
         .Include(SourceFieldSchemas.Tls(supportsReality: true, supportsUtls: true, forceTls: true))
-        .Include(SourceFieldSchemas.TcpTransport())
+        .Include(SourceFieldSchemas.V2RayTransport(supportsGrpc: false))
         .Mapped("password")
         .Unsupported("Trojan Shadowsocks 加密选项尚未映射", "ss-opts", "ss_opts");
 
@@ -20,6 +20,7 @@ public sealed class TrojanConverter()
         string name)
     {
         string server = node.GetRequiredString("server");
+        OutboundTls? tls = TlsConfigHelper.Extract(node, server, forceTls: true);
 
         return new TrojanOutbound
         {
@@ -27,7 +28,8 @@ public sealed class TrojanConverter()
             Server = server,
             ServerPort = node.GetRequiredInt("port"),
             Password = node.GetRequiredString("password"),
-            Tls = TlsConfigHelper.Extract(node, server, forceTls: true)
+            Tls = tls,
+            Transport = TransportConfigHelper.Extract(node, server, tls)
         };
     }
 }

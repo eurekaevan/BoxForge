@@ -136,6 +136,44 @@ public sealed class ProfilePlannerTests
         });
     }
 
+    [Test]
+    public void SinglePreferredRegionLeavesRemainServiceTargetsWithoutGeneratingGroups()
+    {
+        ProfilePlan plan = ProfilePlanner.Plan(CreateCatalog("美国 01", "日本 01", "日本 02", "香港 01"));
+        Assert.That(plan.RegionOutbounds.Select(group => group.Tag), Is.EqualTo(new[] { "🇯🇵 JP" }));
+        Assert.That(plan.MainOutbound.Default, Is.EqualTo("🇯🇵 JP"), "Preserve documented generated-group fallback");
+        foreach (SelectorOutbound service in plan.ServiceOutbounds)
+        {
+            ServiceDefinition definition = ProfileDefinitions.Services.Single(candidate => candidate.Name == service.Tag);
+            string expected = definition.DefaultRegion switch
+            {
+                RegionId.UnitedStates => "美国 01",
+                RegionId.HongKong => "香港 01",
+                _ => SingboxTags.MainProxyGroup
+            };
+            Assert.That(service.Default, Is.EqualTo(expected));
+            Assert.That(service.Outbounds, Does.Contain(expected));
+            Assert.That(service.Outbounds, Does.Not.Contain("🇺🇸 US").And.Not.Contain("🇭🇰 HK"));
+        }
+    }
+
+    [Test]
+    public void MissingPreferredRegionsUseMainNotAnUnrelatedRegion()
+    {
+        ProfilePlan plan = ProfilePlanner.Plan(CreateCatalog("日本 01", "日本 02"));
+        Assert.That(plan.ServiceOutbounds.Select(service => service.Default), Is.All.EqualTo(SingboxTags.MainProxyGroup));
+    }
+
+    [Test]
+    public void EmptyInventoryProducesOnlyValidDirectMainAndServiceReferences()
+    {
+        ProfilePlan plan = ProfilePlanner.Plan(CreateCatalog());
+        Assert.That(plan.MainOutbound.Default, Is.EqualTo(SingboxTags.DirectOutbound));
+        Assert.That(plan.RegionOutbounds, Is.Empty);
+        Assert.That(plan.RegionAutoOutbounds, Is.Empty);
+        Assert.That(plan.ServiceOutbounds.Select(service => service.Default), Is.All.EqualTo(SingboxTags.MainProxyGroup));
+    }
+
     private static NodeCatalog CreateCatalog(params string[] names)
     {
         List<ProxyOutbound> outbounds = names.Select((name, index) =>

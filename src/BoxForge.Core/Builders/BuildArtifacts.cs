@@ -1,13 +1,16 @@
 using BoxForge.Models;
 using BoxForge.Models.Singbox;
+using BoxForge.Configuration;
 
 namespace BoxForge.Builders;
 
 public sealed record SingboxBuildRequest(
     NodeCatalog Nodes,
     TargetPlatform Platform,
-    string? CacheId
-);
+    string? CacheId)
+{
+    public AddressFamilyPolicy AddressFamily { get; init; } = AddressFamilyPolicies.For(Platform);
+}
 
 public sealed record NodeCatalog(
     IReadOnlyList<ProxyOutbound> Outbounds,

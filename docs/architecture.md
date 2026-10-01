@@ -95,30 +95,82 @@ sing-box 运行时默认值。BoxForge 不保证逐字段原样复制；它保�
 converter 拥有自己的字段声明；`NodeCatalogBuilder` 只负责选择 converter 和
 处理转换结果。已知但未支持的连接字段、尚未分类的字段、冲突的别名和无效的
 显式值都会形成包含协议、节点名、字段名及原因的错误。schema 同时声明值形状，
-避免把列表或对象转换成字符串；嵌套 Reality 对象也逐项检查。
+避免把列表或对象转换成字符串；嵌套 Reality、WS、gRPC 对象也逐项检查。
+嵌套声明可以附带使用条件，拒绝不属于当前 `network` 的选项；别名沿用
+同一嵌套 schema 和冲突检测。HTTP header 名称是开放键，但每个值必须是
+字符串，并单独检查大小写冲突和握手保留字段，不能把列表扁平化。
 `name`/`type` 等元数据和明确无连接作用的选项在 schema 中列明，
 不会用通配规则吞掉未知字段。
 
 引擎使用 strict conversion：任一不安全节点使整次转换失败，不返回部分配置。
 non-strict 调用则跳过整个节点并记录警告；不会删掉无法映射的字段后输出降级
-节点。当前重点登记的 gap 包括 VLESS/Trojan 非 TCP transport、TLS ALPN/
-证书校验扩展、Hysteria2 显式带宽/跳端口/BBR、AnyTLS 会话维护和元数据，
-以及 Shadowsocks UoT 版本与部分插件语义。后续协议工作应把字段从
+节点。当前支持 VLESS TCP/WS/受限基础 gRPC、Trojan TCP/WS、两者的
+无 fast-open HTTPUpgrade，以及 shared TLS ALPN。具体输入限制见
+[生成配置说明](generated-config.md#transport-与-shared-tls)。重点登记的 gap 包括
+Trojan gRPC、HTTP/H2/xHTTP、复杂 WS/gRPC 参数、TLS 证书校验扩展、
+Hysteria2 QUIC/Realm 扩展、AnyTLS disable-reuse，
+以及 Shadowsocks 的复杂插件语义。后续协议工作应把字段从
 `UnsupportedSemantic` 改为 `Mapped`，同时提供映射与反例测试。
 
 `OutboundTuningPolicy` 在 converter 之后、生成配置之前，只用 `??` 填入
 缺失的 `connect_timeout`、桌面 TCP keepalive 和 Hysteria2 hop/BBR 值。
 这些字段在 outbound model 中默认是 `null`；模型本身不施加 BoxForge policy。
 路由 sniff 的 `300ms` 由 `RouteTuningPolicy` 明确命名。当前 YAML 显式
-HY2 hop/BBR 值尚未实现映射，会先失败，不能被调优值覆盖。
+HY2 hop/BBR 值优先于调优。显式固定间隔不会补入调优的随机上限；显式带宽
+启用时不会注入 BBR profile（显式 profile 仍保留，核心仅在 BBR 模式使用）。
+
+Hysteria2 带宽按当前 Mihomo 的整数单位语法解析，大小写区分 bits/bytes，
+只接受可精确表示为目标整数 Mbps 的速率；例如 `100 Kbps`、小数速率或溢出
+报错，不会截断为 Mbps。跳端口支持整数秒及整数范围，按源行为排序并应用
+最小 5 秒/零值 30 秒；`20s` 不是当前 Mihomo 的合法输入。
+Gecko 独立保留密码及包大小，0 等价于缺失，默认 512/1200，有效范围
+为 `1 <= min <= max <= 2048`，仅 gecko 可指定。目标没有等价字段的 UDP MTU、
+握手超时、源 QUIC receive-window 与 Realm 拓扑仍明确拒绝；HY2 uTLS 不支持。
+
+`V2RayTransport` 是独立的目标 JSON 多态模型，只注册已实现的 `ws`、
+`grpc`、`httpupgrade`；VLESS/Trojan 共享 `transport` 属性类型。
+`TransportConfigHelper` 负责两端语义转换，`TlsConfigHelper` 保留 source ALPN
+的顺序、重复项和值；模型不包含 Mihomo 字段，也不自带 transport tuning。
+无 transport 的 TCP 出站省略该属性，不生成虚假的 `type: tcp`。
+validator 只补充 BoxForge 的 model/必填映射值约束（`SB079`），目标 schema
+合法性仍由官方核心检查。
 
 Mihomo 的 [UoT 默认版本为 1](https://wiki.metacubex.one/en/config/proxies/ss/)，
 而 [sing-box 布尔形式默认版本为 2](https://sing-box.sagernet.org/configuration/shared/udp-over-tcp/)；
-因此显式 `udp-over-tcp: true` 暂时 fail-fast。Shadowsocks 插件目前只接受
-可直接传递的 `v2ray-plugin`/`obfs-local` 名称与原始字符串选项；结构化
-Mihomo 插件选项需要后续精确翻译。
+因此生成对象形式的 `udp_over_tcp`，显式保留版本：未指定版本或源版本 0 使用 1，
+版本 1/2 保持原值；关闭或未启用时省略。无效版本及重复别名在转换阶段拒绝。
+Shadowsocks 插件选项必须为 Mihomo 对象，由插件专用 schema 和 mapper 翻译，
+不接受原始 SIP003 字符串或通用对象扁平化。`obfs` 的 http/tls 模式映射到
+`obfs-local`，显式物化源默认 host `bing.com`。`v2ray-plugin` 仅支持
+websocket、普通绝对路径、显式 `mux: false`、可选标准 TLS 的子集；自定义 headers、
+证书、指纹和 HTTPUpgrade 等无法精确表达的选项拒绝。SIP003 值按其语法转义。
+源 Shadowsocks 没有 network 字段，不能把该字段映射为目标网络限制。
+
+AnyTLS 的 timeout/check-interval 共用正 Go duration 解析器，数字按秒，校验
+int64 纳秒上限和亚纳秒零值；duration 文本的受支持子集限制为最多 128 字符，
+避免对不可信订阅进行无界大整数解析。保留已有 duration 扩展输入。Mihomo 原生字段为
+整数秒，两端会话库均将不超过 5 秒的维护间隔/超时恢复为 30 秒默认值。
+`min-idle-session` 保留非负整数（目标模型上限 int32），仅映射保留数量，
+不声称两端会话池的过期时间刷新算法完全一致。`client-metadata` 只接受字符串，
+原样保留空白、Unicode 与 `=`；拒绝 LF 和超过 65479 UTF-8 字节的值，以免
+注入 newline-delimited settings 或溢出 uint16 frame 长度。AnyTLS Reality 和
+目标未暴露的 disable-reuse 继续拒绝。
 
 ## 确定性与替换边界
+
+`ProfilePlanner` 的地区 inventory 记录实际 leaf membership，与地区 selector
+是否生成分离；服务的 `DefaultRegion` 对应 0/1/2+ leaf 时分别选择主组/leaf/
+地区 selector。主组沿用已生成 US 组优先、否则首个地区组/首 leaf/DIRECT 的
+文档行为，不把单 US leaf 当作新主组策略。
+
+`SingboxBuildRequest.AddressFamily` 在创建请求时从平台 policy 取得，正式流程
+三个平台仍是 Ipv4Only。同一个值传给 DNS、route、控制面 resolver 与
+`Validate(config, addressFamily)`，validator 不再次推导平台。IPv4-only 除解析
+策略和 IPv6 节点字面量外，还验证 early/post-resolve IPv6 reject guards 和首条
+无条件 AAAA 空 NOERROR；不能用缩窄到特定网络/域名的规则伪装全局 guard。
+DualStack 测试显式传入 policy，不要求上述 IPv4-only 限制；没有开启任何实际
+平台的 DualStack。Android 不再输出未实现的 strict_route，仍保留 TUN 捕获地址、
+AAAA 阻断及 IPv6 reject guards；本地静态验证不等于真机防逃逸抓包证明。
 
 - 输入文件按文件名排序，平台顺序固定为 Android、Linux、Windows。
 - 引擎不依赖 `File`、`Directory`、`Path` 或环境输入输出目录；文件边界

@@ -1,0 +1,30 @@
+# Synthetic credentials only; session-protocol runtime verification input.
+proxies:
+  - name: hy2-default
+    type: hysteria2
+    server: node.example.com
+    port: 443
+    password: test-only
+  - name: hy2-bandwidth
+    type: hysteria2
+    server: node.example.com
+    port: 443
+    password: test-only
+    up: 100Mbps
+    down: 80Mbps
+  - name: hy2-gecko
+    type: hysteria2
+    server: node.example.com
+    port: 443
+    password: test-only
+    obfs: gecko
+    obfs-password: test-only-gecko
+    obfs-min-packet-size: 600
+    obfs-max-packet-size: 1200
+  - name: hy2-hop
+    type: hysteria2
+    server: node.example.com
+    port: 443
+    ports: 40000-40001
+    password: test-only
+    hop-interval: 20

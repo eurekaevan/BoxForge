@@ -1,0 +1,6 @@
+# Single preferred leaves plus a multi-node region; no production credentials.
+proxies:
+  - { name: US01, type: ss, server: node.example.com, port: 8388, cipher: aes-128-gcm, password: test-only }
+  - { name: JP01, type: ss, server: node.example.com, port: 8388, cipher: aes-128-gcm, password: test-only }
+  - { name: JP02, type: ss, server: node.example.com, port: 8388, cipher: aes-128-gcm, password: test-only }
+  - { name: HK01, type: ss, server: node.example.com, port: 8388, cipher: aes-128-gcm, password: test-only }

@@ -27,8 +27,11 @@ public static class OutboundTuningPolicy
             ? hysteria2 with
             {
                 HopInterval = hysteria2.HopInterval ?? Hysteria2HopInterval,
-                HopIntervalMax = hysteria2.HopIntervalMax ?? Hysteria2HopIntervalMax,
-                BbrProfile = hysteria2.BbrProfile ?? Hysteria2BbrProfile
+                HopIntervalMax = hysteria2.HopIntervalMax
+                    ?? (hysteria2.HopInterval is null ? Hysteria2HopIntervalMax : null),
+                BbrProfile = hysteria2.BbrProfile
+                    ?? (hysteria2.UpMbps is > 0 || hysteria2.DownMbps is > 0
+                        ? null : Hysteria2BbrProfile)
             }
             : tuned;
     }

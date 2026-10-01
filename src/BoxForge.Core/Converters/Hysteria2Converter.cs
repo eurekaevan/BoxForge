@@ -3,6 +3,7 @@ using BoxForge.Models.Singbox;
 using BoxForge.Helpers;
 using BoxForge.Exceptions;
 using System.Globalization;
+using System.Text.RegularExpressions;
 
 namespace BoxForge.Converters;
 
@@ -13,25 +14,23 @@ public sealed class Hysteria2Converter()
         .Include(SourceFieldSchemas.Tls(supportsReality: false, supportsUtls: false, forceTls: true))
         .Mapped("ports", "password")
         .Conditional("obfs", SourceFieldDisposition.Mapped,
-            (_, value) => string.IsNullOrWhiteSpace(value?.ToString())
-                || value?.ToString() == "salamander"
+            (_, value) => value is null or ""
+                || value?.ToString() is "salamander" or "gecko"
                     ? null
-                    : "仅 salamander 的现有映射可安全使用；gecko 及其他类型尚未映射")
+                    : "仅支持 salamander 或 gecko")
         .Conditional("obfs-password", SourceFieldDisposition.Mapped,
             (node, _) => node.GetString("obfs") is null
                 ? "指定了混淆密码，但未启用混淆"
                 : null)
-        .Unsupported("带宽设定尚未映射，不能改用 BoxForge BBR 调优", "up", "down")
-        .Unsupported("显式跳端口间隔尚未映射，不能覆盖为 BoxForge 调优",
-            "hop-interval", "hop_interval")
-        .Unsupported("显式 BBR 配置尚未映射，不能覆盖为 BoxForge 调优",
-            "bbr-profile", "bbr_profile")
-        .Unsupported("启用网络类型尚未映射", "network")
-        .Unsupported("Gecko 包长度尚未映射",
-            "obfs-min-packet-size", "obfs-max-packet-size",
-            "obfs_min_packet_size", "obfs_max_packet_size")
+        .Mapped("up", "down", "hop-interval", "bbr-profile")
+        .Alias("hop-interval", "hop_interval")
+        .Alias("bbr-profile", "bbr_profile")
+        .Unsupported("当前 Mihomo Hysteria2 不定义 network，不能生成目标网络限制", "network")
+        .Mapped("obfs-min-packet-size", "obfs-max-packet-size")
+        .Alias("obfs-min-packet-size", "obfs_min_packet_size")
+        .Alias("obfs-max-packet-size", "obfs_max_packet_size")
         .Unsupported("QUIC 或 Realm 选项尚未映射",
-            "realm-opts", "realm_opts", "handshake-timeout", "handshake_timeout",
+            "realm-opts", "realm_opts", "udp-mtu", "udp_mtu", "handshake-timeout", "handshake_timeout",
             "initial-stream-receive-window", "initial-connection-receive-window",
             "max-stream-receive-window", "max-connection-receive-window");
 
@@ -46,21 +45,41 @@ public sealed class Hysteria2Converter()
 
         OutboundObfs? obfsConfig = null;
         string? obfsType = node.GetString("obfs");
+        int? minPacketSize = ReadPacketSize(node, "obfs-min-packet-size", "obfs_min_packet_size");
+        int? maxPacketSize = ReadPacketSize(node, "obfs-max-packet-size", "obfs_max_packet_size");
+        if (obfsType != "gecko" && node.Properties.Any(property =>
+                property.Key is "obfs-min-packet-size" or "obfs_min_packet_size"
+                    or "obfs-max-packet-size" or "obfs_max_packet_size"))
+            throw new NodeParseException("字段 'obfs-min-packet-size/obfs-max-packet-size' 只适用于 gecko");
+        if ((minPacketSize ?? 512) > (maxPacketSize ?? 1200))
+            throw new NodeParseException("Gecko min_packet_size 不能大于 max_packet_size（缺失值为 512/1200）");
         if (obfsType != null)
         {
             obfsConfig = new OutboundObfs
             {
                 Type = obfsType,
-                Password = node.GetRequiredString("obfs-password")
+                Password = node.GetRawString("obfs-password") is { Length: > 0 } password
+                    ? password : throw new NodeParseException("字段 'obfs-password' 不能为空"),
+                MinPacketSize = minPacketSize is 0 ? null : minPacketSize,
+                MaxPacketSize = maxPacketSize is 0 ? null : maxPacketSize
             };
         }
 
+        var (hopInterval, hopIntervalMax) = ParseHopInterval(node);
+        string? bbr = node.GetRawString("bbr-profile") ?? node.GetRawString("bbr_profile");
+        if (bbr is not null && bbr is not ("standard" or "conservative" or "aggressive"))
+            throw new NodeParseException("字段 'bbr-profile' 只支持 standard、conservative 或 aggressive");
         return new Hysteria2Outbound
         {
             Tag = name,
             Server = server,
             ServerPort = serverPort,
             ServerPorts = serverPorts,
+            UpMbps = ParseBandwidth(node, "up"),
+            DownMbps = ParseBandwidth(node, "down"),
+            HopInterval = hopInterval,
+            HopIntervalMax = hopIntervalMax,
+            BbrProfile = bbr,
             Obfs = obfsConfig,
             Password = node.GetRequiredString("password"),
             // Hysteria2 使用 QUIC，而 sing-box 的 QUIC 自定义 TLS 不支持 uTLS。
@@ -70,6 +89,60 @@ public sealed class Hysteria2Converter()
                 forceTls: true,
                 supportsUtls: false)
         };
+    }
+
+    private static int? ReadPacketSize(ClashProxyNode node, string field, string alias)
+    {
+        object? value = node.GetValue(field) ?? node.GetValue(alias);
+        if (value is null) return null;
+        if (!int.TryParse(value.ToString(), out int size) || size is < 0 or > 2048)
+            throw new NodeParseException($"字段 '{field}' 必须是 0..2048 的整数（0 使用核心默认值）");
+        return size == 0 ? null : size;
+    }
+
+    private static int? ParseBandwidth(ClashProxyNode node, string field)
+    {
+        string? value = node.GetRawString(field);
+        if (value is null) return null;
+        if (Regex.IsMatch(value, "\\A\\+?[0-9]+\\z", RegexOptions.CultureInvariant)) value = value.TrimStart('+') + " Mbps";
+        Match match = Regex.Match(value, "\\A([0-9]+)[ \\t\\r\\n\\f]*([KMGT]?)([Bb])ps\\z", RegexOptions.CultureInvariant);
+        if (!match.Success || !ulong.TryParse(match.Groups[1].Value, out ulong quantity))
+            throw new NodeParseException($"字段 '{field}' 带宽格式无效；必须符合 Mihomo 的整数单位语法");
+        ulong multiplier = match.Groups[2].Value switch
+        {
+            "K" => 1_000,
+            "M" => 1_000_000,
+            "G" => 1_000_000_000,
+            "T" => 1_000_000_000_000,
+            _ => 1
+        };
+        if (quantity > ulong.MaxValue / multiplier)
+            throw new NodeParseException($"字段 '{field}' 带宽超出源解析器范围");
+        ulong amount = quantity * multiplier;
+        // Mihomo stores bytes/s; sing-box accepts integral megabits/s only.
+        ulong divisor = match.Groups[3].Value == "B" ? 125_000UL : 1_000_000UL;
+        if (amount % divisor != 0 || amount / divisor > int.MaxValue)
+            throw new NodeParseException($"字段 '{field}' 无法精确映射为整数 Mbps（不得舍入或截断）");
+        return (int)(amount / divisor);
+    }
+
+    private static (string?, string?) ParseHopInterval(ClashProxyNode node)
+    {
+        string? value = node.GetRawString("hop-interval") ?? node.GetRawString("hop_interval");
+        if (value is null) return (null, null);
+        string[] parts = value.Trim().Split('-').Select(part => part.Trim('[', ' ', ']')).ToArray();
+        if (value.Trim().Length == 0) return ("30s", null);
+        if (parts.Length is < 1 or > 2 || parts.Any(part =>
+                !ulong.TryParse(part, NumberStyles.None, CultureInfo.InvariantCulture, out _)))
+            throw new NodeParseException("字段 'hop-interval' 只支持 Mihomo 的整数秒数或 min-max 范围");
+        ulong start = ulong.Parse(parts[0], CultureInfo.InvariantCulture);
+        ulong end = parts.Length == 2 ? ulong.Parse(parts[1], CultureInfo.InvariantCulture) : start;
+        if (start > end) (start, end) = (end, start);
+        start = start == 0 ? 30 : Math.Max(start, 5);
+        end = Math.Max(end, start);
+        if (end > long.MaxValue / 1_000_000_000)
+            throw new NodeParseException("字段 'hop-interval' 超出 Go duration 范围");
+        return ($"{start}s", parts.Length == 2 ? $"{end}s" : null);
     }
 
     private static (int? ServerPort, List<string>? ServerPorts) ParsePorts(

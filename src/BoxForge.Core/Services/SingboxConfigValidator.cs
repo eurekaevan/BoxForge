@@ -3,12 +3,13 @@ using System.Net.Sockets;
 using BoxForge.Exceptions;
 using BoxForge.Models;
 using BoxForge.Models.Singbox;
+using BoxForge.Configuration;
 
 namespace BoxForge.Services;
 
 public interface ISingboxConfigValidator
 {
-    void Validate(SingboxConfig config);
+    void Validate(SingboxConfig config, AddressFamilyPolicy addressFamily);
 }
 
 /// <summary>
@@ -17,9 +18,10 @@ public interface ISingboxConfigValidator
 /// </summary>
 public sealed class SingboxConfigValidator : ISingboxConfigValidator
 {
-    public void Validate(SingboxConfig config)
+    public void Validate(SingboxConfig config, AddressFamilyPolicy addressFamily)
     {
-        ValidationContext context = CreateValidationContext(config);
+        _ = addressFamily.ToDnsStrategy(); // Reject unknown policies, never silently use DualStack.
+        ValidationContext context = CreateValidationContext(config, addressFamily);
         ValidateTopLevelReferences(config.Route, context);
         ValidateHttpClients(config.HttpClients, context);
         ValidateServices(config.Services ?? [], context);
@@ -30,10 +32,11 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
         ValidateRuleSets(config.Route.RuleSet, context);
         ValidateCacheFile(config.Experimental?.CacheFile, context.Diagnostics);
         ValidateRouteRules(config.Route.Rules, context);
+        ValidateAddressFamilyGuards(config, context);
         ThrowIfInvalid(context.Diagnostics);
     }
 
-    private static ValidationContext CreateValidationContext(SingboxConfig config)
+    private static ValidationContext CreateValidationContext(SingboxConfig config, AddressFamilyPolicy addressFamily)
     {
         var diagnostics = new List<ConfigDiagnostic>();
 
@@ -87,7 +90,8 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
             dnsTags,
             httpClientTags,
             ruleSetTags,
-            inboundTags);
+            inboundTags,
+            addressFamily);
     }
 
     private static void ValidateTopLevelReferences(
@@ -115,7 +119,8 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
             "route.default_domain_resolver.server",
             "引用了不存在的 DNS server。",
             context.Diagnostics);
-        if (route.DefaultDomainResolver?.Strategy != DnsStrategy.Ipv4Only)
+        if (context.AddressFamily == AddressFamilyPolicy.Ipv4Only
+            && route.DefaultDomainResolver?.Strategy != DnsStrategy.Ipv4Only)
         {
             context.Diagnostics.Add(new ConfigDiagnostic(
                 "SB061",
@@ -356,7 +361,8 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
                 "代理节点必须配置有效端口。"));
         }
 
-        if (IPAddress.TryParse(proxy.Server, out IPAddress? serverAddress)
+        if (context.AddressFamily == AddressFamilyPolicy.Ipv4Only
+            && IPAddress.TryParse(proxy.Server, out IPAddress? serverAddress)
             && serverAddress.AddressFamily == AddressFamily.InterNetworkV6)
         {
             context.Diagnostics.Add(new ConfigDiagnostic(
@@ -366,7 +372,30 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
         }
 
         ValidateOutboundTls(proxy, index, context.Diagnostics);
+        ValidateOutboundTransport(proxy, index, context.Diagnostics);
         ValidateProtocolCredentials(proxy, index, context.Diagnostics);
+    }
+
+    private static void ValidateOutboundTransport(
+        ProxyOutbound proxy, int index, List<ConfigDiagnostic> diagnostics)
+    {
+        V2RayTransport? transport = proxy switch
+        {
+            VlessOutbound vless => vless.Transport,
+            TrojanOutbound trojan => trojan.Transport,
+            _ => null
+        };
+        string? error = transport switch
+        {
+            null or WebSocketTransport => null,
+            GrpcTransport grpc => string.IsNullOrWhiteSpace(grpc.ServiceName)
+                ? "gRPC transport 必须保留已映射的非空服务名。" : null,
+            HttpUpgradeTransport upgrade => string.IsNullOrWhiteSpace(upgrade.Host)
+                ? "HTTPUpgrade transport 必须保留源请求 Host。" : null,
+            _ => "transport model 未注册对应的 sing-box type。"
+        };
+        if (error is not null)
+            diagnostics.Add(new ConfigDiagnostic("SB079", $"outbounds[{index}].transport", error));
     }
 
     private static void ValidateOutboundTls(
@@ -625,6 +654,42 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
         }
     }
 
+    private static void ValidateAddressFamilyGuards(SingboxConfig config, ValidationContext context)
+    {
+        if (context.AddressFamily != AddressFamilyPolicy.Ipv4Only) return;
+        List<RouteRule> rules = config.Route.Rules;
+        int firstForwarding = rules.FindIndex(rule => rule.Action is
+            RouteRuleAction.Route or RouteRuleAction.Bypass or RouteRuleAction.Sniff or RouteRuleAction.Resolve);
+        int early = rules.FindIndex(rule => IsIpv6RejectGuard(rule, context.InboundTags));
+        bool hasEarlyGuard = early >= 0 && (firstForwarding < 0 || early < firstForwarding);
+        if (!hasEarlyGuard)
+            context.Diagnostics.Add(new ConfigDiagnostic("SB080", "route.rules",
+                "Ipv4Only 必须在 sniff、resolve 或转发之前包含全局 IPv6 reject guard。"));
+        int lastScopedResolve = rules.FindLastIndex(rule => rule.Action == RouteRuleAction.Resolve && rule.RuleSet is { Count: > 0 });
+        int postResolve = rules.FindLastIndex(rule => IsIpv6RejectGuard(rule, context.InboundTags));
+        if (postResolve < 0 || postResolve <= lastScopedResolve || (hasEarlyGuard && postResolve <= early))
+            context.Diagnostics.Add(new ConfigDiagnostic("SB081", "route.rules",
+                "Ipv4Only 必须在规则集 resolve 之后保留独立的 IPv6 reject guard。"));
+
+        DnsRule? first = config.Dns.Rules.FirstOrDefault();
+        if (first is null || first.Action != DnsRuleAction.Predefined || first.Rcode != DnsResponseCode.NoError
+            || first.QueryType is not { Count: 1 } || first.QueryType[0] != "AAAA"
+            || first.RuleSet is { Count: > 0 } || first.Domain is { Count: > 0 }
+            || first.DomainSuffix is { Count: > 0 } || first.PreferredBy is { Count: > 0 }
+            || first.MatchResponse is not null || first.ResponseRcode is not null)
+            context.Diagnostics.Add(new ConfigDiagnostic("SB082", "dns.rules[0]",
+                "Ipv4Only 必须首先无条件以空 NOERROR 响应拦截 AAAA 查询。"));
+    }
+
+    private static bool IsIpv6RejectGuard(RouteRule rule, HashSet<string> inboundTags) =>
+        rule.IpVersion == 6 && rule.Action == RouteRuleAction.Reject && rule.Invert != true
+        && rule.Type is null && rule.Mode is null && rule.Rules is not { Count: > 0 }
+        && rule.RuleSet is not { Count: > 0 } && rule.Protocol is not { Count: > 0 }
+        && rule.Port is not { Count: > 0 } && rule.Network is not { Count: > 0 }
+        && rule.IpCidr is not { Count: > 0 } && rule.IpIsPrivate != true
+        && rule.PreferredBy is not { Count: > 0 }
+        && (rule.Inbound is not { Count: > 0 } || inboundTags.IsSubsetOf(rule.Inbound));
+
     private static void ThrowIfInvalid(List<ConfigDiagnostic> diagnostics)
     {
         if (diagnostics.Count > 0)
@@ -641,7 +706,8 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
         HashSet<string> DnsTags,
         HashSet<string> HttpClientTags,
         HashSet<string> RuleSetTags,
-        HashSet<string> InboundTags);
+        HashSet<string> InboundTags,
+        AddressFamilyPolicy AddressFamily);
 
     private static HashSet<string> CollectRuleSetTags(
         List<SingboxRuleSet> ruleSets,

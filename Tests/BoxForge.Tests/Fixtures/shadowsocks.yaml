@@ -1,0 +1,69 @@
+# Synthetic credentials only. Each runtime scenario uses the generated leaf.
+proxies:
+  - name: ss-plain
+    type: ss
+    server: node.example.com
+    port: 8388
+    cipher: aes-128-gcm
+    password: test-only
+  - name: ss-uot-v1
+    type: ss
+    server: node.example.com
+    port: 8388
+    cipher: aes-128-gcm
+    password: test-only
+    udp-over-tcp: true
+    udp-over-tcp-version: 1
+  - name: ss-uot-v2
+    type: ss
+    server: node.example.com
+    port: 8388
+    cipher: aes-128-gcm
+    password: test-only
+    udp-over-tcp: true
+    udp-over-tcp-version: 2
+  - name: ss-obfs-http
+    type: ss
+    server: node.example.com
+    port: 8388
+    cipher: aes-128-gcm
+    password: test-only
+    plugin: obfs
+    plugin-opts:
+      mode: http
+      host: obfs.example.com
+  - name: ss-obfs-tls
+    type: ss
+    server: node.example.com
+    port: 8388
+    cipher: aes-128-gcm
+    password: test-only
+    plugin: obfs
+    plugin-opts:
+      mode: tls
+      host: obfs.example.com
+  - name: ss-v2ray-ws
+    type: ss
+    server: node.example.com
+    port: 8388
+    cipher: aes-128-gcm
+    password: test-only
+    plugin: v2ray-plugin
+    plugin-opts:
+      mode: websocket
+      host: ws.example.com
+      path: /ws
+      mux: false
+  - name: ss-v2ray-ws-tls
+    type: ss
+    server: node.example.com
+    port: 8388
+    cipher: aes-128-gcm
+    password: test-only
+    plugin: v2ray-plugin
+    plugin-opts:
+      mode: websocket
+      host: ws.example.com
+      path: /ws
+      mux: false
+      tls: true

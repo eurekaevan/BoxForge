@@ -1,0 +1,11 @@
+# Synthetic credentials only; session-protocol runtime verification input.
+proxies:
+  - name: anytls-session
+    type: anytls
+    server: node.example.com
+    port: 443
+    password: test-only
+    idle-session-timeout: 30
+    idle-session-check-interval: 30
+    min-idle-session: 1
+    client-metadata: test-only

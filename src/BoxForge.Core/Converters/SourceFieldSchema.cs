@@ -103,11 +103,14 @@ public sealed class SourceFieldSchema
         return this;
     }
 
-    public SourceFieldSchema Nested(string name, SourceFieldSchema schema)
+    public SourceFieldSchema Nested(
+        string name,
+        SourceFieldSchema schema,
+        Func<ClashProxyNode, object?, string?>? validate = null)
     {
         Add(new SourceFieldDefinition(
             name, SourceFieldDisposition.Mapped, NestedSchema: schema,
-            ValueKind: SourceFieldValueKind.Mapping));
+            ValueKind: SourceFieldValueKind.Mapping, ValidateValue: validate));
         return this;
     }
 
@@ -140,6 +143,9 @@ public sealed class SourceFieldSchema
 
     public void Validate(ClashProxyNode node) =>
         ValidateObject(node, node, null);
+
+    internal void ValidateNested(ClashObject source, ClashProxyNode node, string prefix) =>
+        ValidateObject(source, node, prefix);
 
     private void ValidateObject(
         ClashObject source,

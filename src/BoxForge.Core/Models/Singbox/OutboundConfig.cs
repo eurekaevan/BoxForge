@@ -57,16 +57,20 @@ public record VlessOutbound : ProxyOutbound
     [JsonPropertyName("flow")] public string? Flow { get; init; }
     [JsonPropertyName("packet_encoding")] public string? PacketEncoding { get; init; }
     [JsonPropertyName("tls")] public OutboundTls? Tls { get; init; }
+    [JsonPropertyName("transport")] public V2RayTransport? Transport { get; init; }
 }
 
 public record TrojanOutbound : ProxyOutbound
 {
     [JsonPropertyName("password")] public required string Password { get; init; }
     [JsonPropertyName("tls")] public OutboundTls? Tls { get; init; }
+    [JsonPropertyName("transport")] public V2RayTransport? Transport { get; init; }
 }
 
 public record Hysteria2Outbound : ProxyOutbound
 {
+    [JsonPropertyName("up_mbps")] public int? UpMbps { get; init; }
+    [JsonPropertyName("down_mbps")] public int? DownMbps { get; init; }
     [JsonPropertyName("server_ports")] public List<string>? ServerPorts { get; init; }
     [JsonPropertyName("hop_interval")] public string? HopInterval { get; init; }
     [JsonPropertyName("hop_interval_max")] public string? HopIntervalMax { get; init; }
@@ -82,13 +86,22 @@ public record ShadowsocksOutbound : ProxyOutbound
     [JsonPropertyName("password")] public required string Password { get; init; }
     [JsonPropertyName("plugin")] public string? Plugin { get; init; }
     [JsonPropertyName("plugin_opts")] public string? PluginOpts { get; init; }
-    [JsonPropertyName("udp_over_tcp")] public bool? UdpOverTcp { get; init; }
+    [JsonPropertyName("udp_over_tcp")] public UdpOverTcpOptions? UdpOverTcp { get; init; }
+}
+
+public record UdpOverTcpOptions
+{
+    [JsonPropertyName("enabled")] public bool Enabled { get; init; }
+    [JsonPropertyName("version")] public int Version { get; init; }
 }
 
 public record AnyTlsOutbound : ProxyOutbound
 {
     [JsonPropertyName("password")] public required string Password { get; init; }
     [JsonPropertyName("idle_session_timeout")] public string? IdleSessionTimeout { get; init; }
+    [JsonPropertyName("idle_session_check_interval")] public string? IdleSessionCheckInterval { get; init; }
+    [JsonPropertyName("min_idle_session")] public int? MinIdleSession { get; init; }
+    [JsonPropertyName("client_metadata")] public string? ClientMetadata { get; init; }
     [JsonPropertyName("tls")] public OutboundTls? Tls { get; init; }
 }
 
@@ -103,6 +116,7 @@ public record OutboundTls
     [JsonPropertyName("enabled")] public bool Enabled { get; init; } = true;
     [JsonPropertyName("server_name")] public required string ServerName { get; init; }
     [JsonPropertyName("insecure")] public bool? Insecure { get; init; }
+    [JsonPropertyName("alpn")] public List<string>? Alpn { get; init; }
     [JsonPropertyName("utls")] public Utls? Utls { get; init; }
     [JsonPropertyName("reality")] public OutboundReality? Reality { get; init; }
 }
@@ -118,4 +132,6 @@ public record OutboundObfs
 {
     [JsonPropertyName("type")] public string? Type { get; init; }
     [JsonPropertyName("password")] public string? Password { get; init; }
+    [JsonPropertyName("min_packet_size")] public int? MinPacketSize { get; init; }
+    [JsonPropertyName("max_packet_size")] public int? MaxPacketSize { get; init; }
 }

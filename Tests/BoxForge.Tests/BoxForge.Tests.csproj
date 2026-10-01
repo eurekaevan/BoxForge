@@ -18,6 +18,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Update="Fixtures/transport.yaml" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Fixtures/shadowsocks.yaml" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Fixtures/hysteria2.yaml" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Fixtures/anytls.yaml" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Fixtures/profiles.yaml" CopyToOutputDirectory="PreserveNewest" />
     <ProjectReference Include="../../src/BoxForge.Core/BoxForge.Core.csproj" />
     <ProjectReference Include="../../src/BoxForge.Cli/BoxForge.Cli.csproj" />
     <ProjectReference Include="../../src/BoxForge.Server/BoxForge.Server.csproj" />

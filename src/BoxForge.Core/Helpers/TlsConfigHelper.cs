@@ -67,6 +67,9 @@ public static class TlsConfigHelper
             Enabled = true,
             ServerName = node.GetString("sni") ?? node.GetString("servername") ?? server,
             Insecure = node.GetNullableBool("skip-cert-verify"),
+            Alpn = node.GetValue("alpn") is IEnumerable<object?> alpn
+                ? alpn.Cast<string>().ToList()
+                : null,
             Utls = string.IsNullOrWhiteSpace(fingerprint)
                 ? null
                 : new Utls
@@ -77,6 +80,13 @@ public static class TlsConfigHelper
             Reality = realityConfig
         };
     }
+
+    internal static string? ValidateAlpn(object? value) =>
+        value is IEnumerable<object?> protocols
+            && protocols.All(protocol => protocol is string { Length: > 0 } text
+                && System.Text.Encoding.UTF8.GetByteCount(text) <= 255)
+            ? null
+            : "必须是 TLS 协议字符串列表，每项为 1 到 255 字节；保持源顺序和值";
 
     private static bool IsValidRealityPublicKey(string publicKey)
     {

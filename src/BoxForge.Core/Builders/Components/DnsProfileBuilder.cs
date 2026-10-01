@@ -9,9 +9,10 @@ public sealed class DnsProfileBuilder(IOptions<TailscaleOptions> tailscaleOption
 {
     private readonly TailscaleOptions tailscale = tailscaleOptions.Value;
 
-    public DnsConfig Build(TargetPlatform platform)
+    public DnsConfig Build(TargetPlatform platform) => Build(platform, AddressFamilyPolicies.For(platform));
+
+    public DnsConfig Build(TargetPlatform platform, AddressFamilyPolicy addressFamily)
     {
-        AddressFamilyPolicy addressFamily = AddressFamilyPolicies.For(platform);
         DnsResolverSelectionMode selectionMode =
             DnsResolverSelectionPolicies.For(platform);
         var dns = new DnsConfig { Strategy = addressFamily.ToDnsStrategy() };

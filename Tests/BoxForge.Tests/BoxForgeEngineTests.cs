@@ -39,9 +39,7 @@ public sealed class BoxForgeEngineTests
                 server: node.example.com
                 port: 443
                 uuid: 00000000-0000-4000-8000-000000000001
-                network: ws
-                ws-opts:
-                  path: /foo
+                network: xhttp
             """;
 
         BoxForgeConversionException? error = Assert.ThrowsAsync<BoxForgeConversionException>(

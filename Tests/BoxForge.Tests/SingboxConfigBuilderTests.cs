@@ -48,12 +48,14 @@ public sealed class SingboxConfigBuilderTests
             Assert.That(json, Does.Not.Contain("\"http_proxy\""));
             Assert.That(json, Does.Not.Contain("\"mtu\""));
             Assert.That(json, Does.Not.Contain("\"stack\""));
+            Assert.That(tunInbound.StrictRoute, Is.EqualTo(platform == TargetPlatform.Android ? (bool?)null : true));
+            Assert.That(json.Contains("\"strict_route\"", StringComparison.Ordinal), Is.EqualTo(platform != TargetPlatform.Android));
             Assert.That(
                 json.Contains("\"type\": \"bridge\"", StringComparison.Ordinal),
                 Is.EqualTo(platform != TargetPlatform.Android));
         });
 
-        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config));
+        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Ipv4Only));
     }
 
     [TestCase(TargetPlatform.Android)]
@@ -90,7 +92,7 @@ public sealed class SingboxConfigBuilderTests
             Assert.That(json, Does.Contain("\"on_demand\": true"));
         });
 
-        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config));
+        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Ipv4Only));
     }
 
     [TestCase(TargetPlatform.Android)]
@@ -126,7 +128,7 @@ public sealed class SingboxConfigBuilderTests
                 Is.False);
         });
 
-        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config));
+        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Ipv4Only));
     }
 
     [TestCase(TargetPlatform.Android)]
@@ -198,7 +200,7 @@ public sealed class SingboxConfigBuilderTests
             Assert.That(json, Does.Not.Contain("Steam"));
         });
 
-        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config));
+        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Ipv4Only));
     }
 
     [Test]
@@ -218,7 +220,7 @@ public sealed class SingboxConfigBuilderTests
                 Is.EqualTo(HttpClientTags.RuleSetProxy));
         });
 
-        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config));
+        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Ipv4Only));
     }
 
     [Test]
@@ -246,7 +248,7 @@ public sealed class SingboxConfigBuilderTests
             Assert.That(json, Does.Not.Contain("\"invert\": false"));
         });
 
-        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config));
+        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Ipv4Only));
     }
 
     [TestCase(TargetPlatform.Android)]
@@ -291,7 +293,7 @@ public sealed class SingboxConfigBuilderTests
                 client.Tag == HttpClientTags.DashboardDirect).Detour, Is.Null);
         });
 
-        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(enabled));
+        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(enabled, AddressFamilyPolicy.Ipv4Only));
     }
 
     [Test]
@@ -331,7 +333,7 @@ public sealed class SingboxConfigBuilderTests
                 Does.Contain("\"disable_optimistic_cache\": true"));
         });
 
-        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config));
+        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Ipv4Only));
     }
 
     [TestCase(TargetPlatform.Android, null, null)]
@@ -426,7 +428,7 @@ public sealed class SingboxConfigBuilderTests
                 Does.Not.Contain("Steam"));
         });
 
-        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config));
+        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Ipv4Only));
     }
 
     [Test]
@@ -481,7 +483,24 @@ public sealed class SingboxConfigBuilderTests
                 Is.True);
         });
 
-        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config));
+        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Ipv4Only));
+    }
+
+    [Test]
+    public void BuilderAndValidatorShareTheExplicitRequestAddressFamily()
+    {
+        var request = new SingboxBuildRequest(
+            new NodeCatalog([CreateProxy("ipv6-test", "2001:db8::1")], ["ipv6-test"]),
+            TargetPlatform.Linux, new string('a', 64))
+        { AddressFamily = AddressFamilyPolicy.DualStack };
+        SingboxConfig config = CreateBuilder().Build(request);
+        Assert.That(config.Route.DefaultDomainResolver!.Strategy, Is.Null);
+        Assert.That(config.Dns.Strategy, Is.Null);
+        Assert.That(config.Dns.Rules.Any(rule => rule.QueryType?.Contains("AAAA") == true), Is.False);
+        Assert.That(config.Route.Rules.Any(rule => rule.IpVersion == 6 && rule.Action == RouteRuleAction.Reject), Is.False);
+        Assert.That(config.HttpClients.All(client => client.DomainResolver!.Strategy is null), Is.True);
+        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, request.AddressFamily));
+        Assert.Throws<Exceptions.ConfigValidationException>(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Ipv4Only));
     }
 
     private static ShadowsocksOutbound CreateProxy(string tag, string server) =>

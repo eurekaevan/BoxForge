@@ -10,9 +10,10 @@ public sealed class RouteProfileBuilder(
 {
     private readonly TailscaleOptions tailscale = tailscaleOptions.Value;
 
-    public RouteConfig Build(TargetPlatform platform)
+    public RouteConfig Build(TargetPlatform platform) => Build(platform, AddressFamilyPolicies.For(platform));
+
+    public RouteConfig Build(TargetPlatform platform, AddressFamilyPolicy addressFamily)
     {
-        AddressFamilyPolicy addressFamily = AddressFamilyPolicies.For(platform);
         var directForwardingModes = new Dictionary<RouteRule, DirectForwardingMode>(
             ReferenceEqualityComparer.Instance);
         RouteRule MarkDirectForwarding(
@@ -27,7 +28,7 @@ public sealed class RouteProfileBuilder(
         {
             Final = SingboxTags.MainProxyGroup,
             DefaultHttpClient = HttpClientTags.RuleSetProxy,
-            DefaultDomainResolver = ControlPlaneDnsPolicy.CreateResolver(platform)
+            DefaultDomainResolver = ControlPlaneDnsPolicy.CreateResolver(addressFamily)
         };
 
         route.RuleSet.AddRange([

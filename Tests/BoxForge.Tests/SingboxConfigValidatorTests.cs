@@ -14,8 +14,43 @@ public sealed class SingboxConfigValidatorTests
     [Test]
     public void ValidConfigurationPasses()
     {
-        Assert.DoesNotThrow(() => validator.Validate(CreateValidConfig()));
+        Assert.DoesNotThrow(() => validator.Validate(CreateValidConfig(), AddressFamilyPolicy.DualStack));
     }
+
+    [TestCase("grpc", "gRPC transport 必须保留已映射的非空服务名。")]
+    [TestCase("httpupgrade", "HTTPUpgrade transport 必须保留源请求 Host。")]
+    public void TransportMustRetainRequiredMappedValues(string kind, string message)
+    {
+        SingboxConfig valid = CreateValidConfig();
+        var config = valid with
+        {
+            Outbounds = [.. valid.Outbounds, new VlessOutbound
+            {
+                Tag = "transport", Server = "node.example.com", ServerPort = 443,
+                Uuid = "00000000-0000-4000-8000-000000000001",
+                Transport = kind == "grpc" ? new GrpcTransport { ServiceName = "" } : new HttpUpgradeTransport { Host = "" }
+            }]
+        };
+        AssertDiagnostics(config, new ConfigDiagnostic("SB079", $"outbounds[{valid.Outbounds.Count}].transport", message));
+    }
+
+    [Test]
+    public void UnregisteredTransportModelCannotReachSerialization()
+    {
+        SingboxConfig valid = CreateValidConfig();
+        var config = valid with
+        {
+            Outbounds = [.. valid.Outbounds, new VlessOutbound
+            {
+                Tag = "transport", Server = "node.example.com", ServerPort = 443,
+                Uuid = "00000000-0000-4000-8000-000000000001", Transport = new UnregisteredTransport()
+            }]
+        };
+        AssertDiagnostics(config, new ConfigDiagnostic("SB079", $"outbounds[{valid.Outbounds.Count}].transport",
+            "transport model 未注册对应的 sing-box type。"));
+    }
+
+    private sealed record UnregisteredTransport : V2RayTransport;
 
     [Test]
     public void RuleSetHttpClientMustExist()
@@ -78,7 +113,7 @@ public sealed class SingboxConfigValidatorTests
             }
         };
 
-        Assert.DoesNotThrow(() => validator.Validate(config));
+        Assert.DoesNotThrow(() => validator.Validate(config, AddressFamilyPolicy.DualStack));
     }
 
     [Test]
@@ -339,7 +374,7 @@ public sealed class SingboxConfigValidatorTests
     [Test]
     public void ControlPlaneMustUseFreshIpv4OnlyResolutionAndRejectIpv6Literals()
     {
-        SingboxConfig valid = CreateValidConfig();
+        SingboxConfig valid = CreateValidIpv4Config();
         SingboxConfig config = valid with
         {
             Outbounds =
@@ -363,8 +398,9 @@ public sealed class SingboxConfigValidatorTests
             }
         };
 
-        AssertDiagnostics(
+        AssertPolicyDiagnostics(
             config,
+            AddressFamilyPolicy.Ipv4Only,
             new ConfigDiagnostic(
                 "SB061",
                 "route.default_domain_resolver.strategy",
@@ -482,7 +518,7 @@ public sealed class SingboxConfigValidatorTests
         };
 
         var exception = Assert.Throws<ConfigValidationException>(
-            () => validator.Validate(config));
+            () => validator.Validate(config, AddressFamilyPolicy.DualStack));
 
         Assert.That(exception!.Diagnostics, Is.EqualTo(new ConfigDiagnostic[]
         {
@@ -655,13 +691,123 @@ public sealed class SingboxConfigValidatorTests
             new("SB034", "route.rules[0].rules[0].inbound[0]", "引用了不存在的 inbound。"));
     }
 
+    [Test]
+    public void Ipv4OnlyCompleteGuardsPass()
+    {
+        Assert.DoesNotThrow(() => validator.Validate(CreateValidIpv4Config(), AddressFamilyPolicy.Ipv4Only));
+    }
+
+    [Test]
+    public void ExplicitFalsePrivateFlagDoesNotNarrowIpv6GuardInOfficialCore()
+    {
+        SingboxConfig valid = CreateValidIpv4Config();
+        var config = valid with
+        {
+            Route = valid.Route with
+            {
+                Rules = [valid.Route.Rules[0] with { IpIsPrivate = false }, .. valid.Route.Rules.Skip(1)]
+            }
+        };
+        Assert.DoesNotThrow(() => validator.Validate(config, AddressFamilyPolicy.Ipv4Only));
+    }
+
+    [TestCase(0, "SB080")]
+    [TestCase(2, "SB081")]
+    public void Ipv4OnlyRequiresEarlyAndPostResolveGuards(int removeIndex, string code)
+    {
+        SingboxConfig valid = CreateValidIpv4Config();
+        var config = valid with
+        {
+            Route = valid.Route with
+            {
+                Rules = valid.Route.Rules.Where((_, index) => index != removeIndex).ToList()
+            }
+        };
+        var error = Assert.Throws<ConfigValidationException>(() => validator.Validate(config, AddressFamilyPolicy.Ipv4Only));
+        Assert.That(error!.Diagnostics.Select(diagnostic => diagnostic.Code), Is.EqualTo(new[] { code }));
+    }
+
+    [Test]
+    public void Ipv4OnlyRejectGuardCannotBeNarrowedToPrivateOrSingleNetwork()
+    {
+        SingboxConfig valid = CreateValidIpv4Config();
+        foreach (RouteRule restricted in new[]
+        {
+            valid.Route.Rules[0] with { IpIsPrivate = true },
+            valid.Route.Rules[0] with { Network = ["tcp"] },
+            valid.Route.Rules[0] with { Inbound = ["other"] },
+            valid.Route.Rules[0] with { Invert = true }
+        })
+        {
+            var config = valid with { Route = valid.Route with { Rules = [restricted, .. valid.Route.Rules.Skip(1)] } };
+            var error = Assert.Throws<ConfigValidationException>(() => validator.Validate(config, AddressFamilyPolicy.Ipv4Only));
+            Assert.That(error!.Diagnostics.Select(diagnostic => diagnostic.Code), Does.Contain("SB080"));
+        }
+    }
+
+    [Test]
+    public void Ipv4OnlyRequiresUnconditionalAaaaBlockBeforeOtherDnsRules()
+    {
+        SingboxConfig valid = CreateValidIpv4Config();
+        foreach (List<DnsRule> rules in new[]
+        {
+            valid.Dns.Rules.Skip(1).ToList(),
+            valid.Dns.Rules.AsEnumerable().Reverse().ToList(),
+            new List<DnsRule> { valid.Dns.Rules[0] with { Domain = ["example.com"] }, valid.Dns.Rules[1] }
+        })
+        {
+            var config = valid with { Dns = valid.Dns with { Rules = rules } };
+            var error = Assert.Throws<ConfigValidationException>(() => validator.Validate(config, AddressFamilyPolicy.Ipv4Only));
+            Assert.That(error!.Diagnostics.Select(diagnostic => diagnostic.Code), Is.EqualTo(new[] { "SB082" }));
+        }
+    }
+
+    [Test]
+    public void DualStackDoesNotRequireIpv4ResolutionOrLeakGuards()
+    {
+        SingboxConfig valid = CreateValidConfig();
+        var config = valid with
+        {
+            Route = valid.Route with { DefaultDomainResolver = valid.Route.DefaultDomainResolver! with { Strategy = null } },
+            Outbounds = [.. valid.Outbounds, CreateProxyOutbound("ipv6") with { Server = "2001:db8::1" }]
+        };
+        Assert.DoesNotThrow(() => validator.Validate(config, AddressFamilyPolicy.DualStack));
+    }
+
     private void AssertDiagnostics(
         SingboxConfig config,
         params ConfigDiagnostic[] expected)
+        => AssertPolicyDiagnostics(config, AddressFamilyPolicy.DualStack, expected);
+
+    private void AssertPolicyDiagnostics(
+        SingboxConfig config,
+        AddressFamilyPolicy addressFamily,
+        params ConfigDiagnostic[] expected)
     {
         var exception = Assert.Throws<ConfigValidationException>(
-            () => validator.Validate(config));
+            () => validator.Validate(config, addressFamily));
         Assert.That(exception!.Diagnostics, Is.EqualTo(expected));
+    }
+
+    private static SingboxConfig CreateValidIpv4Config()
+    {
+        SingboxConfig valid = CreateValidConfig();
+        return valid with
+        {
+            Dns = valid.Dns with
+            {
+                Rules = [new DnsRule
+                {
+                    QueryType = ["AAAA"], Action = DnsRuleAction.Predefined, Rcode = DnsResponseCode.NoError
+                }, .. valid.Dns.Rules]
+            },
+            Route = valid.Route with
+            {
+                Rules = [new RouteRule { IpVersion = 6, Action = RouteRuleAction.Reject },
+                    new RouteRule { RuleSet = ["rules"], Action = RouteRuleAction.Resolve, Strategy = DnsStrategy.Ipv4Only },
+                    new RouteRule { IpVersion = 6, Action = RouteRuleAction.Reject }, .. valid.Route.Rules]
+            }
+        };
     }
 
     private static SingboxConfig CreateValidConfig() =>

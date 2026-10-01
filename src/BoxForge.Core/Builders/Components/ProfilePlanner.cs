@@ -8,14 +8,14 @@ public static class ProfilePlanner
 {
     public static ProfilePlan Plan(NodeCatalog nodes)
     {
-        var generatedRegions = new Dictionary<RegionId, string>();
+        var inventory = ProfileDefinitions.Regions.Select(definition => new RegionInventory(
+            definition, nodes.Names.Where(name => definition.Pattern.IsMatch(name)).ToArray())).ToArray();
         var regionAutoOutbounds = new List<UrlTestOutbound>();
         var regionOutbounds = BuildRegionOutbounds(
-            nodes,
-            generatedRegions,
+            inventory,
             regionAutoOutbounds);
         var mainOutbound = BuildMainOutbound(nodes, regionOutbounds);
-        var serviceOutbounds = BuildServiceOutbounds(nodes, generatedRegions);
+        var serviceOutbounds = BuildServiceOutbounds(nodes, inventory, regionOutbounds);
         var directOutbound = new DirectOutbound { Tag = SingboxTags.DirectOutbound };
 
         return new ProfilePlan(
@@ -27,34 +27,28 @@ public static class ProfilePlanner
     }
 
     private static List<SelectorOutbound> BuildRegionOutbounds(
-        NodeCatalog nodes,
-        Dictionary<RegionId, string> generatedRegions,
+        IReadOnlyList<RegionInventory> inventory,
         List<UrlTestOutbound> regionAutoOutbounds)
     {
         var outbounds = new List<SelectorOutbound>();
 
-        foreach (RegionDefinition definition in ProfileDefinitions.Regions)
+        foreach (RegionInventory region in inventory)
         {
-            var matchedNodes = nodes.Names
-                .Where(name => definition.Pattern.IsMatch(name))
-                .ToList();
-
-            if (matchedNodes.Count < 2)
+            if (region.Leaves.Count < 2)
             {
                 continue;
             }
 
-            string autoTag = $"{definition.DisplayName} AUTO";
-            generatedRegions[definition.Id] = definition.DisplayName;
+            string autoTag = $"{region.Definition.DisplayName} AUTO";
             regionAutoOutbounds.Add(new UrlTestOutbound
             {
                 Tag = autoTag,
-                Outbounds = [.. matchedNodes]
+                Outbounds = [.. region.Leaves]
             });
             outbounds.Add(new SelectorOutbound
             {
-                Tag = definition.DisplayName,
-                Outbounds = [autoTag, .. matchedNodes],
+                Tag = region.Definition.DisplayName,
+                Outbounds = [autoTag, .. region.Leaves],
                 Default = autoTag,
                 InterruptExistConnections = true
             });
@@ -97,24 +91,19 @@ public static class ProfilePlanner
 
     private static List<SelectorOutbound> BuildServiceOutbounds(
         NodeCatalog nodes,
-        Dictionary<RegionId, string> generatedRegions)
+        IReadOnlyList<RegionInventory> inventory,
+        IReadOnlyList<SelectorOutbound> regionOutbounds)
     {
         var groupOptions = new List<string> { SingboxTags.MainProxyGroup };
-        groupOptions.AddRange(generatedRegions.Values);
+        groupOptions.AddRange(regionOutbounds.Select(outbound => outbound.Tag));
         groupOptions.AddRange(nodes.Names);
         groupOptions.Add(SingboxTags.DirectOutbound);
 
         var outbounds = new List<SelectorOutbound>();
         foreach (var service in ProfileDefinitions.Services)
         {
-            var defaultSelection = SingboxTags.MainProxyGroup;
-            if (service.DefaultRegion.HasValue
-                && generatedRegions.TryGetValue(
-                    service.DefaultRegion.Value,
-                    out var generatedRegionName))
-            {
-                defaultSelection = generatedRegionName;
-            }
+            string defaultSelection = inventory.FirstOrDefault(region =>
+                region.Definition.Id == service.DefaultRegion)?.Target ?? SingboxTags.MainProxyGroup;
 
             outbounds.Add(new SelectorOutbound
             {
@@ -126,5 +115,15 @@ public static class ProfilePlanner
         }
 
         return outbounds;
+    }
+
+    private sealed record RegionInventory(RegionDefinition Definition, IReadOnlyList<string> Leaves)
+    {
+        public string? Target => Leaves.Count switch
+        {
+            0 => null,
+            1 => Leaves[0],
+            _ => Definition.DisplayName
+        };
     }
 }
