@@ -11,8 +11,7 @@ public sealed record SingboxBuildRequest(
 
 public sealed record NodeCatalog(
     IReadOnlyList<ProxyOutbound> Outbounds,
-    IReadOnlyList<string> Names,
-    IReadOnlyList<string> ServerDomains
+    IReadOnlyList<string> Names
 );
 
 public sealed record ProfilePlan(

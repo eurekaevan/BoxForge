@@ -28,6 +28,35 @@ public sealed class BoxForgeEngineTests
         """;
 
     [Test]
+    public void StrictGenerationRejectsUnsupportedTransportBeforeBuildingArtifacts()
+    {
+        using ServiceProvider provider = CreateProvider();
+        var engine = provider.GetRequiredService<IBoxForgeEngine>();
+        const string yaml = """
+            proxies:
+              - name: unsafe-vless
+                type: vless
+                server: node.example.com
+                port: 443
+                uuid: 00000000-0000-4000-8000-000000000001
+                network: ws
+                ws-opts:
+                  path: /foo
+            """;
+
+        BoxForgeConversionException? error = Assert.ThrowsAsync<BoxForgeConversionException>(
+            async () => await engine.ConvertAsync(new ConversionRequest(
+                "unsafe", yaml, [TargetPlatform.Android, TargetPlatform.Linux])));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(error!.InnerException?.Message, Does.Contain("VLESS"));
+            Assert.That(error.InnerException?.Message, Does.Contain("unsafe-vless"));
+            Assert.That(error.InnerException?.Message, Does.Contain("network"));
+        });
+    }
+
+    [Test]
     public async Task ConvertsSinglePlatformInMemory()
     {
         using ServiceProvider provider = CreateProvider();

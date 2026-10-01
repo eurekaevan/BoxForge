@@ -77,10 +77,46 @@ BoxForge.Tests  ──→ BoxForge.Cli, BoxForge.Server, BoxForge.Core
 
 1. 在 `src/BoxForge.Core/Converters/` 实现 `IProxyConverter`，使
    `CanHandle` 只识别目标类型。
-2. 将 Clash 字段校验和 sing-box outbound 创建放在该转换器内。
-3. 在 `CoreServiceRegistration.AddBoxForgeCore` 中注册新转换器。
-4. 增加有效转换和无效字段的单元测试；如果引入新引用类型，同时扩展
+2. 声明 `SourceSchema`：列出已映射字段、输入别名、有明确理由忽略的字段，
+   以及尚不能安全映射的连接语义。公共字段和 TLS/Reality 字段复用
+   `SourceFieldSchemas`，协议不支持的能力单独标为 unsupported。
+3. 将 Clash 字段校验和 sing-box outbound 创建放在该转换器内。
+4. 在 `CoreServiceRegistration.AddBoxForgeCore` 中注册新转换器。
+5. 增加有效转换和无效字段的单元测试；如果引入新引用类型，同时扩展
    `SingboxConfigValidator`。
+
+### 来源语义与调优优先级
+
+节点出站的取值顺序为：YAML 显式值 → 精确语义映射 → BoxForge tuning →
+sing-box 运行时默认值。BoxForge 不保证逐字段原样复制；它保证已声明的显式
+来源语义不会被 tuning 静默覆盖。来源未指定时，BoxForge 可以施加自己的调优。
+
+`ProxyConverterBase.Convert` 在协议映射前逐项检查 `ClashObject.Properties`。
+converter 拥有自己的字段声明；`NodeCatalogBuilder` 只负责选择 converter 和
+处理转换结果。已知但未支持的连接字段、尚未分类的字段、冲突的别名和无效的
+显式值都会形成包含协议、节点名、字段名及原因的错误。schema 同时声明值形状，
+避免把列表或对象转换成字符串；嵌套 Reality 对象也逐项检查。
+`name`/`type` 等元数据和明确无连接作用的选项在 schema 中列明，
+不会用通配规则吞掉未知字段。
+
+引擎使用 strict conversion：任一不安全节点使整次转换失败，不返回部分配置。
+non-strict 调用则跳过整个节点并记录警告；不会删掉无法映射的字段后输出降级
+节点。当前重点登记的 gap 包括 VLESS/Trojan 非 TCP transport、TLS ALPN/
+证书校验扩展、Hysteria2 显式带宽/跳端口/BBR、AnyTLS 会话维护和元数据，
+以及 Shadowsocks UoT 版本与部分插件语义。后续协议工作应把字段从
+`UnsupportedSemantic` 改为 `Mapped`，同时提供映射与反例测试。
+
+`OutboundTuningPolicy` 在 converter 之后、生成配置之前，只用 `??` 填入
+缺失的 `connect_timeout`、桌面 TCP keepalive 和 Hysteria2 hop/BBR 值。
+这些字段在 outbound model 中默认是 `null`；模型本身不施加 BoxForge policy。
+路由 sniff 的 `300ms` 由 `RouteTuningPolicy` 明确命名。当前 YAML 显式
+HY2 hop/BBR 值尚未实现映射，会先失败，不能被调优值覆盖。
+
+Mihomo 的 [UoT 默认版本为 1](https://wiki.metacubex.one/en/config/proxies/ss/)，
+而 [sing-box 布尔形式默认版本为 2](https://sing-box.sagernet.org/configuration/shared/udp-over-tcp/)；
+因此显式 `udp-over-tcp: true` 暂时 fail-fast。Shadowsocks 插件目前只接受
+可直接传递的 `v2ray-plugin`/`obfs-local` 名称与原始字符串选项；结构化
+Mihomo 插件选项需要后续精确翻译。
 
 ## 确定性与替换边界
 

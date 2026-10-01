@@ -7,6 +7,14 @@ namespace BoxForge.Converters;
 public sealed class TrojanConverter()
     : ProxyConverterBase("Trojan", "trojan")
 {
+    private static readonly SourceFieldSchema SourceFields = SourceFieldSchemas.Common()
+        .Include(SourceFieldSchemas.Tls(supportsReality: true, supportsUtls: true, forceTls: true))
+        .Include(SourceFieldSchemas.TcpTransport())
+        .Mapped("password")
+        .Unsupported("Trojan Shadowsocks 加密选项尚未映射", "ss-opts", "ss_opts");
+
+    protected override SourceFieldSchema Schema => SourceFields;
+
     protected override ProxyOutbound ConvertCore(
         ClashProxyNode node,
         string name)

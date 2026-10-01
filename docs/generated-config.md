@@ -73,6 +73,14 @@ SFA 工作目录下的 `Taildrop`，Windows 使用
 
 - Clash YAML 中的重复键会在解析阶段拒绝，不会以“后值覆盖前值”
   的方式静默改变节点字段。
+- 每种已支持节点协议先检查自己声明的 source schema。未支持或无法分类的
+  显式连接字段在 strict 生成中报错；non-strict 转换会跳过整个节点并告警。
+  已知的 UI 元数据和确认无连接作用的值会被明确列为忽略项。
+- 出站模型不携带 BoxForge 调优默认值。正式生成时仅对缺失字段填入
+  `connect_timeout: 5s`、Linux/Windows TCP keepalive `1m`/`30s`，
+  以及 HY2 的 `hop_interval: 30s`、`hop_interval_max: 60s`、
+  `bbr_profile: standard`。已有显式出站值不会被调优覆盖；Android 不注入
+  桌面 keepalive。
 - AnyTLS 的 `idle-session-timeout`、下划线别名以及旧
   `idle-timeout` 输入统一生成官方 `idle_session_timeout`；纯数字输入按秒转换。
 - VLESS `packet-encoding`（兼容 `packet_encoding`）会按来源生成 `xudp`、
@@ -80,8 +88,11 @@ SFA 工作目录下的 `Taildrop`，Windows 使用
 - Reality 转换要求有效的 32 字节 Base64URL 公钥和显式 short ID。short ID
   可以为空，否则必须是最多 8 字节的偶数位十六进制字符串；错误会在节点转换阶段
   直接报告，不再生成空字段。
-- Hysteria2 出站使用 `hop_interval: 30s`、`hop_interval_max: 60s` 和
-  `bbr_profile: standard`。
+- Hysteria2 YAML 显式 `up`/`down`、`hop-interval`、`bbr-profile` 等尚未
+  映射时会报错，不会静默生成使用 BoxForge BBR/跳端口调优的不同节点。
+- VLESS/Trojan 的非 TCP transport、尚未映射的 TLS 字段、AnyTLS 额外
+  会话字段、Shadowsocks UoT 真值或版本配置以及不能精确传递的插件配置
+  当前均 fail-fast；详见[来源语义与调优优先级](architecture.md#来源语义与调优优先级)。
 - 远程 rule-set 每天更新，通过默认 HTTP client `http-ruleset-proxy` 走代理下载。
   有地区 AUTO 时选择首个地区 AUTO，否则选择首个真实节点；即使主组被手动切到
   `DIRECT`，rule-set 下载也不会随之改走直连。下载域名仍由

@@ -46,7 +46,7 @@ public abstract record ProxyOutbound : Outbound
     [JsonPropertyName("server")] public required string Server { get; init; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [JsonPropertyName("server_port")] public int? ServerPort { get; init; }
-    [JsonPropertyName("connect_timeout")] public string ConnectTimeout { get; init; } = "5s";
+    [JsonPropertyName("connect_timeout")] public string? ConnectTimeout { get; init; }
     [JsonPropertyName("tcp_keep_alive")] public string? TcpKeepAlive { get; init; }
     [JsonPropertyName("tcp_keep_alive_interval")] public string? TcpKeepAliveInterval { get; init; }
 }
@@ -68,9 +68,9 @@ public record TrojanOutbound : ProxyOutbound
 public record Hysteria2Outbound : ProxyOutbound
 {
     [JsonPropertyName("server_ports")] public List<string>? ServerPorts { get; init; }
-    [JsonPropertyName("hop_interval")] public string HopInterval { get; init; } = "30s";
-    [JsonPropertyName("hop_interval_max")] public string HopIntervalMax { get; init; } = "60s";
-    [JsonPropertyName("bbr_profile")] public string BbrProfile { get; init; } = "standard";
+    [JsonPropertyName("hop_interval")] public string? HopInterval { get; init; }
+    [JsonPropertyName("hop_interval_max")] public string? HopIntervalMax { get; init; }
+    [JsonPropertyName("bbr_profile")] public string? BbrProfile { get; init; }
     [JsonPropertyName("password")] public required string Password { get; init; }
     [JsonPropertyName("obfs")] public OutboundObfs? Obfs { get; init; }
     [JsonPropertyName("tls")] public OutboundTls? Tls { get; init; }

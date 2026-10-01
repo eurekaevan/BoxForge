@@ -19,7 +19,7 @@ public sealed class SingboxConfigBuilderTests
         TargetPlatform platform)
     {
         SingboxConfig config = CreateBuilder().Build(new SingboxBuildRequest(
-            new NodeCatalog([], [], []),
+            new NodeCatalog([], []),
             platform,
             new string('a', 64)));
 
@@ -62,7 +62,7 @@ public sealed class SingboxConfigBuilderTests
     public void AllPlatformsEnableTailscaleByDefault(TargetPlatform platform)
     {
         SingboxConfig config = CreateBuilder().Build(new SingboxBuildRequest(
-            new NodeCatalog([], [], []),
+            new NodeCatalog([], []),
             platform,
             new string('b', 64)));
 
@@ -109,7 +109,7 @@ public sealed class SingboxConfigBuilderTests
         }
 
         SingboxConfig config = CreateBuilder(options).Build(new SingboxBuildRequest(
-            new NodeCatalog([], [], []),
+            new NodeCatalog([], []),
             platform,
             new string('c', 64)));
 
@@ -139,8 +139,7 @@ public sealed class SingboxConfigBuilderTests
         SingboxConfig config = CreateBuilder().Build(new SingboxBuildRequest(
             new NodeCatalog(
                 [first, second],
-                [first.Tag, second.Tag],
-                [first.Server, second.Server]),
+                [first.Tag, second.Tag]),
             platform,
             new string('a', 64)));
 
@@ -207,7 +206,7 @@ public sealed class SingboxConfigBuilderTests
     {
         ProxyOutbound node = CreateProxy("美国 01", "us-1.example.com");
         SingboxConfig config = CreateBuilder().Build(new SingboxBuildRequest(
-            new NodeCatalog([node], [node.Tag], [node.Server]),
+            new NodeCatalog([node], [node.Tag]),
             TargetPlatform.Linux,
             new string('a', 64)));
 
@@ -226,7 +225,7 @@ public sealed class SingboxConfigBuilderTests
     public void RouteSerializesGlobalIpv6RejectAndQuicRejectSemantics()
     {
         SingboxConfig config = CreateBuilder().Build(new SingboxBuildRequest(
-            new NodeCatalog([], [], []),
+            new NodeCatalog([], []),
             TargetPlatform.Linux,
             new string('a', 64)));
 
@@ -256,12 +255,12 @@ public sealed class SingboxConfigBuilderTests
     public void SingboxApiIsOptionalAndLoopbackOnly(TargetPlatform platform)
     {
         SingboxConfig disabled = CreateBuilder().Build(new SingboxBuildRequest(
-            new NodeCatalog([], [], []),
+            new NodeCatalog([], []),
             platform,
             new string('a', 64)));
         SingboxConfig enabled = CreateBuilder(apiEnabled: true).Build(
             new SingboxBuildRequest(
-                new NodeCatalog([], [], []),
+                new NodeCatalog([], []),
                 platform,
                 new string('b', 64)));
 
@@ -296,7 +295,7 @@ public sealed class SingboxConfigBuilderTests
     }
 
     [Test]
-    public void ProxyServerDomainsInheritFreshIpv4OnlyControlPlaneResolver()
+    public void ProxyDomainsInheritFreshIpv4OnlyControlPlaneResolver()
     {
         var proxy = new VlessOutbound
         {
@@ -306,7 +305,7 @@ public sealed class SingboxConfigBuilderTests
             Uuid = "00000000-0000-4000-8000-000000000001"
         };
         SingboxConfig config = CreateBuilder().Build(new SingboxBuildRequest(
-            new NodeCatalog([proxy], [proxy.Tag], [proxy.Server]),
+            new NodeCatalog([proxy], [proxy.Tag]),
             TargetPlatform.Linux,
             new string('b', 64)));
 
@@ -335,6 +334,43 @@ public sealed class SingboxConfigBuilderTests
         Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config));
     }
 
+    [TestCase(TargetPlatform.Android, null, null)]
+    [TestCase(TargetPlatform.Linux, "1m", "30s")]
+    [TestCase(TargetPlatform.Windows, "1m", "30s")]
+    public void BuilderAppliesOutboundTuningAfterConversion(
+        TargetPlatform platform,
+        string? keepAlive,
+        string? keepAliveInterval)
+    {
+        var source = new Hysteria2Outbound
+        {
+            Tag = "HY2 node",
+            Server = "node.example.com",
+            ServerPort = 443,
+            Password = "test-only"
+        };
+        SingboxConfig config = CreateBuilder().Build(new SingboxBuildRequest(
+            new NodeCatalog([source], [source.Tag]),
+            platform,
+            new string('d', 64)));
+        Hysteria2Outbound outbound = config.Outbounds
+            .OfType<Hysteria2Outbound>()
+            .Single();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(outbound.ConnectTimeout, Is.EqualTo("5s"));
+            Assert.That(outbound.TcpKeepAlive, Is.EqualTo(keepAlive));
+            Assert.That(outbound.TcpKeepAliveInterval,
+                Is.EqualTo(keepAliveInterval));
+            Assert.That(outbound.HopInterval, Is.EqualTo("30s"));
+            Assert.That(outbound.HopIntervalMax, Is.EqualTo("60s"));
+            Assert.That(outbound.BbrProfile, Is.EqualTo("standard"));
+            Assert.That(source.ConnectTimeout, Is.Null);
+            Assert.That(source.HopInterval, Is.Null);
+        });
+    }
+
     [Test]
     public void GoogleServiceDefaultsToUnitedStatesGroupWhenAvailable()
     {
@@ -342,8 +378,7 @@ public sealed class SingboxConfigBuilderTests
         ProxyOutbound second = CreateProxy("美国 02", "us-2.example.com");
         ProfilePlan plan = ProfilePlanner.Plan(new NodeCatalog(
             [first, second],
-            ["美国 01", "美国 02"],
-            []));
+            ["美国 01", "美国 02"]));
 
         SelectorOutbound google = plan.ServiceOutbounds.Single(outbound =>
             outbound.Tag == ServiceGroupNames.Google);
@@ -364,8 +399,7 @@ public sealed class SingboxConfigBuilderTests
         ProxyOutbound second = CreateProxy("香港 02", "hk-2.example.com");
         var nodes = new NodeCatalog(
             [first, second],
-            [first.Tag, second.Tag],
-            [first.Server, second.Server]);
+            [first.Tag, second.Tag]);
         ProfilePlan plan = ProfilePlanner.Plan(nodes);
         SingboxConfig config = CreateBuilder().Build(new SingboxBuildRequest(
             nodes,
@@ -404,8 +438,7 @@ public sealed class SingboxConfigBuilderTests
         ProxyOutbound jpSecond = CreateProxy("日本 02", "jp-2.example.com");
         var nodes = new NodeCatalog(
             [usFirst, usSecond, jpFirst, jpSecond],
-            [usFirst.Tag, usSecond.Tag, jpFirst.Tag, jpSecond.Tag],
-            [usFirst.Server, usSecond.Server, jpFirst.Server, jpSecond.Server]);
+            [usFirst.Tag, usSecond.Tag, jpFirst.Tag, jpSecond.Tag]);
 
         SingboxConfig config = CreateBuilder().Build(new SingboxBuildRequest(
             nodes,

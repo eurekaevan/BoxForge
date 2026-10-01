@@ -304,7 +304,7 @@ public sealed class RouteProfileBuilder(
             Network = [network],
             Action = RouteRuleAction.Sniff,
             Sniffer = sniffers,
-            Timeout = "300ms"
+            Timeout = RouteTuningPolicy.SniffTimeout
         };
 
     private static RouteRule CreateIpv6RejectRule() =>

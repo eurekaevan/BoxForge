@@ -148,7 +148,7 @@ public sealed class ProfilePlannerTests
                 Password = "test-only"
             }).ToList();
 
-        return new NodeCatalog(outbounds, names, []);
+        return new NodeCatalog(outbounds, names);
     }
 
     private static string RegionName(RegionId regionId) =>

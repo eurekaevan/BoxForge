@@ -1,4 +1,3 @@
-using System.Net;
 using Microsoft.Extensions.Logging;
 using BoxForge.Configuration;
 using BoxForge.Converters;
@@ -19,7 +18,6 @@ public sealed partial class NodeCatalogBuilder(
     {
         var outbounds = new List<ProxyOutbound>();
         var names = new List<string>();
-        var serverDomains = new HashSet<string>();
 
         foreach (var proxy in clashConfig.Proxies)
         {
@@ -78,12 +76,6 @@ public sealed partial class NodeCatalogBuilder(
                 names.Add(outbound.Tag);
             }
 
-            if (!string.IsNullOrEmpty(outbound.Server)
-                && !IPAddress.TryParse(outbound.Server, out _))
-            {
-                serverDomains.Add(outbound.Server);
-            }
-
             outbounds.Add(outbound);
         }
 
@@ -92,10 +84,7 @@ public sealed partial class NodeCatalogBuilder(
             throw new NodeParseException("配置中没有可转换的有效节点");
         }
 
-        return new NodeCatalog(
-            outbounds,
-            names,
-            [.. serverDomains.Order(StringComparer.Ordinal)]);
+        return new NodeCatalog(outbounds, names);
     }
 
     [LoggerMessage(1, LogLevel.Warning, "跳过无效节点 -> {ErrorMessage}")]

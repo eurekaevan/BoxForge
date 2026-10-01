@@ -50,7 +50,7 @@ public sealed class SingboxConfigBuilder(
         orderedOutbounds.AddRange(profiles.RegionAutoOutbounds);
         orderedOutbounds.AddRange(profiles.ServiceOutbounds);
         orderedOutbounds.AddRange(request.Nodes.Outbounds.Select(
-            outbound => AddPlatformDialFields(outbound, request.Platform)));
+            outbound => OutboundTuningPolicy.Apply(outbound, request.Platform)));
         if (request.Platform != TargetPlatform.Android)
         {
             orderedOutbounds.Add(new BridgeOutbound
@@ -73,15 +73,4 @@ public sealed class SingboxConfigBuilder(
             Experimental = ExperimentalBuilder.Build(request.CacheId)
         };
     }
-
-    private static ProxyOutbound AddPlatformDialFields(
-        ProxyOutbound outbound,
-        TargetPlatform platform) =>
-        platform == TargetPlatform.Android
-            ? outbound
-            : outbound with
-            {
-                TcpKeepAlive = "1m",
-                TcpKeepAliveInterval = "30s"
-            };
 }

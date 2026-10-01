@@ -8,6 +8,18 @@ namespace BoxForge.Converters;
 public sealed class VlessConverter()
     : ProxyConverterBase("VLESS", "vless")
 {
+    private static readonly SourceFieldSchema SourceFields = SourceFieldSchemas.Common()
+        .Include(SourceFieldSchemas.Tls(supportsReality: true, supportsUtls: true, forceTls: false))
+        .Include(SourceFieldSchemas.TcpTransport())
+        .Mapped("uuid", "flow", "packet-encoding")
+        .Alias("packet-encoding", "packet_encoding")
+        .Conditional("encryption", SourceFieldDisposition.IgnoredByDesign,
+            (_, value) => string.IsNullOrWhiteSpace(value?.ToString())
+                ? null
+                : "非空 VLESS encryption 尚未映射");
+
+    protected override SourceFieldSchema Schema => SourceFields;
+
     protected override ProxyOutbound ConvertCore(
         ClashProxyNode node,
         string name)

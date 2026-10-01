@@ -9,6 +9,19 @@ namespace BoxForge.Converters;
 public sealed class AnyTlsConverter()
     : ProxyConverterBase("AnyTLS", "anytls")
 {
+    private static readonly SourceFieldSchema SourceFields = SourceFieldSchemas.Common()
+        .Include(SourceFieldSchemas.Tls(supportsReality: false, supportsUtls: true, forceTls: true))
+        .Mapped("password", "idle-session-timeout")
+        .Alias("idle-session-timeout",
+            "idle_session_timeout", "idle-timeout", "idle_timeout")
+        .Unsupported("AnyTLS 会话维护选项尚未映射",
+            "idle-session-check-interval", "idle_session_check_interval",
+            "min-idle-session", "min_idle_session")
+        .Unsupported("AnyTLS 客户端元数据尚未映射",
+            "client-metadata", "client_metadata");
+
+    protected override SourceFieldSchema Schema => SourceFields;
+
     protected override ProxyOutbound ConvertCore(
         ClashProxyNode node,
         string name)

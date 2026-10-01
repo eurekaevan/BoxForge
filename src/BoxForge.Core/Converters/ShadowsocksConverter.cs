@@ -1,4 +1,3 @@
-using System.Globalization;
 using BoxForge.Models.Clash;
 using BoxForge.Models.Singbox;
 using BoxForge.Exceptions;
@@ -8,6 +7,42 @@ namespace BoxForge.Converters;
 public sealed class ShadowsocksConverter()
     : ProxyConverterBase("Shadowsocks", "ss", "shadowsocks")
 {
+    private static readonly SourceFieldSchema SourceFields = SourceFieldSchemas.Common()
+        .Mapped("cipher", "password")
+        .Alias("cipher", "method")
+        .Conditional("plugin-opts", SourceFieldDisposition.Mapped,
+            ValidatePluginOptions, SourceFieldValueKind.Any)
+        .ConditionalAlias("plugin-opts", "plugin_opts", ValidatePluginOptions)
+        .Conditional("plugin", SourceFieldDisposition.Mapped,
+            (_, value) => value?.ToString() is "v2ray-plugin" or "obfs-local"
+                ? null
+                : "此插件名称不能直接映射到 sing-box 支持的 SIP003 插件")
+        .Conditional("udp-over-tcp", SourceFieldDisposition.Mapped,
+            (node, _) => node.GetBool("udp-over-tcp")
+                ? "Mihomo 默认 UoT v1 与 sing-box 默认 v2 不同，版本映射尚未实现"
+                : null)
+        .ConditionalAlias("udp-over-tcp", "udp_over_tcp",
+            (node, _) => node.GetBool("udp_over_tcp")
+                ? "Mihomo 默认 UoT v1 与 sing-box 默认 v2 不同，版本映射尚未实现"
+                : null)
+        .Unsupported("UoT 版本尚未映射", "udp-over-tcp-version", "udp_over_tcp_version")
+        .Unsupported("Shadowsocks 启用网络类型尚未映射", "network")
+        .Unsupported("插件的 uTLS 指纹尚未映射", "client-fingerprint", "client_fingerprint");
+
+    protected override SourceFieldSchema Schema => SourceFields;
+
+    private static string? ValidatePluginOptions(ClashProxyNode node, object? value)
+    {
+        if (node.GetString("plugin") is null)
+        {
+            return "指定了插件选项，但没有插件";
+        }
+
+        return value is string
+            ? null
+            : "非字符串形式的 Mihomo 插件选项尚未能保证与 sing-box 选项等价";
+    }
+
     protected override ProxyOutbound ConvertCore(
         ClashProxyNode node,
         string name)
@@ -27,46 +62,10 @@ public sealed class ShadowsocksConverter()
             Method = method,
             Password = password,
             Plugin = node.GetString("plugin"),
-            PluginOpts = ExtractPluginOptions(node),
+            PluginOpts = node.GetRawString("plugin-opts")
+                ?? node.GetRawString("plugin_opts"),
             UdpOverTcp = node.GetNullableBool("udp-over-tcp")
                 ?? node.GetNullableBool("udp_over_tcp")
         };
-    }
-
-    private static string? ExtractPluginOptions(ClashProxyNode node)
-    {
-        var value = node.GetValue("plugin-opts") ?? node.GetValue("plugin_opts");
-        if (value is string stringOptions)
-        {
-            return stringOptions;
-        }
-
-        if (value is ClashObject objectOptions)
-        {
-            return string.Join(
-                ";",
-                objectOptions.Properties
-                    .Where(property => property.Value != null)
-                    .OrderBy(property => property.Key, StringComparer.Ordinal)
-                    .Select(property =>
-                        $"{property.Key}={FormatPluginOptionValue(property.Key, property.Value!)}"));
-        }
-
-        return value == null
-            ? null
-            : FormatPluginOptionValue("plugin-opts", value);
-    }
-
-    private static string FormatPluginOptionValue(string key, object value)
-    {
-        if (value is ClashObject
-            || value is System.Collections.IEnumerable and not string)
-        {
-            throw new NodeParseException(
-                $"插件选项 '{key}' 必须是标量值");
-        }
-
-        return System.Convert.ToString(value, CultureInfo.InvariantCulture)
-            ?? throw new NodeParseException($"插件选项 '{key}' 不能为空");
     }
 }

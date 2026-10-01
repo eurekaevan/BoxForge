@@ -9,6 +9,34 @@ namespace BoxForge.Converters;
 public sealed class Hysteria2Converter()
     : ProxyConverterBase("Hysteria2", "hysteria2")
 {
+    private static readonly SourceFieldSchema SourceFields = SourceFieldSchemas.Common()
+        .Include(SourceFieldSchemas.Tls(supportsReality: false, supportsUtls: false, forceTls: true))
+        .Mapped("ports", "password")
+        .Conditional("obfs", SourceFieldDisposition.Mapped,
+            (_, value) => string.IsNullOrWhiteSpace(value?.ToString())
+                || value?.ToString() == "salamander"
+                    ? null
+                    : "仅 salamander 的现有映射可安全使用；gecko 及其他类型尚未映射")
+        .Conditional("obfs-password", SourceFieldDisposition.Mapped,
+            (node, _) => node.GetString("obfs") is null
+                ? "指定了混淆密码，但未启用混淆"
+                : null)
+        .Unsupported("带宽设定尚未映射，不能改用 BoxForge BBR 调优", "up", "down")
+        .Unsupported("显式跳端口间隔尚未映射，不能覆盖为 BoxForge 调优",
+            "hop-interval", "hop_interval")
+        .Unsupported("显式 BBR 配置尚未映射，不能覆盖为 BoxForge 调优",
+            "bbr-profile", "bbr_profile")
+        .Unsupported("启用网络类型尚未映射", "network")
+        .Unsupported("Gecko 包长度尚未映射",
+            "obfs-min-packet-size", "obfs-max-packet-size",
+            "obfs_min_packet_size", "obfs_max_packet_size")
+        .Unsupported("QUIC 或 Realm 选项尚未映射",
+            "realm-opts", "realm_opts", "handshake-timeout", "handshake_timeout",
+            "initial-stream-receive-window", "initial-connection-receive-window",
+            "max-stream-receive-window", "max-connection-receive-window");
+
+    protected override SourceFieldSchema Schema => SourceFields;
+
     protected override ProxyOutbound ConvertCore(
         ClashProxyNode node,
         string name)
