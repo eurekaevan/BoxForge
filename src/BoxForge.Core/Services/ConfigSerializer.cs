@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using BoxForge.Models.Singbox;
 
 namespace BoxForge.Services;
@@ -19,12 +20,13 @@ public sealed class ConfigSerializer : IConfigSerializer
     {
         WriteIndented = true,
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        TypeInfoResolver = new DefaultJsonTypeInfoResolver { Modifiers = { SingboxJsonDefaults.Apply } }
     };
 
     public string Serialize(SingboxConfig config)
     {
-        return JsonSerializer.Serialize(config, _jsonOptions);
+        return JsonSerializer.Serialize(SingboxJsonDefaults.NormalizeContext(config), _jsonOptions);
     }
 
     public string GetContentHash(string content)

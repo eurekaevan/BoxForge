@@ -39,11 +39,27 @@ SS obfs HTTP/TLS 与 v2ray-plugin 目前只有 serializer/官方核心配置检�
 目标 SS inbound 不提供插件服务端，因此脚本明确输出 `CHECK-ONLY`，不是 runtime PASS。
 这些验证不包含生产订阅、远程服务器、真实 TUN、防火墙、Android 设备或网络泄漏抓包。
 
+## 默认值省略复验（2026-10-06）
+
+输出层现在省略与锁定核心有效默认值相同的字段，内部来源映射模型不变。
+验证使用同一官方 alpha.8 构建：
+
+- 格式检查与 warnings-as-errors 构建通过；415 个单元测试全部通过。
+- 5 个 fixture × 3 平台 × API 关闭/开启，共 30 份 JSON 通过官方 `check`。
+  实际输出中的首候选默认选择、地区 AUTO 层级、代理 HTTP client、IPv4 resolver
+  与 DNS 非默认策略另有断言检查。
+- SS TCP/UoT v1/v2、VLESS WS/gRPC/HTTPUpgrade、Trojan WS/HTTPUpgrade、
+  HY2 默认/带宽/Gecko/固定跳端口、AnyTLS 会话回环全部通过；插件仍是 `CHECK-ONLY`。
+- 回环脚本在改写拨号地址前，将省略的默认 SNI 物化为原 server，避免证书名称随
+  测试地址变化；UoT 和会话字段按官方有效默认值判断，不重新注入被省略的协议设置。
+
+本次回环通过不消除下文记录的 HTTPUpgrade 历史稳定性风险，也不新增真实设备或泄漏证明。
+
 ## 本次验收与已知风险
 
 | 阶段 | 实际结果 |
 | --- | --- |
-| C1 | UoT 显式版本对象；obfs 专用映射；v2ray-plugin websocket/mux=false、可选标准 TLS 的受限映射；未知插件/选项拒绝 |
+| C1 | UoT 对象保留有效版本（v1 显式、v2 使用核心默认）；obfs 专用映射；v2ray-plugin websocket/mux=false、可选标准 TLS 的受限映射；未知插件/选项拒绝 |
 | C2 | 精确整数 Mbps、固定/范围跳端口、BBR、Gecko；network/QUIC/Realm/uTLS 不等价部分仍拒绝 |
 | C3 | 共用正 duration parser、check interval、非负 min idle、字符串 metadata 和 frame 安全校验 |
 | C4 | 研究后维持 Trojan gRPC、HTTP/H2/xHTTP 拒绝；没有为支持率引入近似映射 |

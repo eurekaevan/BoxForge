@@ -388,7 +388,10 @@ public sealed class SemanticCoverageTests
             Enabled = true,
             Version = targetVersion
         }));
-        Assert.That(Serialize(outbound), Does.Contain("\"version\": " + targetVersion));
+        if (targetVersion == 2)
+            Assert.That(Serialize(outbound), Does.Not.Contain("\"version\""));
+        else
+            Assert.That(Serialize(outbound), Does.Contain("\"version\": " + targetVersion));
     }
 
     [Test]
@@ -643,7 +646,8 @@ public sealed class SemanticCoverageTests
         var outbound = (AnyTlsOutbound)result.Outbound;
         Assert.That(outbound.MinIdleSession, Is.EqualTo(count));
         Assert.That(outbound.ClientMetadata, Is.EqualTo(" utf8-中文=value "));
-        Assert.That(Serialize(outbound), Does.Contain("min_idle_session").And.Contain("client_metadata"));
+        Assert.That(Serialize(outbound), Does.Contain("client_metadata"));
+        Assert.That(Serialize(outbound).Contains("min_idle_session", StringComparison.Ordinal), Is.EqualTo(count != 0));
     }
 
     [Test]

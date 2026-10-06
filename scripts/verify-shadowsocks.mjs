@@ -186,7 +186,7 @@ try {
         const expectedVersion = tag === 'ss-uot-v1' ? 1 : tag === 'ss-uot-v2' ? 2 : null;
         if (expectedVersion !== null) {
             assert.equal(outbound.udp_over_tcp?.enabled, true);
-            assert.equal(outbound.udp_over_tcp.version, expectedVersion);
+            assert.equal(outbound.udp_over_tcp.version ?? 2, expectedVersion);
         }
         const serverConfig = { log: { level: 'error' },
             inbounds: [{ type: 'shadowsocks', tag: 'server', listen: '127.0.0.1', listen_port: serverPort,

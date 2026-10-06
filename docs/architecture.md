@@ -137,8 +137,10 @@ validator 只补充 BoxForge 的 model/必填映射值约束（`SB079`），目�
 
 Mihomo 的 [UoT 默认版本为 1](https://wiki.metacubex.one/en/config/proxies/ss/)，
 而 [sing-box 布尔形式默认版本为 2](https://sing-box.sagernet.org/configuration/shared/udp-over-tcp/)；
-因此生成对象形式的 `udp_over_tcp`，显式保留版本：未指定版本或源版本 0 使用 1，
-版本 1/2 保持原值；关闭或未启用时省略。无效版本及重复别名在转换阶段拒绝。
+因此生成对象形式的 `udp_over_tcp`：未指定版本或源版本 0 使用 1，
+版本 1 显式输出，版本 2 在内部保留、JSON 中使用核心默认而省略；关闭或未启用时省略。
+无效版本及重复别名在转换阶段拒绝。输出层的
+[默认值省略](generated-config.md#默认值省略) 不修改 planner/validator 使用的模型。
 Shadowsocks 插件选项必须为 Mihomo 对象，由插件专用 schema 和 mapper 翻译，
 不接受原始 SIP003 字符串或通用对象扁平化。`obfs` 的 http/tls 模式映射到
 `obfs-local`，显式物化源默认 host `bing.com`。`v2ray-plugin` 仅支持

@@ -122,11 +122,11 @@ try {
         if (tag === 'hy2-gecko') {
             assert.equal(outbound.obfs?.type, 'gecko');
             assert.equal(outbound.obfs.min_packet_size, 600);
-            assert.equal(outbound.obfs.max_packet_size, 1200);
+            assert.equal(outbound.obfs.max_packet_size ?? 1200, 1200);
         }
         if (tag === 'anytls-session') {
-            assert.equal(outbound.idle_session_check_interval, '30s');
-            assert.equal(outbound.idle_session_timeout, '30s');
+            assert.equal(outbound.idle_session_check_interval ?? '30s', '30s');
+            assert.equal(outbound.idle_session_timeout ?? '30s', '30s');
             assert.equal(outbound.min_idle_session, 1);
             assert.equal(outbound.client_metadata, 'test-only');
         }
@@ -137,6 +137,7 @@ try {
         let server;
         let client;
         try {
+            outbound.tls.server_name ??= outbound.server;
             outbound.server = '127.0.0.1';
             outbound.tls.certificate_path = certificate;
             if (tag === 'hy2-hop') {

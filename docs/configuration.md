@@ -31,7 +31,7 @@ loopback，同机进程仍可访问该控制面；不需要 Dashboard、远程�
 
 订阅协议字段不是 BoxForge 环境配置。转换遵循“显式来源字段 → 精确映射 →
 仅缺失时的调优 → 核心默认值”；无法等价表达的字段导致整次 strict 转换失败，
-non-strict 调用跳过整个节点。Shadowsocks UoT 使用带版本的对象；插件接受
+non-strict 调用跳过整个节点。Shadowsocks UoT 使用对象，v1 显式写版本、v2 省略默认版本；插件接受
 Mihomo 的结构化选项，而非原始 SIP003 字符串。支持范围和限制见
 [来源语义与调优优先级](architecture.md#来源语义与调优优先级)。
 

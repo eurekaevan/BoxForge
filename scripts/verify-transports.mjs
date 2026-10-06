@@ -86,6 +86,7 @@ try {
         const clientPort = await freePort();
         // Only replace the dial address and trust this temporary certificate.
         // Transport, ALPN, SNI, credentials and tuning come from BoxForge output.
+        outbound.tls.server_name ??= outbound.server;
         outbound.server = '127.0.0.1';
         outbound.server_port = serverPort;
         outbound.tls.certificate_path = certificate;

@@ -21,14 +21,23 @@ internal static class GoDurationHelper
             throw Invalid(field);
         }
 
+        if (!TryParseDuration(value, out long duration) || duration <= 0) throw Invalid(field);
+        return value;
+    }
+
+    internal static bool TryParseDuration(string value, out long result)
+    {
+        result = 0;
         // Bound untrusted input before arbitrary-precision fractional parsing.
-        if (value.Length is 0 or > 128) throw Invalid(field);
+        if (value.Length is 0 or > 128) return false;
         string unsigned = value.StartsWith('+') ? value[1..] : value;
+        if (unsigned.Length == 0) return false;
+        if (unsigned == "0") return true;
         BigInteger nanoseconds = 0;
         int consumed = 0;
         foreach (Match component in Components.Matches(unsigned))
         {
-            if (component.Index != consumed) throw Invalid(field);
+            if (component.Index != consumed) return false;
             string amount = component.Groups[1].Value;
             string[] parts = amount.Split('.');
             long unit = component.Groups[2].Value switch
@@ -39,17 +48,18 @@ internal static class GoDurationHelper
                 "s" => 1_000_000_000,
                 "m" => 60_000_000_000,
                 "h" => 3_600_000_000_000,
-                _ => throw Invalid(field)
+                _ => throw new InvalidOperationException("Unrecognized duration unit")
             };
             nanoseconds += BigInteger.Parse(parts[0].Length == 0 ? "0" : parts[0], CultureInfo.InvariantCulture) * unit;
             if (parts.Length == 2 && parts[1].Length > 0)
                 nanoseconds += BigInteger.Parse(parts[1], CultureInfo.InvariantCulture) * unit
                     / BigInteger.Pow(10, parts[1].Length);
             consumed += component.Length;
-            if (nanoseconds > long.MaxValue) throw Invalid(field);
+            if (nanoseconds > long.MaxValue) return false;
         }
-        if (consumed != unsigned.Length || nanoseconds <= 0) throw Invalid(field);
-        return value;
+        if (consumed != unsigned.Length) return false;
+        result = (long)nanoseconds;
+        return true;
     }
 
     private static NodeParseException Invalid(string field) =>

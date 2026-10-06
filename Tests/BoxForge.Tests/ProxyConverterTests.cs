@@ -35,7 +35,10 @@ public sealed class ProxyConverterTests
         Assert.Multiple(() =>
         {
             Assert.That(outbound.IdleSessionTimeout, Is.EqualTo(expected));
-            Assert.That(json, Does.Contain($"\"idle_session_timeout\": \"{expected}\""));
+            if (expected == "30s")
+                Assert.That(json, Does.Not.Contain("\"idle_session_timeout\""));
+            else
+                Assert.That(json, Does.Contain($"\"idle_session_timeout\": \"{expected}\""));
             Assert.That(json, Does.Not.Contain("\"idle_timeout\""));
         });
     }

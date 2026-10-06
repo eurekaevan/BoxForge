@@ -1,11 +1,49 @@
 # 生成配置约定
 
-本文记录不属于运行时选项、但会稳定出现在生成 JSON 中的约定。
+本文记录生成配置的有效行为及 JSON 输出约定。
+
+## 默认值省略
+
+输出只保留会改变 sing-box 有效行为的字段。默认值依据当前验证核心
+`1.15.0-alpha.8`（`b609f959f57ce34416c51c7b87ce4a76f2e1df56`）及其锁定依赖核对，
+不是对所有字段使用 .NET 的零值省略。内部模型仍保留完整映射和调优值，
+校验完成后才创建不修改原模型的输出投影；规则与候选列表不会重排。
+
+主要省略项：
+
+- [Dial](https://sing-box.sagernet.org/configuration/shared/dial/) 的连接超时 `5s`、
+  keepalive `5m/75s`；桌面策略的 `1m/30s` 不同于默认值，继续输出。
+- [AnyTLS](https://sing-box.sagernet.org/configuration/outbound/anytls/) 会话超时和
+  检查周期 `30s`、最少空闲会话 `0`；等价 Go duration（如 `0.5m`）同样省略。
+- VLESS 默认 `xudp`、UoT 默认版本 `2`、uTLS 默认 `chrome`、默认 BBR `standard`、
+  Gecko 默认包大小 `512/1200`、WS/HTTPUpgrade 根路径及空集合。
+  VLESS 显式空 `packet_encoding` 表示原生 UDP，仍输出；UoT v1 仍显式写版本。
+- URLTest 的官方 URL、`3m` 周期、`50` 容差、`30m` 空闲超时及
+  `interrupt_exist_connections: false`；selector 的 `true` 策略不变。
+- 默认 route action、sniff `300ms`、predefined 响应 `NOERROR`、`.srs` URL
+  可推导的 binary 格式、规则集更新周期 `24h`、缓存路径 `cache.db`。
+  DNS `response_rcode: NOERROR` 是匹配条件，不会删除。
+- selector 默认值等于首候选时省略 `default`；DNS/route final 等于首定义时省略；
+  默认 HTTP client 等于首 client 时省略。非首选引用保留，不能重新排列这些列表。
+- TLS 名称恰好等于目标 server 时使用自动回退；其他 SNI 保留。HTTPS DNS 自动开启
+  TLS，因此不输出 `tls.enabled`；代理 TLS、uTLS、Reality 的 `enabled: true` 仍必需。
+  WS/HTTPUpgrade 单项 ALPN `http/1.1`、gRPC 单项 `h2`、HY2 单项 `h3` 使用对应
+  transport/protocol 的默认值；其他列表仍保留顺序和重复项。HTTPUpgrade Host 与
+  有效 TLS 名称相同也省略，其他 Host 不变。
+
+依赖其他字段的默认值会单独判断。例如固定 HY2 `30s` 可以省略，但
+`hop_interval_max` 表示非退化范围时核心要求两个边界均显式存在，因此默认调优的
+`30s/60s` 仍完整输出。DNS rule timeout 仅在等于当前全局 timeout 时省略，
+不会将全局 `5s` 下的显式 `10s` 错当作默认。
+
+IPv4-only、DIRECT/bridge/bypass、Tailscale、DNS 超时 `5s`、缓存容量 `4096`、
+optimistic `6h` 等非默认策略保持不变。升级核心时必须重新核对这些默认值，
+运行单元测试、三平台生成检查与官方核心验证，而不是扩大通用零值删除。
 
 ## 平台差异
 
 每个平台都包含一个 TUN inbound 和一个仅监听 `127.0.0.1:8848` 的 mixed inbound。
-TUN 固定启用 `auto_route` 和 `dns_mode: hijack`。`strict_route` 仅在 Linux/
+TUN 固定启用 `auto_route`，DNS 模式使用核心默认的 `hijack`，不输出 `dns_mode`。`strict_route` 仅在 Linux/
 Windows 显式启用；指定版本 Android feature matrix 标记该能力未实现，因此省略。
 平台差异如下。
 全平台仍生成仅监听 `127.0.0.1:8848` 的 `mixed-in`，供显式配置的 SOCKS/HTTP
@@ -83,7 +121,7 @@ SFA 工作目录下的 `Taildrop`，Windows 使用
   以及未指定跳端口间隔的 HY2 `hop_interval: 30s`、`hop_interval_max: 60s`。
   没有正显式带宽时才补 `bbr_profile: standard`；显式固定间隔不补随机上限。
   已有显式出站值不会被调优覆盖；Android 不注入
-  桌面 keepalive。
+  桌面 keepalive。以上是有效值；与核心默认等价的值在输出 JSON 时省略。
 - AnyTLS 的 `idle-session-timeout`、下划线别名以及旧
   `idle-timeout` 输入统一生成官方 `idle_session_timeout`；纯数字输入按秒转换。
   `idle-session-check-interval` 使用同一正 duration 校验；`min-idle-session`
@@ -142,7 +180,7 @@ VLESS 支持省略/`tcp`、`ws`、受限基础 `grpc`；Trojan 支持省略/`tcp
 | `ws-opts.v2ray-http-upgrade: true` | `transport.type: httpupgrade` | HTTP 101 后使用原始字节流，而非 WS framing |
 | HTTPUpgrade 的 `headers.Host` | `transport.host` | 其他 headers 保留，Host 不重复生成 |
 | `grpc-opts.grpc-service-name` | `transport.service_name` | 仅 VLESS，非空普通服务名 |
-| `alpn` | `tls.alpn` | 保留顺序、重复项和值；缺失时省略 |
+| `alpn` | `tls.alpn` | 保留有效顺序、重复项和值；缺失或等价协议默认值时省略 |
 
 `ws_opts`/`grpc_opts` 及已支持的连字符子字段兼容下划线别名。双别名同时出现
 仍会失败。header 名称不是配置别名，不做连字符转换。嵌套未知字段会报告完整
