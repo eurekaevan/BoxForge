@@ -20,19 +20,20 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
 4. 直连私网地址和 DoH bootstrap 的 IPv4 地址。
 5. 对未被上述 IPv6 总闸门处理的流量，分别嗅探 TCP HTTP/TLS 与 UDP QUIC/STUN。
 6. 拒绝识别出的 STUN 协议，然后拒绝 `ads`。
-7. mixed inbound 对所有代理服务域名和国内域名执行 `resolve` + `ipv4_only`。
+7. mixed inbound 对所有代理服务域名和国内域名执行 `resolve` + `ipv4_only`；
+   每次解析后立即复检 Tailscale `preferred_by`，保证域名形式的通告子网目标也走 tailnet。
 8. 按服务定义顺序拒绝 AI、Google 的 UDP/443，促使 QUIC 回退 TCP；这两条及
    后续 UDP/443 兜底拒绝均设置 `no_drop: true`，不因触发频率切换为静默丢弃。
 9. 再次通过后置 `ip_version: 6` 拒绝 IPv6，覆盖 mixed/domain 解析等非
    Pre-match 路径。
 10. 将 AI 路由到 `AI`，再将 Google 路由到 `Google`。它们位于后置 IPv6
    拒绝规则之后，因此 IPv6 地址不会进入代理出站。
-11. 放行国内域名的 UDP/443；mixed inbound 先以 `ipv4_only` 解析目标后再放行 `cnip`，
+11. 放行国内域名的 UDP/443；mixed inbound 先以 `ipv4_only` 解析目标、复检 Tailscale 后再放行 `cnip`，
    其他 UDP/443 全部拒绝。
 12. 生成其他服务分流，当前为 Spotify、Games 和 Microsoft。
 13. 直连 `cn`；mixed inbound 对剩余目标执行
-    `resolve` + `ipv4_only`，解析后先复检并直连私网地址，再按 `cnip`
-    直连。
+    `resolve` + `ipv4_only`，解析后先复检 Tailscale 通告路由，未命中时再直连私网地址，
+    然后按 `cnip` 直连。Tailscale 关闭时不生成这些复检规则。
 14. 未命中规则的流量使用主代理组。
 
 第 11、13 步中的国内 `DIRECT` 在 Linux/Windows 会紧邻原规则之前生成 L3

@@ -59,7 +59,7 @@ public sealed class ShadowsocksConverter()
         string method = node.GetString("cipher")
             ?? node.GetString("method")
             ?? throw new NodeParseException("缺失加密方式 (cipher 或 method)");
-        string password = node.GetRequiredString("password");
+        string password = node.GetRequiredRawString("password");
         int version = node.GetInt("udp-over-tcp-version")
             ?? node.GetInt("udp_over_tcp_version") ?? 1;
         bool enabled = node.GetNullableBool("udp-over-tcp")

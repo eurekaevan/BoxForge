@@ -39,6 +39,11 @@ public class ClashObject
         GetString(key)
         ?? throw new NodeParseException($"缺失必填字段或为空: {key}");
 
+    public string GetRequiredRawString(string key) =>
+        GetRawString(key) is { Length: > 0 } value
+            ? value
+            : throw new NodeParseException($"缺失必填字段或为空: {key}");
+
     public int? GetInt(string key) =>
         int.TryParse(GetRawString(key), out var value) ? value : null;
 

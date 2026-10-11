@@ -117,11 +117,13 @@ public static class GenerateCommandParser
             return true;
         }
 
-        if (Enum.TryParse(value, ignoreCase: true, out TargetPlatform platform)
-            && Enum.IsDefined(platform))
+        foreach (TargetPlatform platform in AllPlatforms)
         {
-            platforms = [platform];
-            return true;
+            if (string.Equals(value.Trim(), platform.ToString(), StringComparison.OrdinalIgnoreCase))
+            {
+                platforms = [platform];
+                return true;
+            }
         }
 
         platforms = [];

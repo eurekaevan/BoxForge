@@ -76,7 +76,7 @@ internal static class ExportApi
         if (!TryResolveConfigurationName(form, fileStem, out string name))
         {
             return ApiProblems.BadRequest(
-                "配置名必须为 1～100 个 Unicode 字符，且不能包含路径分隔符或控制字符。");
+                "配置名必须为 1～100 个 Unicode 字符、最多 255 个 UTF-8 字节，且必须是有效的跨平台目录名。");
         }
 
         string?[] platformValues =
@@ -108,9 +108,8 @@ internal static class ExportApi
         string yaml;
         try
         {
-            int preambleLength = yamlBytes.AsSpan().StartsWith(
-                StrictUtf8.Preamble)
-                ? StrictUtf8.Preamble.Length
+            int preambleLength = yamlBytes.AsSpan().StartsWith("\uFEFF"u8)
+                ? 3
                 : 0;
             yaml = StrictUtf8.GetString(
                 yamlBytes,

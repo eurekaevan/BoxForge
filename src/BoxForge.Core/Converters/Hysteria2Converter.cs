@@ -81,7 +81,7 @@ public sealed class Hysteria2Converter()
             HopIntervalMax = hopIntervalMax,
             BbrProfile = bbr,
             Obfs = obfsConfig,
-            Password = node.GetRequiredString("password"),
+            Password = node.GetRequiredRawString("password"),
             // Hysteria2 使用 QUIC，而 sing-box 的 QUIC 自定义 TLS 不支持 uTLS。
             Tls = TlsConfigHelper.Extract(
                 node,

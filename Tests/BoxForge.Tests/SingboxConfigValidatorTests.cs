@@ -9,6 +9,37 @@ namespace BoxForge.Tests;
 [TestFixture]
 public sealed class SingboxConfigValidatorTests
 {
+    [Test]
+    public void InvalidVlessFlowCannotReachSerialization()
+    {
+        SingboxConfig valid = CreateValidConfig();
+        var config = valid with
+        {
+            Outbounds = [.. valid.Outbounds, new VlessOutbound
+            {
+                Tag = "invalid-flow", Server = "node.example.com", ServerPort = 443,
+                Uuid = "00000000-0000-4000-8000-000000000001",
+                Flow = "xtls-rprx-vision-udp443"
+            }]
+        };
+        AssertDiagnostics(config, new ConfigDiagnostic("SB083", $"outbounds[{valid.Outbounds.Count}].flow",
+            "VLESS flow 只支持空值或 xtls-rprx-vision。"));
+    }
+
+    [Test]
+    public void WhitespacePasswordsAreValidAuthenticationMaterial()
+    {
+        SingboxConfig valid = CreateValidConfig();
+        var config = valid with
+        {
+            Outbounds = [.. valid.Outbounds,
+                new TrojanOutbound { Tag = "trojan-spaces", Server = "node.example.com", ServerPort = 443, Password = "  " },
+                new Hysteria2Outbound { Tag = "hy2-spaces", Server = "node.example.com", ServerPort = 443, Password = "  " },
+                new AnyTlsOutbound { Tag = "anytls-spaces", Server = "node.example.com", ServerPort = 443, Password = "  " }]
+        };
+        Assert.DoesNotThrow(() => validator.Validate(config, AddressFamilyPolicy.DualStack));
+    }
+
     private readonly SingboxConfigValidator validator = new();
 
     [Test]

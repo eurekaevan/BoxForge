@@ -181,6 +181,26 @@ public sealed class ServerApiTests
     [TestCase("nested/name")]
     [TestCase("nested\\name")]
     [TestCase("line\nbreak")]
+    [TestCase("bad:name")]
+    [TestCase("bad<name")]
+    [TestCase("bad>name")]
+    [TestCase("bad\"name")]
+    [TestCase("bad|name")]
+    [TestCase("bad?name")]
+    [TestCase("bad*name")]
+    [TestCase("trailing.")]
+    [TestCase("trailing ")]
+    [TestCase("CON")]
+    [TestCase("nul.txt")]
+    [TestCase("AUX")]
+    [TestCase("PRN.json")]
+    [TestCase("COM1")]
+    [TestCase("lpt9.log")]
+    [TestCase("COM¹")]
+    [TestCase("LPT².txt")]
+    [TestCase("COM³")]
+    [TestCase("CONIN$")]
+    [TestCase("CONOUT$")]
     public async Task RejectsUnsafeConfigurationNames(string name)
     {
         using HttpClient client = factory.CreateClient();
@@ -201,11 +221,50 @@ public sealed class ServerApiTests
 
         using HttpResponseMessage response = await PostConversionAsync(
             client,
-            string.Concat(Enumerable.Repeat("🚀", 101)),
+            new string('a', 101),
             ValidYaml,
             ["Android"]);
 
         await AssertProblemAsync(response, HttpStatusCode.BadRequest);
+    }
+
+    [TestCase("0")]
+    [TestCase("2")]
+    [TestCase("Windows,Android")]
+    [TestCase("Android, Android")]
+    public async Task RejectsNonNamePlatformValues(string platform)
+    {
+        using HttpClient client = factory.CreateClient();
+        using HttpResponseMessage response = await PostConversionAsync(
+            client, "invalid-platform", ValidYaml, [platform]);
+
+        await AssertProblemAsync(response, HttpStatusCode.BadRequest);
+    }
+
+    [TestCase(85, HttpStatusCode.OK)]
+    [TestCase(86, HttpStatusCode.BadRequest)]
+    public async Task ValidatesConfigurationNameUtf8ByteLimit(
+        int runeCount,
+        HttpStatusCode expectedStatus)
+    {
+        using HttpClient client = factory.CreateClient();
+        using HttpResponseMessage response = await PostConversionAsync(
+            client, new string('中', runeCount), ValidYaml, ["android"]);
+
+        Assert.That(response.StatusCode, Is.EqualTo(expectedStatus));
+    }
+
+    [TestCase("COM0")]
+    [TestCase("LPT10")]
+    [TestCase("console")]
+    [TestCase("连接🚀")]
+    public async Task AcceptsPortableNamesAndCaseInsensitivePlatforms(string name)
+    {
+        using HttpClient client = factory.CreateClient();
+        using HttpResponseMessage response = await PostConversionAsync(
+            client, name, ValidYaml, ["android", "LINUX", "wInDoWs"]);
+
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
     }
 
     [Test]

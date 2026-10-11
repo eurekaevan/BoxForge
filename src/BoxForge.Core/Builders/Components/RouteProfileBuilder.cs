@@ -68,16 +68,18 @@ public sealed class RouteProfileBuilder(
             rules.Add(CreateIpv6RejectRule());
         }
 
+        RouteRule? tailscaleRule = null;
         if (tailscale.IsEnabled(platform))
         {
             // 必须位于私网直连规则之前，才能覆盖 tailnet 通告的私有子网路由。
-            rules.Add(new RouteRule
+            tailscaleRule = new RouteRule
             {
                 Inbound = [SingboxTags.TunInbound, SingboxTags.MixedInbound],
                 PreferredBy = [SingboxTags.TailscaleEndpoint],
                 Action = RouteRuleAction.Route,
                 Outbound = SingboxTags.TailscaleEndpoint
-            });
+            };
+            rules.Add(tailscaleRule);
         }
 
         rules.AddRange([
@@ -182,6 +184,17 @@ public sealed class RouteProfileBuilder(
                 new RouteRule { RuleSet = [RuleSetTags.CnIp], Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound },
                 DirectForwardingMode.PostUdpSniff)
         ]);
+
+        if (tailscaleRule != null)
+        {
+            // A mixed hostname has no destination address at the early gate.
+            // Re-check after every resolve, before private/CNIP or service policy.
+            for (int index = rules.Count - 1; index >= 0; index--)
+            {
+                if (rules[index].Action == RouteRuleAction.Resolve)
+                    rules.Insert(index + 1, tailscaleRule with { Inbound = [SingboxTags.MixedInbound] });
+            }
+        }
 
         route.Rules.AddRange(AddDirectForwardingLayers(
             rules,

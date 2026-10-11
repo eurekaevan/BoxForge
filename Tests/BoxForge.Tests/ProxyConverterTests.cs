@@ -45,7 +45,11 @@ public sealed class ProxyConverterTests
 
     [TestCase("packet-encoding", "packetaddr", "packetaddr")]
     [TestCase("packet_encoding", "XUDP", "xudp")]
-    [TestCase("packet-encoding", "", "")]
+    [TestCase("packet-encoding", "", "xudp")]
+    [TestCase("packet-encoding", "packet", "packetaddr")]
+    [TestCase("packet-encoding", "PACKETADDR", "xudp")]
+    [TestCase("packet-encoding", " packetaddr ", "xudp")]
+    [TestCase("packet-encoding", "unknown", "xudp")]
     public void VlessMapsPacketEncodingFromSource(
         string inputKey,
         string inputValue,
@@ -59,7 +63,71 @@ public sealed class ProxyConverterTests
                 [inputKey] = inputValue
             }));
 
-        Assert.That(outbound.PacketEncoding, Is.EqualTo(expected));
+        string json = SerializeOutbound(outbound);
+        Assert.Multiple(() =>
+        {
+            Assert.That(outbound.PacketEncoding, Is.EqualTo(expected));
+            if (expected == "xudp")
+                Assert.That(json, Does.Not.Contain("\"packet_encoding\""));
+            else
+                Assert.That(json, Does.Contain("\"packet_encoding\": \"packetaddr\""));
+        });
+    }
+
+    [TestCase(null, null)]
+    [TestCase("", null)]
+    [TestCase("short-ignored", null)]
+    [TestCase("xtls-rprx-vision", "xtls-rprx-vision")]
+    [TestCase("xtls-rprx-vision-udp443", "xtls-rprx-vision")]
+    [TestCase("xtls-rprx-vision任意后缀", "xtls-rprx-vision")]
+    public void VlessMapsEffectiveSourceFlow(string? flow, string? expected)
+    {
+        VlessOutbound outbound = Convert<VlessOutbound>(
+            new VlessConverter(), CreateNode("vless", new Hashtable
+            {
+                ["uuid"] = "00000000-0000-4000-8000-000000000001",
+                ["flow"] = flow
+            }));
+        Assert.That(outbound.Flow, Is.EqualTo(expected));
+    }
+
+    [TestCase("unsupported-flow")]
+    [TestCase("XTLS-RPRX-VISION")]
+    [TestCase("不支持的流控制协议")]
+    public void VlessRejectsUnsupportedSourceFlow(string flow)
+    {
+        NodeConversionResult result = new VlessConverter().Convert(CreateNode("vless", new Hashtable
+        {
+            ["uuid"] = "00000000-0000-4000-8000-000000000001",
+            ["flow"] = flow
+        }));
+        Assert.That(result, Is.TypeOf<InvalidNode>());
+        Assert.That(((InvalidNode)result).ErrorMessage, Does.Contain("flow"));
+    }
+
+    [TestCase("ss")]
+    [TestCase("trojan")]
+    [TestCase("hysteria2")]
+    [TestCase("anytls")]
+    public void PasswordPreservesWhitespaceThroughConversionAndSerialization(string protocol)
+    {
+        IProxyConverter converter = protocol switch
+        {
+            "ss" => new ShadowsocksConverter(),
+            "trojan" => new TrojanConverter(),
+            "hysteria2" => new Hysteria2Converter(),
+            _ => new AnyTlsConverter()
+        };
+        foreach (string password in new[] { " test-only ", "  " })
+        {
+            var extra = new Hashtable { ["password"] = password };
+            if (protocol == "ss")
+                extra["cipher"] = "aes-128-gcm";
+            ProxyOutbound outbound = Convert<ProxyOutbound>(converter, CreateNode(protocol, extra));
+            using var json = System.Text.Json.JsonDocument.Parse(SerializeOutbound(outbound));
+            Assert.That(json.RootElement.GetProperty("outbounds")[0].GetProperty("password").GetString(),
+                Is.EqualTo(password), protocol);
+        }
     }
 
     [Test]

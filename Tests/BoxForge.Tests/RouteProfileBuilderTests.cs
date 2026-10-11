@@ -435,6 +435,39 @@ public sealed class RouteProfileBuilderTests
             Is.Ordered.And.All.GreaterThanOrEqualTo(0));
     }
 
+    [TestCase(TargetPlatform.Android)]
+    [TestCase(TargetPlatform.Linux)]
+    [TestCase(TargetPlatform.Windows)]
+    public void MixedHostnamesRecheckTailscaleAfterEveryResolveBeforeOtherRoutes(TargetPlatform platform)
+    {
+        RouteConfig route = new RouteProfileBuilder(Options.Create(new TailscaleOptions())).Build(platform);
+        List<int> resolveIndexes = route.Rules.Select((rule, index) => (rule, index))
+            .Where(item => item.rule.Action == RouteRuleAction.Resolve)
+            .Select(item => item.index).ToList();
+
+        Assert.That(resolveIndexes, Has.Count.EqualTo(4));
+        foreach (int index in resolveIndexes)
+        {
+            RouteRule gate = route.Rules[index + 1];
+            Assert.Multiple(() =>
+            {
+                Assert.That(gate.Inbound, Is.EqualTo(new[] { SingboxTags.MixedInbound }));
+                Assert.That(gate.PreferredBy, Is.EqualTo(new[] { SingboxTags.TailscaleEndpoint }));
+                Assert.That(gate.Action, Is.EqualTo(RouteRuleAction.Route));
+                Assert.That(gate.Outbound, Is.EqualTo(SingboxTags.TailscaleEndpoint));
+                Assert.That(gate.IpIsPrivate, Is.Null, "Advertised public subnets also need the gate.");
+            });
+        }
+
+        int generalResolve = FindGeneralResolveIndex(route);
+        Assert.That(route.Rules[generalResolve + 2].IpIsPrivate, Is.True,
+            "Private destinations outside the tailnet must retain their DIRECT fallback.");
+        Assert.That(route.Rules[generalResolve + 2].Outbound, Is.EqualTo(SingboxTags.DirectOutbound));
+        Assert.That(CreateBuilder().Build(platform).Rules.Any(rule =>
+            rule.PreferredBy?.Contains(SingboxTags.TailscaleEndpoint) == true), Is.False,
+            "Disabled Tailscale must not leave endpoint references.");
+    }
+
     [Test]
     public void SniffingUsesWebQuicAndStunAcrossAllPorts()
     {

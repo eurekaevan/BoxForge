@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Text;
 using BoxForge.Models;
 
 namespace BoxForge.Server.Api;
@@ -22,6 +23,7 @@ internal static class ApiRequestValidation
             if (string.IsNullOrWhiteSpace(value)
                 || !Enum.TryParse(value, ignoreCase: true, out TargetPlatform platform)
                 || !Enum.IsDefined(platform)
+                || !string.Equals(value.Trim(), platform.ToString(), StringComparison.OrdinalIgnoreCase)
                 || !seen.Add(platform))
             {
                 platforms = [];
@@ -40,9 +42,21 @@ internal static class ApiRequestValidation
     {
         if (string.IsNullOrWhiteSpace(name)
             || name is "." or ".."
-            || name.Contains('/')
-            || name.Contains('\\')
-            || name.Any(char.IsControl))
+            || name.IndexOfAny(['<', '>', ':', '"', '/', '\\', '|', '?', '*']) >= 0
+            || name.Any(char.IsControl)
+            || name.EndsWith('.')
+            || name.EndsWith(' ')
+            || Encoding.UTF8.GetByteCount(name) > 255)
+        {
+            return false;
+        }
+
+        string deviceName = name.Split('.')[0].TrimEnd(' ').ToUpperInvariant();
+        if (deviceName is "CON" or "PRN" or "AUX" or "NUL" or "CONIN$" or "CONOUT$"
+            || (deviceName.Length == 4
+                && (deviceName.StartsWith("COM", StringComparison.Ordinal)
+                    || deviceName.StartsWith("LPT", StringComparison.Ordinal))
+                && (deviceName[3] is >= '1' and <= '9' or '¹' or '²' or '³')))
         {
             return false;
         }

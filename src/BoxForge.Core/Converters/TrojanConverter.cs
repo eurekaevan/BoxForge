@@ -27,7 +27,7 @@ public sealed class TrojanConverter()
             Tag = name,
             Server = server,
             ServerPort = node.GetRequiredInt("port"),
-            Password = node.GetRequiredString("password"),
+            Password = node.GetRequiredRawString("password"),
             Tls = tls,
             Transport = TransportConfigHelper.Extract(node, server, tls)
         };

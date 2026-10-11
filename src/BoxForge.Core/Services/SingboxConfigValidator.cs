@@ -435,6 +435,13 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
                     $"outbounds[{index}].uuid",
                     "VLESS UUID 不能为空。",
                     diagnostics);
+                if (vless.Flow is not (null or "" or "xtls-rprx-vision"))
+                {
+                    diagnostics.Add(new ConfigDiagnostic(
+                        "SB083",
+                        $"outbounds[{index}].flow",
+                        "VLESS flow 只支持空值或 xtls-rprx-vision。"));
+                }
                 break;
             case TrojanOutbound trojan:
                 ValidateRequired(
@@ -442,7 +449,8 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
                     "SB046",
                     $"outbounds[{index}].password",
                     "Trojan 密码不能为空。",
-                    diagnostics);
+                    diagnostics,
+                    allowWhitespace: true);
                 break;
             case Hysteria2Outbound hysteria2:
                 ValidateRequired(
@@ -450,7 +458,8 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
                     "SB047",
                     $"outbounds[{index}].password",
                     "Hysteria2 密码不能为空。",
-                    diagnostics);
+                    diagnostics,
+                    allowWhitespace: true);
                 break;
             case AnyTlsOutbound anyTls:
                 ValidateRequired(
@@ -458,7 +467,8 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
                     "SB050",
                     $"outbounds[{index}].password",
                     "AnyTLS 密码不能为空。",
-                    diagnostics);
+                    diagnostics,
+                    allowWhitespace: true);
                 break;
         }
     }
@@ -964,9 +974,10 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
         string code,
         string path,
         string message,
-        List<ConfigDiagnostic> diagnostics)
+        List<ConfigDiagnostic> diagnostics,
+        bool allowWhitespace = false)
     {
-        if (string.IsNullOrWhiteSpace(value))
+        if (allowWhitespace ? string.IsNullOrEmpty(value) : string.IsNullOrWhiteSpace(value))
         {
             diagnostics.Add(new ConfigDiagnostic(code, path, message));
         }

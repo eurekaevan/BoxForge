@@ -93,8 +93,9 @@ public sealed class ServerExportApiTests
             }));
     }
 
-    [Test]
-    public async Task ArchiveContentMatchesEngineUtf8Bytes()
+    [TestCase(false)]
+    [TestCase(true)]
+    public async Task ArchiveContentMatchesEngineUtf8Bytes(bool includeBom)
     {
         using HttpClient client = factory.CreateClient();
         IBoxForgeEngine engine =
@@ -104,10 +105,15 @@ public sealed class ServerExportApiTests
             ValidYaml,
             [TargetPlatform.Windows, TargetPlatform.Android]);
         ConversionBundle expected = await engine.ConvertAsync(request);
+        byte[] yamlBytes = Encoding.UTF8.GetBytes(request.ClashYaml);
+        if (includeBom)
+        {
+            yamlBytes = [0xEF, 0xBB, 0xBF, .. yamlBytes];
+        }
 
         using HttpResponseMessage response = await PostExportAsync(
             client,
-            Encoding.UTF8.GetBytes(request.ClashYaml),
+            yamlBytes,
             "ignored.yaml",
             request.Name,
             ["Windows", "Android"]);
@@ -281,6 +287,26 @@ public sealed class ServerExportApiTests
     [TestCase("nested/name")]
     [TestCase("nested\\name")]
     [TestCase("line\nbreak")]
+    [TestCase("bad:name")]
+    [TestCase("bad<name")]
+    [TestCase("bad>name")]
+    [TestCase("bad\"name")]
+    [TestCase("bad|name")]
+    [TestCase("bad?name")]
+    [TestCase("bad*name")]
+    [TestCase("trailing.")]
+    [TestCase("trailing ")]
+    [TestCase("CON")]
+    [TestCase("nul.txt")]
+    [TestCase("AUX")]
+    [TestCase("PRN.json")]
+    [TestCase("COM1")]
+    [TestCase("lpt9.log")]
+    [TestCase("COM¹")]
+    [TestCase("LPT².txt")]
+    [TestCase("COM³")]
+    [TestCase("CONIN$")]
+    [TestCase("CONOUT$")]
     public async Task RejectsUnsafeConfigurationNames(string name)
     {
         using HttpClient client = factory.CreateClient();
@@ -304,8 +330,61 @@ public sealed class ServerExportApiTests
             client,
             Encoding.UTF8.GetBytes(ValidYaml),
             "safe.yaml",
-            string.Concat(Enumerable.Repeat("🚀", 101)),
+            new string('a', 101),
             ["Android"]);
+
+        await AssertProblemAsync(response, HttpStatusCode.BadRequest);
+    }
+
+    [TestCase("0")]
+    [TestCase("2")]
+    [TestCase("Windows,Android")]
+    [TestCase("Android, Android")]
+    public async Task RejectsNonNamePlatformValues(string platform)
+    {
+        using HttpClient client = factory.CreateClient();
+        using HttpResponseMessage response = await PostExportAsync(
+            client, Encoding.UTF8.GetBytes(ValidYaml), "safe.yaml", null, [platform]);
+
+        await AssertProblemAsync(response, HttpStatusCode.BadRequest);
+    }
+
+    [TestCase(85, HttpStatusCode.OK)]
+    [TestCase(86, HttpStatusCode.BadRequest)]
+    public async Task ValidatesFilenameStemUtf8ByteLimit(
+        int runeCount,
+        HttpStatusCode expectedStatus)
+    {
+        using HttpClient client = factory.CreateClient();
+        string name = new('中', runeCount);
+        using HttpResponseMessage response = await PostExportAsync(
+            client, Encoding.UTF8.GetBytes(ValidYaml), $"{name}.yaml", null, ["android"]);
+
+        Assert.That(response.StatusCode, Is.EqualTo(expectedStatus));
+        if (expectedStatus == HttpStatusCode.OK)
+        {
+            IReadOnlyList<ArchiveContent> entries = await ReadArchiveAsync(response);
+            Assert.That(entries.Single().Path, Is.EqualTo($"{name}/Android/config.json"));
+        }
+    }
+
+    [Test]
+    public async Task RejectsMalformedUtf8AfterBom()
+    {
+        using HttpClient client = factory.CreateClient();
+        using HttpResponseMessage response = await PostExportAsync(
+            client, [0xEF, 0xBB, 0xBF, 0xFF], "safe.yaml", null, ["Android"]);
+
+        await AssertProblemAsync(response, HttpStatusCode.UnprocessableEntity);
+    }
+
+    [TestCase("CON.yaml")]
+    [TestCase("bad:name.yml")]
+    public async Task RejectsNonportableFilenameStemWhenNameIsOmitted(string fileName)
+    {
+        using HttpClient client = factory.CreateClient();
+        using HttpResponseMessage response = await PostExportAsync(
+            client, Encoding.UTF8.GetBytes(ValidYaml), fileName, null, ["Android"]);
 
         await AssertProblemAsync(response, HttpStatusCode.BadRequest);
     }

@@ -84,7 +84,7 @@ internal static class ConversionApi
         if (!ApiRequestValidation.IsValidConfigurationName(request.Name))
         {
             return ApiProblems.BadRequest(
-                "name 必须为 1～100 个 Unicode 标量值，不能是 . 或 ..，且不能包含路径分隔符或控制字符。");
+                "name 必须为 1～100 个 Unicode 标量值、最多 255 个 UTF-8 字节，且必须是有效的跨平台目录名。");
         }
 
         if (string.IsNullOrWhiteSpace(request.Yaml))

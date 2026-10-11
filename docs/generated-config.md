@@ -17,7 +17,8 @@
   检查周期 `30s`、最少空闲会话 `0`；等价 Go duration（如 `0.5m`）同样省略。
 - VLESS 默认 `xudp`、UoT 默认版本 `2`、uTLS 默认 `chrome`、默认 BBR `standard`、
   Gecko 默认包大小 `512/1200`、WS/HTTPUpgrade 根路径及空集合。
-  VLESS 显式空 `packet_encoding` 表示原生 UDP，仍输出；UoT v1 仍显式写版本。
+  模型层的显式空 `packet_encoding` 表示原生 UDP，仍输出；但来源 Mihomo 的空
+  `packet-encoding` 实际使用 XUDP，转换时按 XUDP 处理并省略默认值。UoT v1 仍显式写版本。
 - URLTest 的官方 URL、`3m` 周期、`50` 容差、`30m` 空闲超时及
   `interrupt_exist_connections: false`；selector 的 `true` 策略不变。
 - 默认 route action、sniff `300ms`、predefined 响应 `NOERROR`、`.srs` URL
@@ -87,6 +88,8 @@ TCP 和 UDP 无法完成 sniff 等不能使用 L3 forwarding 的情况。仅属�
 SFA 工作目录下的 `Taildrop`，Windows 使用
 `$USERPROFILE\Downloads\Taildrop`，Linux 使用 `$HOME/Downloads/Taildrop`。环境
 变量由目标机器上的 sing-box 在运行时展开。
+mixed 入站在每次域名解析后重新检查 Tailscale `preferred_by`，因此解析到 tailnet
+通告子网的域名优先走 Tailscale；未命中的私网地址仍按原策略走 DIRECT。
 
 ## DNS 与持久化缓存
 
@@ -127,8 +130,17 @@ SFA 工作目录下的 `Taildrop`，Windows 使用
   `idle-session-check-interval` 使用同一正 duration 校验；`min-idle-session`
   映射非负整数，`client-metadata` 保留字符串并检查 settings frame 安全边界。
   所有新增字段未提供时省略，不主动注入会话维护值。
-- VLESS `packet-encoding`（兼容 `packet_encoding`）会按来源生成 `xudp`、
-  `packetaddr` 或显式空值；未提供时保持既有 `xudp` 默认。
+- SS、Trojan、Hysteria2、AnyTLS 密码保留原始值，包括前后空白；只拒绝缺失或空字符串，
+  不对认证材料做 `Trim()`。
+- VLESS `packet-encoding`（兼容 `packet_encoding`）按锁定 Mihomo 的实际语义映射：
+  只有精确小写 `packetaddr` / `packet` 使用 `packetaddr`；其他值（含空值、不同大小写、
+  未知值）以及缺失字段均使用 XUDP，JSON 省略该默认值。不支持的 `packet-addr` / `xudp`
+  独立来源字段仍拒绝。旧版本把来源空值映射成原生 UDP 的行为已纠正。
+- VLESS `flow` 按来源规则处理：UTF-8 少于 16 字节时不启用 flow；否则前 16 字节
+  必须为 `xtls-rprx-vision`，后缀（例如 `-udp443`）不传递到目标。其他前缀在转换阶段
+  明确拒绝；validator 也拒绝目标模型中的非标准 flow。
+  flow 和 packet encoding 的依据是锁定的
+  [Mihomo VLESS constructor](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/vless.go)。
 - Reality 转换要求有效的 32 字节 Base64URL 公钥和显式 short ID。short ID
   可以为空，否则必须是最多 8 字节的偶数位十六进制字符串；错误会在节点转换阶段
   直接报告，不再生成空字段。
