@@ -1,19 +1,25 @@
-# Stage C 协议资格与验证边界
+# 协议转换与验证边界
 
 研究基线为 Mihomo Meta/Alpha `88dcbf7f1614a67c3b36b848ee3592dfa92ada36`
 及官方 sing-box `1.15.0-alpha.8`、revision
 `b609f959f57ce34416c51c7b87ce4a76f2e1df56`。官方构建使用 grpc-lite，
 不是带 `with_grpc` 的定制构建；更换构建后必须重新资格验证。
 
-## C4 transport 研究结论
+## TLS 与 transport 支持范围
+
+TLS 指纹仅接受两端等价支持的现代命名 profile 和 `randomized`；`none` 关闭
+uTLS。经典版本、历史 Chrome 别名、不同随机分布的 `random` 和未知值拒绝。
+Reality 必须有有效 uTLS，VLESS 还必须显式启用 TLS；不擅自补默认指纹。
+完整字段约束见[生成配置](generated-config.md#transport-与-shared-tls)。
 
 | 来源能力 | 结论 | 原因 |
 | --- | --- | --- |
-| Trojan gRPC | 继续拒绝 | 来源 authority 为裸 SNI/server；目标 grpc-lite 自动增加端口，没有独立 authority 字段。没有找到普通域名的安全子集 |
-| HTTP/http-opts | 继续拒绝 | 来源首包生成 Content-Length、后续发送原始流；目标 HTTP/1 或 TLS HTTP/2 的 body framing 不同 |
-| H2/h2-opts | 继续拒绝 | h2c 不能映射到无 TLS 的目标 HTTP/1；TLS PUT 子集仍有每 stream 物理连接与目标连接复用差异，没有跨核心证明 |
-| HTTPUpgrade | 保留 Stage B 的窄子集 | 仅普通路径、标量 headers，无 fast-open、active early data 或 Reality；URL 特殊形式仍拒绝 |
-| xHTTP | 继续拒绝 | 指定版本目标 transport union 无 xHTTP；不能用 HTTP/WS 近似模式、session 和 chunk 语义 |
+| Trojan gRPC | 拒绝 | 来源 authority 为裸 SNI/server；目标 grpc-lite 自动增加端口，没有独立 authority 字段。没有找到普通域名的安全子集 |
+| HTTP/http-opts | 拒绝 | 来源首包生成 Content-Length、后续发送原始流；目标 HTTP/1 或 TLS HTTP/2 的 body framing 不同 |
+| H2/h2-opts | 拒绝 | h2c 不能映射到无 TLS 的目标 HTTP/1；TLS PUT 子集仍有每 stream 物理连接与目标连接复用差异，没有跨核心证明 |
+| HTTPUpgrade | 保留受限子集 | 仅普通路径、标量 headers，无 fast-open、active early data 或 Reality；URL 特殊形式仍拒绝 |
+| xHTTP | 拒绝 | 指定版本目标 transport union 无 xHTTP；不能用 HTTP/WS 近似模式、session 和 chunk 语义 |
+| 静态 WS `Sec-WebSocket-Protocol` | 拒绝 | 锁定目标核心第一次握手后删除持久化 header，后续连接丢失；标准 early-data 独立字段不受影响 |
 
 没有新增未经跨核心验证的 transport 支持；现有 source guard 与反例测试继续生效。
 HTTPUpgrade/WS/gRPC 的 sing-box ↔ sing-box 回环仅证明生成配置可以互操作，
@@ -21,8 +27,47 @@ HTTPUpgrade/WS/gRPC 的 sing-box ↔ sing-box 回环仅证明生成配置可以�
 
 ## 可重复的本地验证
 
-先使用 CLI 从 `Tests/BoxForge.Tests/Fixtures` 生成三平台配置，再把官方核心路径
-及对应 Linux `config.json` 传入脚本：
+从仓库根目录运行 .NET 验证：
+
+```bash
+dotnet format BoxForge.slnx --verify-no-changes
+dotnet build BoxForge.slnx --no-incremental --warnaserror
+dotnet test BoxForge.slnx --no-build
+```
+
+再使用 CLI 从 `Tests/BoxForge.Tests/Fixtures` 生成三平台配置，分别覆盖 API
+关闭和开启。下面的 Bash 命令使用独立临时目录，不替换正式输出目录；
+将 `singbox_core` 改为上述官方核心的绝对路径。
+
+```bash
+singbox_core=/absolute/path/to/sing-box
+verification_root=$(mktemp -d /tmp/boxforge-verification.XXXXXX)
+
+BOXFORGE_SingboxApi__Enabled=false \
+dotnet run --no-build --project src/BoxForge.Cli -- generate \
+  --input-dir Tests/BoxForge.Tests/Fixtures \
+  --output-dir "$verification_root/standard" --platform all || exit
+
+BOXFORGE_SingboxApi__Enabled=true \
+dotnet run --no-build --project src/BoxForge.Cli -- generate \
+  --input-dir Tests/BoxForge.Tests/Fixtures \
+  --output-dir "$verification_root/api" --platform all || exit
+
+for config in "$verification_root"/*/*/*/config.json; do
+  "$singbox_core" check -c "$config" || exit
+done
+
+node scripts/verify-transports.mjs "$singbox_core" \
+  "$verification_root/standard/transport/Linux/config.json" || exit
+node scripts/verify-shadowsocks.mjs "$singbox_core" \
+  "$verification_root/standard/shadowsocks/Linux/config.json" || exit
+node scripts/verify-session-protocols.mjs "$singbox_core" \
+  "$verification_root/standard/hysteria2/Linux/config.json" hysteria2 || exit
+node scripts/verify-session-protocols.mjs "$singbox_core" \
+  "$verification_root/standard/anytls/Linux/config.json" anytls || exit
+```
+
+验证脚本使用真实生成的 Linux leaf，而不是重新手写客户端字段。对应范围：
 
 - `scripts/verify-transports.mjs`：既有 VLESS WS/gRPC/HTTPUpgrade、Trojan WS/HTTPUpgrade。
 - `scripts/verify-shadowsocks.mjs`：普通 SS TCP 与 UoT v1/v2 UDP echo；SS 服务端仅监听 TCP，防止原生 UDP 假通过。
@@ -34,69 +79,44 @@ HTTPUpgrade/WS/gRPC 的 sing-box ↔ sing-box 回环仅证明生成配置可以�
 socket 轮换并报告目的端口流量；[指定依赖随机选端口](https://github.com/SagerNet/sing-quic/blob/4f371c86a365/hysteria/hop.go)，合法跳转可能选回原目的端口，
 因此不要求一次跳转后两个目的端口都被选中。
 需要 Node.js、OpenSSL；transport/session 脚本还需要 curl。
+脚本核对版本及 revision；fixture 全部使用虚构凭据。
 
 SS obfs HTTP/TLS 与 v2ray-plugin 目前只有 serializer/官方核心配置检查，
 目标 SS inbound 不提供插件服务端，因此脚本明确输出 `CHECK-ONLY`，不是 runtime PASS。
 这些验证不包含生产订阅、远程服务器、真实 TUN、防火墙、Android 设备或网络泄漏抓包。
 
-## 默认值省略复验（2026-10-06）
+## 配置默认值与验证覆盖
 
-输出层现在省略与锁定核心有效默认值相同的字段，内部来源映射模型不变。
-验证使用同一官方 alpha.8 构建：
+输出层省略与锁定核心有效默认值相同的字段，内部来源映射模型不变。
+回环脚本在改写拨号地址前，将省略的默认 SNI 物化为原 server，避免证书名称随
+测试地址变化；UoT 和会话字段按官方有效默认值判断，不重新注入被省略的设置。
 
-- 格式检查与 warnings-as-errors 构建通过；415 个单元测试全部通过。
-- 5 个 fixture × 3 平台 × API 关闭/开启，共 30 份 JSON 通过官方 `check`。
-  实际输出中的首候选默认选择、地区 AUTO 层级、代理 HTTP client、IPv4 resolver
-  与 DNS 非默认策略另有断言检查。
-- SS TCP/UoT v1/v2、VLESS WS/gRPC/HTTPUpgrade、Trojan WS/HTTPUpgrade、
-  HY2 默认/带宽/Gecko/固定跳端口、AnyTLS 会话回环全部通过；插件仍是 `CHECK-ONLY`。
-- 回环脚本在改写拨号地址前，将省略的默认 SNI 物化为原 server，避免证书名称随
-  测试地址变化；UoT 和会话字段按官方有效默认值判断，不重新注入被省略的协议设置。
+常规验收包括 `dotnet format`、warnings-as-errors build、全部测试、
+5 个 fixture × 3 平台 × API 开关两种状态的 30 份 JSON 官方检查。
+另外核对地区 AUTO 层级、有效默认选择、DNS/route 引用及控制面 resolver。
+单元测试覆盖循环和超限 YAML、指纹/Reality 拒绝、静态 WS subprotocol 拒绝与标准
+early-data 保留；真实 Kestrel 子进程覆盖环境开关和截断 multipart 的错误契约。
 
-本次回环通过不消除下文记录的 HTTPUpgrade 历史稳定性风险，也不新增真实设备或泄漏证明。
-
-## 本次验收与已知风险
-
-| 阶段 | 实际结果 |
+| 场景 | 回环脚本验证内容 |
 | --- | --- |
-| C1 | UoT 对象保留有效版本（v1 显式、v2 使用核心默认）；obfs 专用映射；v2ray-plugin websocket/mux=false、可选标准 TLS 的受限映射；未知插件/选项拒绝 |
-| C2 | 精确整数 Mbps、固定/范围跳端口、BBR、Gecko；network/QUIC/Realm/uTLS 不等价部分仍拒绝 |
-| C3 | 共用正 duration parser、check interval、非负 min idle、字符串 metadata 和 frame 安全校验 |
-| C4 | 研究后维持 Trojan gRPC、HTTP/H2/xHTTP 拒绝；没有为支持率引入近似映射 |
-| C5 | 地区 leaf inventory 与分组分离、单 preferred leaf 服务默认值、实际请求 policy-aware validator、Android strict_route 省略 |
+| SS plain TCP、UoT v1/v2 | HTTP/UDP echo，UoT 后端仅接受 TCP |
+| SS obfs HTTP/TLS、v2ray-plugin WS/WS-TLS | CHECK-ONLY：无插件服务端，不标为 runtime PASS |
+| HY2 默认、100/80 Mbps、Gecko 600/1200、固定 20 秒 hopping | HTTP body 与 hopping 后 UDP source socket 轮换 |
+| AnyTLS session fields | 生成字段断言与 HTTP body |
+| VLESS WS/gRPC、Trojan WS、VLESS/Trojan HTTPUpgrade | HTTP body；HTTPUpgrade 仍有下述历史风险 |
 
-最终 `dotnet format` 及 verify-no-changes、零警告 build、`dotnet test` **401/401**、
-`git diff --check` 均通过。五个 fixture × 三个平台共 15 份原始配置通过官方
-alpha.8 核心检查，版本与 revision 均核对。与 C3 输出比较，既有四个 fixture
-的 12 份 DNS/route 内容和规则顺序完全一致；没有引入其他 DNS/routing 优化。
+## 已知验证边界
 
-| 场景 | 本地运行证据 |
-| --- | --- |
-| SS plain TCP、UoT v1/v2 | PASS：HTTP/UDP echo，UoT 后端仅接受 TCP |
-| SS obfs HTTP/TLS、v2ray-plugin WS/WS-TLS | CHECK-ONLY：官方核心接受配置，未建立插件服务端 |
-| HY2 默认、100/80 Mbps、Gecko 600/1200、固定 20 秒 hopping | PASS：HTTP body 与 hopping 后 UDP source socket 轮换 |
-| AnyTLS session fields | PASS：生成字段断言与 HTTP body |
-| VLESS WS/gRPC、Trojan WS | PASS：既有完整回环复跑 |
-| VLESS/Trojan HTTPUpgrade | 完整重跑 PASS，但首次复跑存在下述间歇失败，不标为稳定资格已证明 |
+协议脚本仅验证 sing-box 与 sing-box 回环，配置检查不等于实时 DNS、tailnet、
+kernel bypass、Windows ZIP 解压、真实 TUN 或设备级 IPv6 防逃逸证明。
 
-三个平台均成功生成，且全部 fixture 的原始 JSON 通过指定官方核心检查。
-普通 SS、UoT v1/v2、HY2 四种场景及 AnyTLS 均完成回环数据传输。
-既有五种 transport 完整重跑通过，但首次复跑曾在 VLESS HTTPUpgrade 上出现
+历史复跑曾在 VLESS HTTPUpgrade 上出现
 一次 `unknown protobuf message header: 137` / 空 HTTP 响应；随后独立完整重跑
 五种场景全部通过。成因尚未证实，因此 HTTPUpgrade 不能标为稳定运行资格已证明；
 未添加自动重试，也未改写正式 transport 输出来掩盖该失败。
 
-## 本轮实际修改文件（不含保留的 Stage B 未提交改动）
+其他未经证明的路径包括 Reality、全部 uTLS 指纹和真实远程部署。
+每次验收报告应注明实际运行的测试、产物和核心版本；本文定义验证方法与边界，
+不把历史通过记录视为当前代码或目标设备已经通过。
 
-- 转换与 model：`Converters/{Shadowsocks,Hysteria2,AnyTls}Converter.cs`、
-  `Converters/SourceFieldSchema.cs`、`Helpers/GoDurationHelper.cs`、
-  `Models/Singbox/OutboundConfig.cs`。
-- policy 与编排：`Configuration/{OutboundTuningPolicy,ControlPlaneDnsPolicy}.cs`、
-  `Builders/{BuildArtifacts,SingboxConfigBuilder}.cs`、
-  `Builders/Components/{ProfilePlanner,InboundBuilder,DnsProfileBuilder,RouteProfileBuilder}.cs`、
-  `Services/{ConversionService,SingboxConfigValidator}.cs`。以上路径相对 `src/BoxForge.Core`。
-- 测试：`Tests/BoxForge.Tests/BoxForge.Tests.csproj`、
-  `{SemanticCoverage,ProxyConverter,ProfilePlanner,SingboxConfigBuilder,SingboxConfigValidator,ProtocolSourceMapping}Tests.cs`；
-  fixtures：`shadowsocks.yaml`、`hysteria2.yaml`、`anytls.yaml`、`profiles.yaml`。
-- 运行验证：`scripts/verify-shadowsocks.mjs`、`scripts/verify-session-protocols.mjs`。
-- 文档：`docs/architecture.md`、`docs/configuration.md`、`docs/generated-config.md` 和本文件。
+[返回 README](../README.md)

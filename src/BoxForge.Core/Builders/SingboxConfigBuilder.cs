@@ -44,13 +44,14 @@ public sealed class SingboxConfigBuilder(
             });
         }
 
-        var orderedOutbounds = new List<Outbound>();
-        orderedOutbounds.Add(profiles.MainOutbound);
-        orderedOutbounds.AddRange(profiles.RegionOutbounds);
-        orderedOutbounds.AddRange(profiles.RegionAutoOutbounds);
-        orderedOutbounds.AddRange(profiles.ServiceOutbounds);
-        orderedOutbounds.AddRange(request.Nodes.Outbounds.Select(
-            outbound => OutboundTuningPolicy.Apply(outbound, request.Platform)));
+        List<Outbound> orderedOutbounds =
+        [
+            profiles.MainOutbound,
+            .. profiles.RegionOutbounds,
+            .. profiles.RegionAutoOutbounds,
+            .. profiles.ServiceOutbounds,
+            .. request.Nodes.Outbounds.Select(outbound => OutboundTuningPolicy.Apply(outbound, request.Platform))
+        ];
         if (request.Platform != TargetPlatform.Android)
         {
             orderedOutbounds.Add(new BridgeOutbound

@@ -2,6 +2,8 @@
 
 BoxForge 提供两个 Tailscale 运行时设置，并提供一个全平台 sing-box API 开关。
 使用分组键时，环境变量中的 `__` 对应配置路径中的 `:`。
+CLI 和 HTTP Server 都读取带 `BOXFORGE_` 前缀的环境变量，使用相同的开关和默认值；
+修改 Server 环境变量后需要重启进程，新值才会用于转换。
 
 ## 配置表
 
@@ -10,6 +12,8 @@ BoxForge 提供两个 Tailscale 运行时设置，并提供一个全平台 sing-
 | `BOXFORGE_Tailscale__Enabled` | `BOXFORGE_TailscaleEnabled` | `true` | 是否在 Linux 和 Windows 生成 Tailscale endpoint |
 | `BOXFORGE_Tailscale__AndroidEnabled` | `BOXFORGE_TailscaleAndroidEnabled` | `true` | 是否在 Android 生成 Tailscale endpoint |
 | `BOXFORGE_SingboxApi__Enabled` | 无 | `false` | 是否生成仅监听本机的 sing-box API 与 Dashboard |
+
+同时设置分组键和兼容键时，分组键优先；建议只使用表中的推荐变量。
 
 `Enabled` 和 `AndroidEnabled` 只接受 `true` 或 `false`（不区分大小写）。
 无法解析的值会使生成失败。两者默认均为 `true`，但 Android 不继承桌面端的
@@ -23,7 +27,7 @@ sing-box 下载到工作目录下的 `dashboard`，下载使用独立的
 `http-ruleset-proxy` 经地区 AUTO（若无则首个节点）下载。CORS 只允许该端口的
 `127.0.0.1` 和 `localhost` origin，且不允许浏览器私网跨域访问。
 
-首版 API 配置不开放监听地址、端口或远程访问，也不生成共享 secret。尽管只监听
+API 配置不开放监听地址、端口或远程访问，也不生成共享 secret。尽管只监听
 loopback，同机进程仍可访问该控制面；不需要 Dashboard、远程控制或 Tailscale
 交互管理时应保持关闭。
 
@@ -71,8 +75,8 @@ DNS evaluate/respond 的响应 tag 使用 `response-范围-优先级`：
 或 rule-set tag 冲突，转换会直接报告明确错误，不会静默追加后缀。这样可以避免
 订阅更新后 selector 引用或已保存选择发生漂移。
 
-这些 selector tag 同时是 Clash API 使用的标识。由旧命名生成的新配置首次加载时，
-Dashboard 中基于旧地区 tag 保存的选择不会迁移，需要重新选择一次。
+这些 selector tag 同时是 Clash API 使用的标识。更改 tag 会改变 Dashboard
+保存选择时的身份；BoxForge 不提供旧名称别名或已保存选择的自动迁移。
 
 ## 其他代码固定值
 

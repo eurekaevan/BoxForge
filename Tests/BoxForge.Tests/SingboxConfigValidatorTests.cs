@@ -9,6 +9,49 @@ namespace BoxForge.Tests;
 [TestFixture]
 public sealed class SingboxConfigValidatorTests
 {
+    private readonly SingboxConfigValidator validator = new();
+
+    [TestCase("none")]
+    [TestCase("chrome120")]
+    [TestCase("chrome_psk")]
+    public void InvalidUtlsModelCannotBypassSourceValidation(string fingerprint)
+    {
+        SingboxConfig valid = CreateValidConfig();
+        var config = valid with
+        {
+            Outbounds = [.. valid.Outbounds, new TrojanOutbound
+            {
+                Tag = "invalid-utls", Server = "node.example.com", ServerPort = 443, Password = "test-only",
+                Tls = new OutboundTls { ServerName = "node.example.com", Utls = new Utls { Enabled = true, Fingerprint = fingerprint } }
+            }]
+        };
+        AssertDiagnostics(config, new ConfigDiagnostic("SB089", $"outbounds[{valid.Outbounds.Count}].tls.utls.fingerprint",
+            "uTLS 指纹不在 BoxForge 的等价映射支持范围内。"));
+    }
+
+    [TestCase(false, true)]
+    [TestCase(true, false)]
+    public void RealityRequiresTlsAndUtlsInTheTargetModel(bool tlsEnabled, bool utlsEnabled)
+    {
+        SingboxConfig valid = CreateValidConfig();
+        var config = valid with
+        {
+            Outbounds = [.. valid.Outbounds, new VlessOutbound
+            {
+                Tag = "invalid-reality", Server = "node.example.com", ServerPort = 443,
+                Uuid = "00000000-0000-4000-8000-000000000001",
+                Tls = new OutboundTls
+                {
+                    Enabled = tlsEnabled, ServerName = "node.example.com",
+                    Utls = new Utls { Enabled = utlsEnabled, Fingerprint = "chrome" },
+                    Reality = new OutboundReality { Enabled = true, PublicKey = "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0", ShortId = "00" }
+                }
+            }]
+        };
+        AssertDiagnostics(config, new ConfigDiagnostic("SB090", $"outbounds[{valid.Outbounds.Count}].tls.reality",
+            "Reality 必须启用 TLS 和有效的 uTLS。"));
+    }
+
     [Test]
     public void InvalidVlessFlowCannotReachSerialization()
     {
@@ -40,12 +83,151 @@ public sealed class SingboxConfigValidatorTests
         Assert.DoesNotThrow(() => validator.Validate(config, AddressFamilyPolicy.DualStack));
     }
 
-    private readonly SingboxConfigValidator validator = new();
-
     [Test]
     public void ValidConfigurationPasses()
     {
         Assert.DoesNotThrow(() => validator.Validate(CreateValidConfig(), AddressFamilyPolicy.DualStack));
+    }
+
+    [Test]
+    public void DnsReferencesReportExactPathsAndUseSeparateNamespaces()
+    {
+        SingboxConfig valid = CreateValidConfig();
+        var config = valid with
+        {
+            Dns = valid.Dns with
+            {
+                Final = "missing-dns",
+                Rules = [new DnsRule
+                {
+                    Action = DnsRuleAction.Route,
+                    Server = "dns",
+                    RuleSet = ["missing-rules"],
+                    PreferredBy = ["direct", "dns"],
+                    MatchResponse = "dns"
+                }]
+            }
+        };
+
+        AssertDiagnostics(config,
+            new("SB084", "dns.final", "引用了不存在的 DNS server。"),
+            new("SB011", "dns.rules[0].rule_set[0]", "引用了不存在的 rule-set。"),
+            new("SB087", "dns.rules[0].preferred_by[0]", "引用了不存在的 DNS server。"),
+            new("SB088", "dns.rules[0].preferred_by[1]", "DNS server 不支持 preferred_by 域名匹配。"),
+            new("SB086", "dns.rules[0].match_response", "必须引用前置 evaluate 规则定义的响应标签。"));
+    }
+
+    [TestCase("")]
+    [TestCase("dns")]
+    public void DnsFinalMaySelectAnExistingServerOrUseTheCoreDefault(string final)
+    {
+        SingboxConfig valid = CreateValidConfig();
+        Assert.DoesNotThrow(() => validator.Validate(valid with
+        {
+            Dns = valid.Dns with { Final = final }
+        }, AddressFamilyPolicy.DualStack));
+    }
+
+    [Test]
+    public void DnsPreferredBySupportsTheTailscaleDnsTransport()
+    {
+        SingboxConfig valid = CreateValidConfig();
+        var config = valid with
+        {
+            Endpoints = [CreateEndpoint("tailscale")],
+            Dns = valid.Dns with
+            {
+                Servers = [.. valid.Dns.Servers,
+                    new TailscaleDnsServer { Tag = "tail-dns", EndpointTag = "tailscale" }],
+                Rules = [new DnsRule
+                {
+                    PreferredBy = ["tail-dns"], Action = DnsRuleAction.Route, Server = "tail-dns"
+                }]
+            }
+        };
+        Assert.DoesNotThrow(() => validator.Validate(config, AddressFamilyPolicy.DualStack));
+    }
+
+    [Test]
+    public void DnsResponsesCanOnlyReferencePrecedingNamedEvaluateRules()
+    {
+        SingboxConfig valid = CreateValidConfig();
+        var config = valid with
+        {
+            Dns = valid.Dns with
+            {
+                Rules =
+                [
+                    new DnsRule { Action = DnsRuleAction.Evaluate, Server = "dns", Tag = "primary" },
+                    new DnsRule
+                    {
+                        Action = DnsRuleAction.Evaluate, Server = "dns", Tag = "fallback", MatchResponse = "primary"
+                    },
+                    new DnsRule { Action = DnsRuleAction.Respond, MatchResponse = "fallback" }
+                ]
+            }
+        };
+        Assert.DoesNotThrow(() => validator.Validate(config, AddressFamilyPolicy.DualStack));
+    }
+
+    [TestCase("missing")]
+    [TestCase("later")]
+    [TestCase("")]
+    public void MissingOrForwardDnsResponseTagsAreRejected(string reference)
+    {
+        SingboxConfig valid = CreateValidConfig();
+        var config = valid with
+        {
+            Dns = valid.Dns with
+            {
+                Rules =
+                [
+                    new DnsRule { Action = DnsRuleAction.Respond, MatchResponse = reference },
+                    new DnsRule { Action = DnsRuleAction.Evaluate, Server = "dns", Tag = "later" }
+                ]
+            }
+        };
+        AssertDiagnostics(config,
+            new ConfigDiagnostic("SB086", "dns.rules[0].match_response", "必须引用前置 evaluate 规则定义的响应标签。"));
+    }
+
+    [Test]
+    public void DnsResponseTagsAreCaseSensitive()
+    {
+        SingboxConfig valid = CreateValidConfig();
+        var config = valid with
+        {
+            Dns = valid.Dns with
+            {
+                Rules =
+                [
+                    new DnsRule { Action = DnsRuleAction.Evaluate, Server = "dns", Tag = "primary" },
+                    new DnsRule { Action = DnsRuleAction.Respond, MatchResponse = "PRIMARY" }
+                ]
+            }
+        };
+        AssertDiagnostics(config,
+            new ConfigDiagnostic("SB086", "dns.rules[1].match_response", "必须引用前置 evaluate 规则定义的响应标签。"));
+    }
+
+    [Test]
+    public void DnsEvaluateCannotReferenceItselfOrRedefineAResponseTag()
+    {
+        SingboxConfig valid = CreateValidConfig();
+        var config = valid with
+        {
+            Dns = valid.Dns with
+            {
+                Rules =
+                [
+                    new DnsRule { Action = DnsRuleAction.Evaluate, Server = "dns", Tag = "same", MatchResponse = "same" },
+                    new DnsRule { Action = DnsRuleAction.Evaluate, Server = "dns", Tag = "same" }
+                ]
+            }
+        };
+        AssertDiagnostics(config,
+            new("SB086", "dns.rules[0].match_response", "必须引用前置 evaluate 规则定义的响应标签。"),
+            new("SB085", "dns.rules[1].tag", "evaluate 响应标签 'same' 重复。"));
     }
 
     [TestCase("grpc", "gRPC transport 必须保留已映射的非空服务名。")]
@@ -80,8 +262,6 @@ public sealed class SingboxConfigValidatorTests
         AssertDiagnostics(config, new ConfigDiagnostic("SB079", $"outbounds[{valid.Outbounds.Count}].transport",
             "transport model 未注册对应的 sing-box type。"));
     }
-
-    private sealed record UnregisteredTransport : V2RayTransport;
 
     [Test]
     public void RuleSetHttpClientMustExist()
@@ -846,6 +1026,7 @@ public sealed class SingboxConfigValidatorTests
         {
             Dns = new DnsConfig
             {
+                Final = "dns",
                 Servers =
                 [
                     new HttpsDnsServer
@@ -958,4 +1139,6 @@ public sealed class SingboxConfigValidatorTests
             Method = "aes-128-gcm",
             Password = "test-only"
         };
+
+    private sealed record UnregisteredTransport : V2RayTransport;
 }

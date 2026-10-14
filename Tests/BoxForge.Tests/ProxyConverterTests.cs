@@ -167,6 +167,8 @@ public sealed class ProxyConverterTests
             CreateNode("vless", new Hashtable
             {
                 ["uuid"] = "00000000-0000-4000-8000-000000000001",
+                ["tls"] = true,
+                ["client-fingerprint"] = "chrome",
                 ["reality-opts"] = reality
             }));
 
@@ -184,6 +186,8 @@ public sealed class ProxyConverterTests
             CreateNode("vless", new Hashtable
             {
                 ["uuid"] = "00000000-0000-4000-8000-000000000001",
+                ["tls"] = true,
+                ["client-fingerprint"] = "chrome",
                 ["reality-opts"] = new Hashtable
                 {
                     ["public-key"] = RealityPublicKey,
@@ -192,6 +196,94 @@ public sealed class ProxyConverterTests
             }));
 
         Assert.That(outbound.Tls?.Reality?.ShortId, Is.EqualTo(shortId));
+    }
+
+    [TestCase("chrome")]
+    [TestCase("firefox")]
+    [TestCase("safari")]
+    [TestCase("ios")]
+    [TestCase("android")]
+    [TestCase("edge")]
+    [TestCase("360")]
+    [TestCase("qq")]
+    [TestCase("randomized")]
+    public void TlsPreservesSupportedFingerprintNames(string fingerprint)
+    {
+        TrojanOutbound outbound = Convert<TrojanOutbound>(new TrojanConverter(), CreateNode("trojan", new Hashtable
+        {
+            ["password"] = "test-only",
+            ["client-fingerprint"] = fingerprint
+        }));
+        Assert.That(outbound.Tls!.Utls!.Fingerprint, Is.EqualTo(fingerprint));
+        Assert.That(outbound.Tls.Utls.Enabled, Is.True);
+    }
+
+    [TestCase("client-fingerprint", "none")]
+    [TestCase("client_fingerprint", "none")]
+    [TestCase("client-fingerprint", "")]
+    public void NativeTlsFingerprintDoesNotGenerateUtls(string field, string fingerprint)
+    {
+        TrojanOutbound outbound = Convert<TrojanOutbound>(new TrojanConverter(), CreateNode("trojan", new Hashtable
+        {
+            ["password"] = "test-only",
+            [field] = fingerprint
+        }));
+        Assert.That(outbound.Tls!.Utls, Is.Null);
+        Assert.That(SerializeOutbound(outbound), Does.Not.Contain("\"utls\""));
+    }
+
+    [TestCase("chrome120")]
+    [TestCase("firefox120")]
+    [TestCase("safari16")]
+    [TestCase("chrome_psk")]
+    [TestCase("chrome_psk_shuffle")]
+    [TestCase("chrome_padding_psk_shuffle")]
+    [TestCase("chrome_pq")]
+    [TestCase("chrome_pq_psk")]
+    [TestCase("random")]
+    [TestCase("unknown")]
+    [TestCase("CHROME")]
+    public void TlsRejectsFingerprintsWithoutAnEquivalentTargetProfile(string fingerprint)
+    {
+        NodeConversionResult result = new TrojanConverter().Convert(CreateNode("trojan", new Hashtable
+        {
+            ["password"] = "test-only",
+            ["client-fingerprint"] = fingerprint
+        }));
+        Assert.That(result, Is.TypeOf<InvalidNode>());
+        Assert.That(((InvalidNode)result).ErrorMessage, Does.Contain("client-fingerprint"));
+    }
+
+    [TestCase(null)]
+    [TestCase("")]
+    [TestCase("none")]
+    public void RealityRequiresAnExplicitEffectiveUtlsFingerprint(string? fingerprint)
+    {
+        NodeConversionResult result = new VlessConverter().Convert(CreateNode("vless", new Hashtable
+        {
+            ["uuid"] = "00000000-0000-4000-8000-000000000001",
+            ["tls"] = true,
+            ["client-fingerprint"] = fingerprint,
+            ["reality-opts"] = new Hashtable { ["public-key"] = RealityPublicKey, ["short-id"] = "00" }
+        }));
+        Assert.That(result, Is.TypeOf<InvalidNode>());
+        Assert.That(((InvalidNode)result).ErrorMessage, Does.Contain("client-fingerprint"));
+    }
+
+    [TestCase(null)]
+    [TestCase(false)]
+    public void VlessRealityDoesNotImplicitlyEnableTls(bool? tls)
+    {
+        var fields = new Hashtable
+        {
+            ["uuid"] = "00000000-0000-4000-8000-000000000001",
+            ["client-fingerprint"] = "chrome",
+            ["reality-opts"] = new Hashtable { ["public-key"] = RealityPublicKey, ["short-id"] = "00" }
+        };
+        if (tls.HasValue) fields["tls"] = tls.Value;
+        NodeConversionResult result = new VlessConverter().Convert(CreateNode("vless", fields));
+        Assert.That(result, Is.TypeOf<InvalidNode>());
+        Assert.That(((InvalidNode)result).ErrorMessage, Does.Contain("显式启用 tls"));
     }
 
     [TestCase("invalid")]

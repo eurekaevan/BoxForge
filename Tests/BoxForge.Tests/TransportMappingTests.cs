@@ -21,6 +21,19 @@ public sealed class TransportMappingTests
 {
     private const string PublicKey = "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0";
 
+    [TestCase("Sec-WebSocket-Protocol")]
+    [TestCase("sec-websocket-protocol")]
+    public void WebSocketEarlyDataStillSupportsTheStandardSubprotocolHeader(string header)
+    {
+        ProxyOutbound outbound = Convert("vless", new Hashtable
+        {
+            ["network"] = "ws",
+            ["ws-opts"] = new Hashtable { ["max-early-data"] = 2048, ["early-data-header-name"] = header }
+        });
+        JsonElement node = Serialize(outbound);
+        Assert.That(node.GetProperty("transport").GetProperty("early_data_header_name").GetString(), Is.EqualTo(header));
+    }
+
     [TestCase("vless", null)]
     [TestCase("vless", "tcp")]
     [TestCase("trojan", null)]
@@ -233,7 +246,10 @@ public sealed class TransportMappingTests
             yield return Invalid(network, "tls", true, "network");
         foreach (string field in new[] { "fingerprint", "name-cert-verify", "encryption", "xhttp-opts" })
             yield return Invalid("tcp", field, "nonempty", field);
-        yield return Invalid("ws", "reality-opts", new Hashtable { ["public-key"] = PublicKey, ["short-id"] = "00" }, "reality-opts");
+        yield return Invalid("ws", "reality-opts", new Hashtable { ["public-key"] = PublicKey, ["short-id"] = "00" }, "reality-opts",
+            new Hashtable { ["client-fingerprint"] = "chrome" });
+        foreach (string header in new[] { "Sec-WebSocket-Protocol", "sec-websocket-protocol" })
+            yield return Invalid("ws", "ws-opts", new Hashtable { ["headers"] = new Hashtable { [header] = "demo" } }, "握手保留 header");
         yield return Invalid("ws", "alpn", new[] { "h2", "http/1.1" }, "alpn");
         yield return Invalid("grpc", "alpn", Array.Empty<string>(), "alpn");
         yield return Invalid("grpc", "sni", "explicit.example.com", "sni/servername");
@@ -250,6 +266,7 @@ public sealed class TransportMappingTests
         NodeConversionResult reality = converter.Convert(Node(protocol, new Hashtable
         {
             ["network"] = "ws",
+            ["client-fingerprint"] = "chrome",
             ["reality-opts"] = new Hashtable { ["public-key"] = PublicKey, ["short-id"] = "00" }
         }));
         Assert.That(reality, Is.TypeOf<InvalidNode>());

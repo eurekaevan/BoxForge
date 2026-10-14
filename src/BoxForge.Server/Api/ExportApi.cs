@@ -41,6 +41,15 @@ internal static class ExportApi
         {
             return ApiProblems.BadRequest("multipart 请求体无效。");
         }
+        // MultipartReader reports a missing boundary as IOException, not InvalidDataException.
+        // Match its specific EOF diagnostic; transport/storage I/O failures must remain server errors.
+        catch (IOException exception) when (
+            !cancellationToken.IsCancellationRequested
+            && exception.Source == "Microsoft.AspNetCore.WebUtilities"
+            && exception.Message == "Unexpected end of Stream, the content may have already been read by another component. ")
+        {
+            return ApiProblems.BadRequest("multipart 请求体无效。");
+        }
 
         if (form.Keys.Any(key => !IsAllowedFormField(key)))
         {
@@ -156,9 +165,7 @@ internal static class ExportApi
             "multipart/form-data",
             StringComparison.OrdinalIgnoreCase);
 
-    private static bool IsAllowedFormField(string key) =>
-        string.Equals(key, "name", StringComparison.Ordinal)
-        || string.Equals(key, "platforms", StringComparison.Ordinal);
+    private static bool IsAllowedFormField(string key) => key is "name" or "platforms";
 
     private static bool TryGetYamlFileStem(
         string fileName,

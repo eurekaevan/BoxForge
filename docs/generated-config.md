@@ -38,17 +38,16 @@
 不会将全局 `5s` 下的显式 `10s` 错当作默认。
 
 IPv4-only、DIRECT/bridge/bypass、Tailscale、DNS 超时 `5s`、缓存容量 `4096`、
-optimistic `6h` 等非默认策略保持不变。升级核心时必须重新核对这些默认值，
+optimistic `6h` 等非默认策略继续显式输出。升级核心时必须重新核对这些默认值，
 运行单元测试、三平台生成检查与官方核心验证，而不是扩大通用零值删除。
 
 ## 平台差异
 
 每个平台都包含一个 TUN inbound 和一个仅监听 `127.0.0.1:8848` 的 mixed inbound。
-TUN 固定启用 `auto_route`，DNS 模式使用核心默认的 `hijack`，不输出 `dns_mode`。`strict_route` 仅在 Linux/
-Windows 显式启用；指定版本 Android feature matrix 标记该能力未实现，因此省略。
-平台差异如下。
-全平台仍生成仅监听 `127.0.0.1:8848` 的 `mixed-in`，供显式配置的 SOCKS/HTTP
-客户端使用，但不生成 `set_system_proxy` 或 `platform.http_proxy`，因此不会由
+TUN 固定启用 `auto_route`，DNS 模式使用核心默认的 `hijack`，不输出 `dns_mode`。
+`strict_route` 仅在 Linux/Windows 显式启用；指定版本 Android feature matrix
+标记该能力未实现，因此省略。`mixed-in` 供显式配置的 SOCKS/HTTP 客户端使用，
+但不生成 `set_system_proxy` 或 `platform.http_proxy`，因此不会由
 sing-box 自动修改系统 HTTP 代理设置。
 
 | 平台 | 差异 |
@@ -127,15 +126,19 @@ mixed 入站在每次域名解析后重新检查 Tailscale `preferred_by`，因�
   桌面 keepalive。以上是有效值；与核心默认等价的值在输出 JSON 时省略。
 - AnyTLS 的 `idle-session-timeout`、下划线别名以及旧
   `idle-timeout` 输入统一生成官方 `idle_session_timeout`；纯数字输入按秒转换。
-  `idle-session-check-interval` 使用同一正 duration 校验；`min-idle-session`
-  映射非负整数，`client-metadata` 保留字符串并检查 settings frame 安全边界。
-  所有新增字段未提供时省略，不主动注入会话维护值。
+  `idle-session-check-interval` 使用同一正 Go duration 校验：最多 128 字符，
+  不得超过 int64 纳秒上限或小于 1ns；Mihomo 原生值是整数秒，BoxForge 另外
+  保留 duration 文本扩展。两端会话库均将不超过 5 秒的维护值恢复为 `30s`。
+  `min-idle-session` 映射 `0..2147483647`，只保证保留数量映射，不声称两端
+  会话池的过期时间刷新算法完全一致。`client-metadata` 保留空白、Unicode 与 `=`，
+  拒绝 LF 和超过 65479 UTF-8 字节的值，避免 settings 注入及 uint16 frame 溢出。
+  字段未提供时省略，不注入会话维护值或客户端身份；AnyTLS Reality 不支持。
 - SS、Trojan、Hysteria2、AnyTLS 密码保留原始值，包括前后空白；只拒绝缺失或空字符串，
   不对认证材料做 `Trim()`。
 - VLESS `packet-encoding`（兼容 `packet_encoding`）按锁定 Mihomo 的实际语义映射：
   只有精确小写 `packetaddr` / `packet` 使用 `packetaddr`；其他值（含空值、不同大小写、
   未知值）以及缺失字段均使用 XUDP，JSON 省略该默认值。不支持的 `packet-addr` / `xudp`
-  独立来源字段仍拒绝。旧版本把来源空值映射成原生 UDP 的行为已纠正。
+  独立来源字段仍拒绝。
 - VLESS `flow` 按来源规则处理：UTF-8 少于 16 字节时不启用 flow；否则前 16 字节
   必须为 `xtls-rprx-vision`，后缀（例如 `-udp443`）不传递到目标。其他前缀在转换阶段
   明确拒绝；validator 也拒绝目标模型中的非标准 flow。
@@ -143,11 +146,23 @@ mixed 入站在每次域名解析后重新检查 Tailscale `preferred_by`，因�
   [Mihomo VLESS constructor](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/vless.go)。
 - Reality 转换要求有效的 32 字节 Base64URL 公钥和显式 short ID。short ID
   可以为空，否则必须是最多 8 字节的偶数位十六进制字符串；错误会在节点转换阶段
-  直接报告，不再生成空字段。
+  直接报告。还必须显式提供支持的 uTLS 指纹；VLESS 必须
+  显式启用 `tls: true`，不会因存在 Reality 配置而隐式改变来源 TLS 设置。
 - Hysteria2 显式 `up`/`down` 转为精确整数 Mbps；无法精确转换时拒绝。
-  显式 `hop-interval` 为整数秒或范围，固定间隔不注入随机上限；缺失时保留
-  BoxForge 的 `30s/60s` 调优，没有正显式带宽才补 `standard`。Gecko 保留包大小和密码，
-  QUIC/Realm 的未支持扩展仍拒绝，不会静默降级。
+  来源整数单位区分 bits/bytes；小数、`100 Kbps` 和溢出不会被截断为 Mbps。
+  显式 `hop-interval` 为整数秒或范围，范围按来源排序、最小值不低于 5 秒，
+  零值使用 `30s`；`20s` 不是来源合法输入。固定间隔不注入随机上限；缺失时
+  保留 BoxForge 的 `30s/60s` 调优，没有正显式带宽才补 `standard`。
+  Gecko 保留独立密码及包大小，0 等价于缺失，默认 `512/1200`，有效范围为
+  `1 <= min <= max <= 2048`，包大小仅可用于 Gecko。UDP MTU、握手超时、
+  QUIC receive-window、Realm 拓扑和 HY2 uTLS 没有精确映射，仍明确拒绝。
+- Shadowsocks UoT 使用对象形式：未指定版本或来源版本 0 使用 Mihomo 默认 v1，
+  v1 显式输出；v2 使用 sing-box 默认版本而省略 `version`。未启用时省略 UoT。
+  插件只接受 Mihomo 结构化选项，不接受原始 SIP003 字符串；输出值按 SIP003 转义。
+  `obfs` 的 HTTP/TLS 映射为 `obfs-local`，显式保留默认 host `bing.com`。
+  `v2ray-plugin` 仅支持 websocket、普通绝对路径、显式 `mux: false` 与可选标准 TLS；
+  自定义 header、证书、指纹和 HTTPUpgrade 等输入拒绝。来源没有 `network` 字段，
+  因此不能将该字段转换为目标网络限制。
 - 未支持的 transport/TLS 组合（见下节）、AnyTLS disable-reuse
   以及不能精确传递的 Shadowsocks 插件配置
   当前均 fail-fast；详见[来源语义与调优优先级](architecture.md#来源语义与调优优先级)。
@@ -166,13 +181,13 @@ mixed 入站在每次域名解析后重新检查 Tailscale `preferred_by`，因�
 
   DustinWin 同名文件共用 `{tag}.srs` 模板；MetaCubeX 的文件逐项声明。
   广告过滤使用 `ads`；Games 使用 `games`，覆盖范围由上游规则维护，
-  不再限于单一游戏平台。DustinWin 的 `ads` 来源于 anti-AD，`games` 明确排除
-  `games-cn`；两者的实际命中范围与迁移前的单项分类不同。
+  不限于单一游戏平台。DustinWin 的 `ads` 来源于 anti-AD，`games` 明确排除
+  `games-cn`；不能把上游分类名称当作具体域名覆盖范围的保证。
 - mixed inbound 的代理业务域名、国内域名和最终代理回退域名在路由前执行
   `resolve` + `ipv4_only`。全部 IPv6 使用原生 `ip_version: 6` 匹配，并在
   DIRECT、Tailscale 和所有代理业务路由之前被拒绝。
 - 未被前置 Tailscale、私网或 bootstrap 直连规则处理的 UDP 流量会同时嗅探
-  QUIC 和 STUN，并拒绝识别出的 STUN 协议；不再根据 3478、3479、19302 或
+  QUIC 和 STUN，并拒绝识别出的 STUN 协议；不根据 3478、3479、19302 或
   19303 等固定端口拒绝普通 UDP 流量。
 - AI、Google 和最终兜底的 UDP/443 拒绝规则写入 `no_drop: true`，持续返回拒绝
   响应以促使 QUIC 回退 TCP；STUN、广告和两道 IPv6 拒绝不启用该字段。
@@ -198,17 +213,27 @@ VLESS 支持省略/`tcp`、`ws`、受限基础 `grpc`；Trojan 支持省略/`tcp
 仍会失败。header 名称不是配置别名，不做连字符转换。嵌套未知字段会报告完整
 路径，例如 `ws-opts.future-field`；无法转换时 non-strict 也只会跳过整个节点。
 
+`client-fingerprint` / `client_fingerprint` 只接受等价支持的 `chrome`、`firefox`、
+`safari`、`ios`、`android`、`edge`、`360`、`qq`、`randomized`。空值或 `none`
+使用普通 TLS，不输出 `utls`；不主动填入指纹。经典版本（`chrome120`、
+`firefox120`、`safari16`）、`chrome_psk*` / `chrome_pq*` 历史别名及未知值明确拒绝，
+避免目标无法启动或静默变成现代 Chrome。`random` 也拒绝，因为两端选择范围和分布不同。
+对照来源为锁定的 [Mihomo 指纹实现](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/component/tls/utls.go)
+和 [sing-box 指纹实现](https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/common/tls/utls_client.go)。
+
 HTTP Host 按来源实际行为生成：无显式 Host 时，VLESS TLS 使用 server，
 Trojan 使用 SNI/server。VLESS WS 的 TLS SNI 在未指定 `sni`/`servername`
 时使用 headers.Host。这是来源默认行为的映射，不是 BoxForge tuning。
 无 TLS 的 VLESS WS 必须提供 Host，否则 Mihomo 随机 Host 无法等价表达。
 
-继续拒绝的 transport 输入：
+不支持的 transport 输入：
 
 - URL authority/scheme/query/fragment/percent-escape 路径，包括 `?ed=`；两端
-  URL 解析不同，本轮仅支持普通路径与显式 early-data 字段。
+  URL 解析不同，仅支持普通路径与显式 early-data 字段。
 - 列表/对象 header、大小写重复或无效 header、握手保留 header；active
-  early-data 不得覆盖 Host 或握手保留字段。
+  early-data 不得覆盖 Host 或握手保留字段。静态 `headers.Sec-WebSocket-Protocol`
+  拒绝：锁定核心会在第一次连接后删除该值；独立的 `early-data-header-name`
+  仍允许 `Sec-WebSocket-Protocol`，每次连接的 early-data 不受影响。
 - `v2ray-http-upgrade-fast-open: true`；HTTPUpgrade 与非零 early-data 或
   非空 early-data-header-name 的组合，目标没有等价字段。
 - 缺失/空 gRPC service-name、自定义完整 RPC path；`grpc-user-agent`、
@@ -216,8 +241,8 @@ Trojan 使用 SNI/server。VLESS WS 的 TLS SNI 在未指定 `sni`/`servername`
 - VLESS gRPC 显式 `sni`/`servername`：指定官方核心使用 grpc-lite，将 TLS
   server_name 拼成 `host:port` authority，而 Mihomo 对显式名称不加端口。
   目标没有独立 authority 字段，只接受来源默认 `server:port` authority。
-- **Trojan gRPC**：Mihomo 默认使用裸 SNI/server authority，grpc-lite 会增加端口。
-  经确认，本阶段保留拒绝，不为支持率接受这个差异。
+- **Trojan gRPC**：Mihomo 默认使用裸 SNI/server authority，grpc-lite 会增加端口，
+  无法保持来源语义。
 - Reality + WS/HTTPUpgrade：Mihomo WS 分支不应用 Reality，目标会应用。
   此组合经确认拒绝；Reality 仍可用于现有 TCP 和满足限制的 VLESS gRPC。
 - VLESS WS 或带 uTLS 的 Trojan WS/HTTPUpgrade 显式 ALPN 不等于
@@ -227,7 +252,7 @@ Trojan 使用 SNI/server。VLESS WS 的 TLS SNI 在未指定 `sni`/`servername`
   不同，单 path 也不能证明等价。H2/h2-opts 的非 TLS 模式在来源中使用 h2c，
   目标无 TLS 的 HTTP transport 却使用 HTTP/1；TLS 子集虽有相似 PUT framing，
   来源逐 stream 建立/关闭物理连接，目标复用 HTTP/2 连接，生命周期差异未获
-  精确映射与跨核心验证，因此继续拒绝。xHTTP 没有对应目标 transport，
+  精确映射与跨核心验证，因此拒绝。xHTTP 没有对应目标 transport，
   不近似转换为 HTTP/WS。
 
 TLS 仍拒绝 `fingerprint`、`name-cert-verify`、`certificate`/`private-key`，以及
@@ -238,7 +263,7 @@ ss-opts 也不支持。name-cert-verify 不能映射为改变 SNI 的 server_nam
 证书指纹的两端 hash 都可使用整张 DER 的 SHA-256，叶证书 pin 都替代普通
 CA/名称验证，而非叠加校验。但 Mihomo 还能匹配中间/根证书，并在该分支验证
 证书链和名称；目标 `certificate_sha256` 只匹配叶证书。仅凭源 hash 无法判断
-层级，所以本轮不生成该字段，也不进行未经证明的 hex→base64 转换。
+层级，所以不生成该字段，也不进行未经证明的 hex→base64 转换。
 
 ### 源码依据与验证边界
 
@@ -258,26 +283,9 @@ sing-box `1.15.0-alpha.8` / `b609f959f57ce34416c51c7b87ce4a76f2e1df56`。
   [grpc-lite](https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/transport/v2raygrpclite/client.go)、
   [leaf pin](https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/common/tls/std_client.go)。
 
-带 `with_grpc` 的非官方构建具有不同 authority 行为，不属于本轮验证范围。
-`Tests/BoxForge.Tests/Fixtures/transport.yaml` 使用虚构凭据，经过正式 YAML →
-engine → Android/Linux/Windows JSON 路径；测试断言实际字段值、嵌套拒绝、
-别名冲突、ALPN 与 uTLS/Reality 组合及 source-wins。原 tuning/DNS/route 不变。
-
-```bash
-dotnet run --project src/BoxForge.Cli -- generate \
-  --input-dir Tests/BoxForge.Tests/Fixtures \
-  --output-dir /tmp/boxforge-transport-output --platform all
-# 分别对 transport/{Android,Linux,Windows}/config.json 使用指定官方核心 check。
-node scripts/verify-transports.mjs /absolute/path/to/sing-box \
-  /tmp/boxforge-transport-output/transport/Linux/config.json
-```
-
-loopback 脚本检查版本/revision，提取真实生成节点，仅替换 loopback 地址/端口并
-信任临时证书，保留 transport、ALPN、SNI 和 tuning。它启动临时 sing-box
-server/client，验证 VLESS WS/gRPC/HTTPUpgrade 和 Trojan WS/HTTPUpgrade
-共五条 HTTP 响应链路，结束后清理进程和临时凭据。依赖 Node.js、OpenSSL、curl
-和指定 sing-box CLI；不启用 TUN、不访问外网。它不是 Mihomo↔sing-box 跨核心
-验证，也不能证明 Reality、所有 uTLS 指纹或真实服务器部署均兼容。
+带 `with_grpc` 的非官方构建具有不同 authority 行为，不属于当前资格验证范围。
+源码对照与本地 sing-box 回环提供不同层次的证据，均不能代替真实服务端和设备验证。
+完整命令、fixture 覆盖与历史 HTTPUpgrade 风险见[协议验证边界](protocol-validation.md)。
 
 ## sing-box API
 

@@ -235,6 +235,24 @@ public sealed class ServerExportApiTests
     }
 
     [Test]
+    public async Task RejectsMultipartWithoutFinalBoundary()
+    {
+        using HttpClient client = factory.CreateClient();
+        using var content = new StringContent(
+            "--test-boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"input.yaml\"\r\n\r\nprivate-upload-content");
+        content.Headers.ContentType = new MediaTypeHeaderValue("multipart/form-data");
+        content.Headers.ContentType.Parameters.Add(
+            new NameValueHeaderValue("boundary", "test-boundary"));
+
+        using HttpResponseMessage response = await client.PostAsync("/api/v1/export", content);
+
+        await AssertProblemAsync(response, HttpStatusCode.BadRequest);
+        string problem = await response.Content.ReadAsStringAsync();
+        Assert.That(problem, Does.Not.Contain("private-upload-content"));
+        Assert.That(problem, Does.Not.Contain("IOException"));
+    }
+
+    [Test]
     public async Task RejectsFileOverTwoMiB()
     {
         using HttpClient client = factory.CreateClient();

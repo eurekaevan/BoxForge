@@ -18,6 +18,8 @@ public static class TlsConfigHelper
         bool isReality = realityOptions != null;
 
         if (!forceTls && !isTls && !isReality) return null;
+        if (isReality && !forceTls && !isTls)
+            throw new NodeParseException("字段 'reality-opts' 要求显式启用 tls，不能隐式改变来源 TLS 设置");
 
         OutboundReality? realityConfig = null;
         if (realityOptions != null)
@@ -58,9 +60,18 @@ public static class TlsConfigHelper
         }
 
         string? fingerprint = supportsUtls
-            ? node.GetString("client-fingerprint")
-                ?? node.GetString("client_fingerprint")
+            ? node.GetRawString("client-fingerprint")
+                ?? node.GetRawString("client_fingerprint")
             : null;
+        Utls? utls = null;
+        if (fingerprint is not (null or "" or "none"))
+        {
+            if (!IsSupportedFingerprint(fingerprint))
+                throw new NodeParseException("字段 'client-fingerprint' 无法精确映射到目标核心；不支持旧版本、历史别名、random 或未知指纹");
+            utls = new Utls { Enabled = true, Fingerprint = fingerprint };
+        }
+        if (isReality && utls == null)
+            throw new NodeParseException("字段 'reality-opts' 要求有效的 client-fingerprint；空值或 none 不支持 Reality");
 
         return new OutboundTls
         {
@@ -70,16 +81,14 @@ public static class TlsConfigHelper
             Alpn = node.GetValue("alpn") is IEnumerable<object?> alpn
                 ? alpn.Cast<string>().ToList()
                 : null,
-            Utls = string.IsNullOrWhiteSpace(fingerprint)
-                ? null
-                : new Utls
-                {
-                    Enabled = true,
-                    Fingerprint = fingerprint
-                },
+            Utls = utls,
             Reality = realityConfig
         };
     }
+
+    internal static bool IsSupportedFingerprint(string fingerprint) =>
+        fingerprint is "chrome" or "firefox" or "safari" or "ios" or "android"
+            or "edge" or "360" or "qq" or "randomized";
 
     internal static string? ValidateAlpn(object? value) =>
         value is IEnumerable<object?> protocols

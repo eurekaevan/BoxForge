@@ -16,25 +16,22 @@ public sealed class ClashParser : IClashParser
         var deserializer = new DeserializerBuilder()
             .WithNamingConvention(HyphenatedNamingConvention.Instance)
             .WithDuplicateKeyChecking()
+            .WithMaximumRecursion(ClashObject.MaximumDepth)
             .IgnoreUnmatchedProperties()
             .Build();
 
         var rawConfig = deserializer.Deserialize<RawClashConfig>(yamlContent);
-        return rawConfig == null
-            ? null
-            : new ClashConfig
-            {
-                Proxies =
-                [
-                    .. rawConfig.Proxies.Select(proxy => new ClashProxyNode(proxy))
-                ]
-            };
+        if (rawConfig == null) return null;
+        var budget = new ClashObject.NormalizationBudget();
+        var proxies = new List<ClashProxyNode>(rawConfig.Proxies.Count);
+        foreach (Dictionary<string, object> proxy in rawConfig.Proxies)
+            proxies.Add(new ClashProxyNode(proxy, budget));
+        return new ClashConfig { Proxies = proxies };
     }
 
     private sealed record RawClashConfig
     {
         [YamlMember(Alias = "proxies")]
         public List<Dictionary<string, object>> Proxies { get; init; } = [];
-
     }
 }

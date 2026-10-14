@@ -28,7 +28,7 @@ BoxForge.Tests  ──→ BoxForge.Cli, BoxForge.Server, BoxForge.Core
 3. `LocalGenerationWorkflow` 将每个文件作为一个 `ConversionRequest` 交给
    `IBoxForgeEngine`。
 4. `BoxForgeEngine` 校验内存输入，调用 `ConversionService.Prepare` 解析
-   YAML（重复键会直接失败）、生成 `NodeCatalog` 和稳定 `cache_id`，然后按
+   YAML（重复键、循环引用及超限展开会直接失败）、生成 `NodeCatalog` 和稳定 `cache_id`，然后按
    Android、Linux、Windows 顺序调用 `ConversionService.Convert`。
 5. 对每个目标平台，`SingboxConfigBuilder` 组合 inbound、endpoint、outbound、
    DNS、route 和 experimental 配置。
@@ -37,6 +37,16 @@ BoxForge.Tests  ──→ BoxForge.Cli, BoxForge.Server, BoxForge.Core
    `ConversionBundle`。
 7. 本地产物先写入临时目录；所有输入和平台成功后，工作流才
    替换输出目录。
+
+## 不可信 YAML 的资源边界
+
+正常、无循环的 YAML anchor/alias 可以复用。解析与规范化最多支持 64 层递归，
+全部代理共用 100,000 个规范化值的预算，展开后的键和字符串文本合计最多 16 MiB UTF-8
+（包括 alias 的每次展开，所有代理共享同一预算）。文本上限避免少量大型 scalar
+经重复 alias 在缓存 ID 序列化时膨胀成巨量数据。
+映射和序列均按引用身份检查当前祖先链，循环引用在 schema 校验和缓存 ID 计算之前拒绝。
+这些失败由引擎包装为转换错误，API 返回 422；不会等待栈溢出或内存耗尽。
+限制不是可配置项；预算内的 scalar 值和无循环共享引用保持来源值。
 
 ## 目录职责
 
@@ -49,29 +59,12 @@ BoxForge.Tests  ──→ BoxForge.Cli, BoxForge.Server, BoxForge.Core
 
 ## HTTP API 边界
 
-- `GET /healthz` 只返回服务状态。
-- `POST /api/v1/convert` 将 JSON 请求映射为 `ConversionRequest`，并将
-  `ConversionBundle` 直接映射为响应；`content` 不会被再次序列化或格式化。
-  响应 `path` 使用与 ZIP 导出相同的配置名限长和路径字符校验。
-- `POST /api/v1/export` 只在内存中读取一个 YAML 上传，引擎完整
-  转换成功后，再按 Android、Linux、Windows 顺序构建 ZIP。
-  ZIP entry 路径由经过限长和路径字符校验的配置名与固定
-  平台目录组成，上传文件名不能控制完整 entry 路径。
-- `GET /` 和同源静态资源提供原生 HTML/CSS/JavaScript 上传页面，
-  没有外部 CDN、字体、统计或第三方脚本。
-- Server 不读写配置目录、不访问订阅 URL，不保存请求或结果，
-  且默认不启用 CORS。
-- 请求体上限为 4 MiB，`yaml` UTF-8 字节上限为 2 MiB。参数
-  错误返回 400，引擎的稳定转换失败返回 422，过大请求返回
-  413，未预期异常返回 500；错误响应不包含输入 YAML、节点信息
-  或异常堆栈。
-- Server 将 multipart 内存缓冲阈值设为请求上限，允许范围内的上传
-  不会溢出到临时文件。所有响应使用 `no-store`，并设置限制
-  外部资源的 CSP、`nosniff` 和 `no-referrer`。
-- 当前 API 没有鉴权、限流和 SSRF 防护，尚不应直接暴露到公网。
-
-完整的请求、响应、ZIP、大小限制和错误码契约见
-[HTTP API](http-api.md)。
+Server 将 JSON 或单个 YAML 上传映射为 `ConversionRequest`，只在引擎完整返回
+`ConversionBundle` 后构建响应或 ZIP。`content` 不会再次格式化，ZIP entry
+路径由经过跨平台校验的配置名与固定平台目录组成。
+Server 不访问订阅 URL、不保存输入或结果；上传缓冲和 ZIP 构建均在内存中，
+同源页面不加载外部脚本或统计资源。当前没有鉴权和限流，不应直接公开服务。
+请求、大小限制、错误契约和安全头的完整定义见[HTTP API](http-api.md)。
 
 ## 扩展代理协议
 
@@ -104,13 +97,8 @@ converter 拥有自己的字段声明；`NodeCatalogBuilder` 只负责选择 con
 
 引擎使用 strict conversion：任一不安全节点使整次转换失败，不返回部分配置。
 non-strict 调用则跳过整个节点并记录警告；不会删掉无法映射的字段后输出降级
-节点。当前支持 VLESS TCP/WS/受限基础 gRPC、Trojan TCP/WS、两者的
-无 fast-open HTTPUpgrade，以及 shared TLS ALPN。具体输入限制见
-[生成配置说明](generated-config.md#transport-与-shared-tls)。重点登记的 gap 包括
-Trojan gRPC、HTTP/H2/xHTTP、复杂 WS/gRPC 参数、TLS 证书校验扩展、
-Hysteria2 QUIC/Realm 扩展、AnyTLS disable-reuse，
-以及 Shadowsocks 的复杂插件语义。后续协议工作应把字段从
-`UnsupportedSemantic` 改为 `Mapped`，同时提供映射与反例测试。
+节点。后续协议工作应把字段从 `UnsupportedSemantic` 改为 `Mapped`，同时提供
+映射与反例测试，并重新核对锁定来源与目标核心的实际行为。
 
 `OutboundTuningPolicy` 在 converter 之后、生成配置之前，只用 `??` 填入
 缺失的 `connect_timeout`、桌面 TCP keepalive 和 Hysteria2 hop/BBR 值。
@@ -119,44 +107,19 @@ Hysteria2 QUIC/Realm 扩展、AnyTLS disable-reuse，
 HY2 hop/BBR 值优先于调优。显式固定间隔不会补入调优的随机上限；显式带宽
 启用时不会注入 BBR profile（显式 profile 仍保留，核心仅在 BBR 模式使用）。
 
-Hysteria2 带宽按当前 Mihomo 的整数单位语法解析，大小写区分 bits/bytes，
-只接受可精确表示为目标整数 Mbps 的速率；例如 `100 Kbps`、小数速率或溢出
-报错，不会截断为 Mbps。跳端口支持整数秒及整数范围，按源行为排序并应用
-最小 5 秒/零值 30 秒；`20s` 不是当前 Mihomo 的合法输入。
-Gecko 独立保留密码及包大小，0 等价于缺失，默认 512/1200，有效范围
-为 `1 <= min <= max <= 2048`，仅 gecko 可指定。目标没有等价字段的 UDP MTU、
-握手超时、源 QUIC receive-window 与 Realm 拓扑仍明确拒绝；HY2 uTLS 不支持。
+协议相关职责集中在现有模块，不在 CLI 或 Server 中重复转换：
 
-`V2RayTransport` 是独立的目标 JSON 多态模型，只注册已实现的 `ws`、
-`grpc`、`httpupgrade`；VLESS/Trojan 共享 `transport` 属性类型。
-`TransportConfigHelper` 负责两端语义转换，`TlsConfigHelper` 保留 source ALPN
-的顺序、重复项和值；模型不包含 Mihomo 字段，也不自带 transport tuning。
-无 transport 的 TCP 出站省略该属性，不生成虚假的 `type: tcp`。
-validator 只补充 BoxForge 的 model/必填映射值约束（`SB079`），目标 schema
-合法性仍由官方核心检查。
+| 模块 | 职责 |
+| --- | --- |
+| `Converters` / `SourceFieldSchemas` | 协议选择、来源字段声明、值与组合校验、目标映射 |
+| `TlsConfigHelper` / `TransportConfigHelper` | VLESS/Trojan 的共享 TLS、Reality 与 transport 映射 |
+| `Models/Singbox` | 目标 JSON 形状与已支持的多态类型，不携带来源字段或调优策略 |
+| `OutboundTuningPolicy` / `RouteTuningPolicy` | 仅对缺失值施加 BoxForge 调优 |
+| `SingboxJsonDefaults` | 校验后的无副作用输出投影，省略锁定核心的等价默认值 |
 
-Mihomo 的 [UoT 默认版本为 1](https://wiki.metacubex.one/en/config/proxies/ss/)，
-而 [sing-box 布尔形式默认版本为 2](https://sing-box.sagernet.org/configuration/shared/udp-over-tcp/)；
-因此生成对象形式的 `udp_over_tcp`：未指定版本或源版本 0 使用 1，
-版本 1 显式输出，版本 2 在内部保留、JSON 中使用核心默认而省略；关闭或未启用时省略。
-无效版本及重复别名在转换阶段拒绝。输出层的
-[默认值省略](generated-config.md#默认值省略) 不修改 planner/validator 使用的模型。
-Shadowsocks 插件选项必须为 Mihomo 对象，由插件专用 schema 和 mapper 翻译，
-不接受原始 SIP003 字符串或通用对象扁平化。`obfs` 的 http/tls 模式映射到
-`obfs-local`，显式物化源默认 host `bing.com`。`v2ray-plugin` 仅支持
-websocket、普通绝对路径、显式 `mux: false`、可选标准 TLS 的子集；自定义 headers、
-证书、指纹和 HTTPUpgrade 等无法精确表达的选项拒绝。SIP003 值按其语法转义。
-源 Shadowsocks 没有 network 字段，不能把该字段映射为目标网络限制。
-
-AnyTLS 的 timeout/check-interval 共用正 Go duration 解析器，数字按秒，校验
-int64 纳秒上限和亚纳秒零值；duration 文本的受支持子集限制为最多 128 字符，
-避免对不可信订阅进行无界大整数解析。保留已有 duration 扩展输入。Mihomo 原生字段为
-整数秒，两端会话库均将不超过 5 秒的维护间隔/超时恢复为 30 秒默认值。
-`min-idle-session` 保留非负整数（目标模型上限 int32），仅映射保留数量，
-不声称两端会话池的过期时间刷新算法完全一致。`client-metadata` 只接受字符串，
-原样保留空白、Unicode 与 `=`；拒绝 LF 和超过 65479 UTF-8 字节的值，以免
-注入 newline-delimited settings 或溢出 uint16 frame 长度。AnyTLS Reality 和
-目标未暴露的 disable-reuse 继续拒绝。
+各协议字段、拒绝组合和输出默认值以[生成配置约定](generated-config.md)为准；
+来源/目标核心版本、脚本使用方法和未验证路径以
+[协议验证边界](protocol-validation.md)为准。
 
 ## 确定性与替换边界
 
@@ -171,7 +134,7 @@ int64 纳秒上限和亚纳秒零值；duration 文本的受支持子集限制�
 策略和 IPv6 节点字面量外，还验证 early/post-resolve IPv6 reject guards 和首条
 无条件 AAAA 空 NOERROR；不能用缩窄到特定网络/域名的规则伪装全局 guard。
 DualStack 测试显式传入 policy，不要求上述 IPv4-only 限制；没有开启任何实际
-平台的 DualStack。Android 不再输出未实现的 strict_route，仍保留 TUN 捕获地址、
+平台的 DualStack。Android 不输出未实现的 strict_route，仍保留 TUN 捕获地址、
 AAAA 阻断及 IPv6 reject guards；本地静态验证不等于真机防逃逸抓包证明。
 
 - 输入文件按文件名排序，平台顺序固定为 Android、Linux、Windows。

@@ -16,7 +16,7 @@ public interface IConfigSerializer
 
 public sealed class ConfigSerializer : IConfigSerializer
 {
-    private readonly JsonSerializerOptions _jsonOptions = new()
+    private readonly JsonSerializerOptions jsonOptions = new()
     {
         WriteIndented = true,
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
@@ -26,7 +26,7 @@ public sealed class ConfigSerializer : IConfigSerializer
 
     public string Serialize(SingboxConfig config)
     {
-        return JsonSerializer.Serialize(SingboxJsonDefaults.NormalizeContext(config), _jsonOptions);
+        return JsonSerializer.Serialize(SingboxJsonDefaults.NormalizeContext(config), jsonOptions);
     }
 
     public string GetContentHash(string content)

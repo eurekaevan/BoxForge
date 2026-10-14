@@ -40,8 +40,8 @@ dotnet run --project src/BoxForge.Cli -- generate \
 dotnet run --project src/BoxForge.Cli -- generate
 ```
 
-如果当前目录是 `src/BoxForge.Cli`，仍可直接使用
-`dotnet run -- generate`。`generate` 及其所有参数、默认值和退出码保持不变。
+如果当前目录是 `src/BoxForge.Cli`，可直接使用
+`dotnet run -- generate`。
 
 | 选项 | 默认值 | 说明 |
 | --- | --- | --- |
@@ -86,7 +86,7 @@ curl --request POST http://127.0.0.1:5080/api/v1/convert \
 
 API 只接收配置名、Clash YAML 原文和目标平台，不读写本地配置
 目录，不接收订阅 URL，也不保存请求或结果。当前没有鉴权、限流
-和 SSRF 防护，因此尚不应直接暴露到公网。
+和完整的公网部署防护，因此不应直接暴露到公网。
 
 打开 `http://127.0.0.1:5080/` 可使用 Server 自带的上传页面。页面会将
 单个 `.yaml` 或 `.yml` 文件发送到同源的
@@ -132,6 +132,9 @@ singboxConfigs/
 
 ## 运行时配置
 
+以下 `BOXFORGE_` 环境开关同时适用于 CLI 和 HTTP Server；它们控制生成的
+sing-box 配置，不改变 BoxForge Server 自身的监听地址。
+
 Tailscale endpoint 默认在三个目标平台生成，并启用 `on_demand`。如需关闭
 Linux 和 Windows 的 Tailscale：
 
@@ -163,15 +166,20 @@ dotnet run --project src/BoxForge.Cli -- generate
 - [配置参考](docs/configuration.md)：所有环境变量、默认值与 Tailscale 行为
 - [生成配置约定](docs/generated-config.md)：平台差异、缓存、节点和 rule-set 行为
 - [DNS 与路由优先级](docs/routing-and-dns.md)：实际生成顺序和设计意图
+- [协议验证边界](docs/protocol-validation.md)：锁定核心、支持限制和可重复验证
 
 ## 开发与验证
 
 ```bash
 dotnet format BoxForge.slnx --verify-no-changes
-dotnet build BoxForge.slnx --warnaserror
+dotnet build BoxForge.slnx --no-incremental --warnaserror
 dotnet test BoxForge.slnx --no-build
 ```
 
 内置校验器负责 BoxForge 自身的生成约束，例如标签唯一性、引用完整性和
 必填字段。它不代替目标 sing-box 版本的官方检查；部署前应对产物另行执行
 `sing-box check -c <config.json>`。
+
+当前资格验证锁定官方 `1.15.0-alpha.8`，并将单元测试、官方配置检查、
+本地协议回环与真实设备/网络验证分开记录。完整命令和未验证路径见
+[协议验证边界](docs/protocol-validation.md)。

@@ -286,17 +286,17 @@ public sealed class RouteProfileBuilderTests
             .Where(item => item.Rule.Action == RouteRuleAction.Reject
                 && ContainsUdp443Condition(item.Rule))
             .ToList();
-        int geositeUdpDirectIndex = FindUdp443DirectIndex(route, "cn");
+        int domesticDomainUdpDirectIndex = FindUdp443DirectIndex(route, "cn");
         int udpResolveIndex = FindUdp443ResolveIndex(route);
-        int geoipUdpDirectIndex = FindUdp443DirectIndex(route, "cnip");
+        int domesticIpUdpDirectIndex = FindUdp443DirectIndex(route, "cnip");
         int foreignUdp443RejectIndex = route.Rules.FindIndex(rule =>
             rule.Action == RouteRuleAction.Reject
             && ContainsUdp443Condition(rule)
             && rule.RuleSet == null);
         int firstStandardServiceIndex = FindFirstStandardServiceIndex(route);
-        int geositeDirectIndex = FindRouteRuleIndex(route, "cn");
+        int domesticDomainDirectIndex = FindRouteRuleIndex(route, "cn");
         int resolveIndex = FindGeneralResolveIndex(route);
-        int geoipDirectIndex = FindRouteRuleIndex(route, "cnip");
+        int domesticIpDirectIndex = FindRouteRuleIndex(route, "cnip");
 
         Assert.That(udp443Rejects, Has.Count.EqualTo(3));
         RouteRule foreignUdp443Reject = route.Rules[foreignUdp443RejectIndex];
@@ -320,14 +320,14 @@ public sealed class RouteProfileBuilderTests
             Assert.That(
                 new[]
                 {
-                    geositeUdpDirectIndex,
+                    domesticDomainUdpDirectIndex,
                     udpResolveIndex,
-                    geoipUdpDirectIndex,
+                    domesticIpUdpDirectIndex,
                     foreignUdp443RejectIndex,
                     firstStandardServiceIndex,
-                    geositeDirectIndex,
+                    domesticDomainDirectIndex,
                     resolveIndex,
-                    geoipDirectIndex
+                    domesticIpDirectIndex
                 },
                 Is.Ordered.And.All.GreaterThanOrEqualTo(0));
         });
@@ -422,7 +422,7 @@ public sealed class RouteProfileBuilderTests
             && rule.IpIsPrivate == true
             && rule.Action == RouteRuleAction.Route
             && rule.Outbound == SingboxTags.DirectOutbound);
-        int geoipDirectIndex = FindRouteRuleIndex(route, "cnip");
+        int domesticIpDirectIndex = FindRouteRuleIndex(route, "cnip");
 
         Assert.That(
             new[]
@@ -430,7 +430,7 @@ public sealed class RouteProfileBuilderTests
                 earlyPrivateDirectIndex,
                 generalResolveIndex,
                 mixedPrivateDirectIndex,
-                geoipDirectIndex
+                domesticIpDirectIndex
             },
             Is.Ordered.And.All.GreaterThanOrEqualTo(0));
     }
@@ -511,17 +511,17 @@ public sealed class RouteProfileBuilderTests
             route,
             "ai");
         int googleRouteIndex = FindRouteRuleIndex(route, "google");
-        int geositeUdpDirectIndex = FindUdp443DirectIndex(route, "cn");
+        int domesticDomainUdpDirectIndex = FindUdp443DirectIndex(route, "cn");
         int udpResolveIndex = FindUdp443ResolveIndex(route);
-        int geoipUdpDirectIndex = FindUdp443DirectIndex(route, "cnip");
+        int domesticIpUdpDirectIndex = FindUdp443DirectIndex(route, "cnip");
         int foreignUdp443RejectIndex = route.Rules.FindIndex(rule =>
             rule.Action == RouteRuleAction.Reject
             && ContainsUdp443Condition(rule)
             && rule.RuleSet == null);
         int firstStandardServiceIndex = FindFirstStandardServiceIndex(route);
-        int geositeDirectIndex = FindRouteRuleIndex(route, "cn");
+        int domesticDomainDirectIndex = FindRouteRuleIndex(route, "cn");
         int resolveIndex = FindGeneralResolveIndex(route);
-        int geoipDirectIndex = FindRouteRuleIndex(route, "cnip");
+        int domesticIpDirectIndex = FindRouteRuleIndex(route, "cnip");
 
         Assert.That(
             new[]
@@ -533,14 +533,14 @@ public sealed class RouteProfileBuilderTests
                 googleUdp443RejectIndex,
                 aiRouteIndex,
                 googleRouteIndex,
-                geositeUdpDirectIndex,
+                domesticDomainUdpDirectIndex,
                 udpResolveIndex,
-                geoipUdpDirectIndex,
+                domesticIpUdpDirectIndex,
                 foreignUdp443RejectIndex,
                 firstStandardServiceIndex,
-                geositeDirectIndex,
+                domesticDomainDirectIndex,
                 resolveIndex,
-                geoipDirectIndex
+                domesticIpDirectIndex
             },
             Is.Ordered.And.All.GreaterThanOrEqualTo(0));
         RouteRule stunProtocolReject = route.Rules[stunProtocolRejectIndex];

@@ -51,7 +51,7 @@ IPv6 早期拒绝 → 广告拒绝 → IPv4-only 域名解析 → IPv6 兜底拒
 `cn` 可能与 Google 等业务 rule-set 相交。所有代理服务路由则必须
 位于后置 IPv6 拒绝之后，确保服务分流只处理 IPv4 目标。
 
-## DNS Architecture v2
+## DNS 分类与控制面解析
 
 `AddressFamilyPolicies` 为 Linux、Windows、Android 统一选择 `Ipv4Only`。
 它同时生成 `dns.strategy = ipv4_only`、最前面的全局 AAAA 空 `NOERROR`，
@@ -101,11 +101,19 @@ SERVFAIL 或 REFUSED 时在本 pool 终止，priority 和 CN 不会穿透到后�
 正常 TTL 缓存和容量 4096 的 reverse mapping 保留；optimistic 缓存超时为
 `6h`。控制平面解析和 Tailscale split DNS 禁用 optimistic 缓存。
 
+生成校验器检查 `dns.final`、DNS 规则的 `server` 和 `rule_set` 引用。
+DNS `preferred_by` 引用 DNS server，而不是路由 outbound/endpoint；当前
+模型只有 Tailscale DNS server 支持这种匹配，HTTPS DNS 不支持。
+`match_response` 必须引用同一规则列表中已出现的命名 `evaluate`，不允许
+向后引用、引用自身或重复定义响应标签。响应标签与 DNS server、rule-set
+标签使用独立命名空间，按大小写精确匹配。省略 `dns.final`（空字符串）仍
+采用 sing-box 的首个 DNS server 默认值；内置生成策略和规则顺序不变。
+
 上述规则依据 sing-box 1.15.0-alpha.8 的
 [DNS rule action](https://sing-box.sagernet.org/configuration/dns/rule_action/)、
 [DNS rule](https://sing-box.sagernet.org/configuration/dns/rule/) 和
 [route default_domain_resolver](https://sing-box.sagernet.org/configuration/route/)。
-本阶段不生成 `dns_server_address`、`dns_search_domain`、DHCP 或 local
+当前不生成 `dns_server_address`、`dns_search_domain`、DHCP 或 local
 resolver。
 
 [返回 README](../README.md)

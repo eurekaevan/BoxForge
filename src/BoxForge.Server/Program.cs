@@ -15,6 +15,7 @@ public sealed class Program
     public static WebApplication CreateApplication(string[] args)
     {
         WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
+        builder.Configuration.AddEnvironmentVariables(prefix: "BOXFORGE_");
         builder.WebHost.ConfigureKestrel(options =>
         {
             options.Limits.MaxRequestBodySize = ApiLimits.MaxRequestBodyBytes;

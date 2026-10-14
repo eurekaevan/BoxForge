@@ -124,7 +124,7 @@ internal static class TransportConfigHelper
             if (!IsHeaderName(name) || text.Any(character => char.IsAscii(character)
                     && char.IsControl(character) && character != '\t'))
                 return $"包含无效 HTTP header '{name}'";
-            if (IsHandshakeHeader(name))
+            if (IsHandshakeHeader(name) || name.Equals("Sec-WebSocket-Protocol", StringComparison.OrdinalIgnoreCase))
                 return $"包含握手保留 header '{name}'，两端覆盖行为不同";
             if (name.Equals("Host", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(text))
                 return "Host 必须是非空字符串";

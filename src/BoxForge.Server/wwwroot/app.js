@@ -33,14 +33,14 @@ for (const eventName of ["dragenter", "dragover"]) {
   });
 }
 
-for (const eventName of ["dragleave", "drop"]) {
-  dropZone.addEventListener(eventName, event => {
-    event.preventDefault();
-    dropZone.classList.remove("is-over");
-  });
-}
+dropZone.addEventListener("dragleave", event => {
+  event.preventDefault();
+  dropZone.classList.remove("is-over");
+});
 
 dropZone.addEventListener("drop", event => {
+  event.preventDefault();
+  dropZone.classList.remove("is-over");
   if (event.dataTransfer.files.length === 1) {
     fileInput.files = event.dataTransfer.files;
     updateFileNote();

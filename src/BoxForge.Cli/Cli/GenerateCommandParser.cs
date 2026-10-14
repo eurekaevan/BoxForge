@@ -117,9 +117,10 @@ public static class GenerateCommandParser
             return true;
         }
 
+        string platformName = value.Trim();
         foreach (TargetPlatform platform in AllPlatforms)
         {
-            if (string.Equals(value.Trim(), platform.ToString(), StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(platformName, platform.ToString(), StringComparison.OrdinalIgnoreCase))
             {
                 platforms = [platform];
                 return true;

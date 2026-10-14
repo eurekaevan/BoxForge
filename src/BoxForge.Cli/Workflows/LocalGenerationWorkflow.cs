@@ -331,20 +331,20 @@ public sealed partial class LocalGenerationWorkflow(
             return false;
         }
 
-        string[] stagedFiles = [.. Directory
+        var stagedFiles = Directory
             .EnumerateFiles(
                 stagingDirectory,
                 "*",
                 SearchOption.AllDirectories)
             .Select(path => Path.GetRelativePath(stagingDirectory, path))
-            .Order(PathComparer)];
-        string[] outputFiles = [.. Directory
+            .Order(PathComparer);
+        var outputFiles = Directory
             .EnumerateFiles(
                 outputDirectory,
                 "*",
                 SearchOption.AllDirectories)
             .Select(path => Path.GetRelativePath(outputDirectory, path))
-            .Order(PathComparer)];
+            .Order(PathComparer);
         return stagedFiles.SequenceEqual(
             outputFiles,
             PathComparer);

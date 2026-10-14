@@ -85,8 +85,9 @@ UTF-8 字节计算。产物固定按 Android、Linux、Windows 排序。
 
 `name`（含缺省时的文件名主干）遵循 JSON 端点相同的跨平台名称限制。
 文件必须使用有效 UTF-8，可以包含开头的 UTF-8 BOM。
-扩展名和上传 `Content-Type` 只用于初步约束，文件内容仍必须通过 BoxForge 的
-严格 YAML 解析和转换。其他表单字段会被拒绝。
+扩展名只用于初步约束，不依赖文件 part 声明的 `Content-Type` 判断内容。
+文件内容仍必须通过 BoxForge 的严格 YAML 解析和转换，包括
+[循环引用与资源限制](architecture.md#不可信-yaml-的资源边界)。其他表单字段会被拒绝。
 
 ```bash
 curl --request POST http://127.0.0.1:5080/api/v1/export \
@@ -131,13 +132,20 @@ Windows。每个 `config.json` 与引擎产物的 UTF-8 字节完全一致。
 | `500` | 未预期的服务器错误 |
 
 错误响应不包含 YAML、节点凭据、完整生成配置或异常堆栈。
+截断的 multipart（例如缺少结束边界）按无效请求返回 `400`，不作为内部错误；
+请求取消不转成输入错误，真正的服务器 I/O 故障仍返回 `500`。
+
+Server 读取与 CLI 相同的 `BOXFORGE_` 环境配置，包括 Tailscale 和可选 sing-box API
+开关；这是生成配置的开关，不改变 BoxForge HTTP Server 的监听地址。
+变量和默认值见[配置参考](configuration.md#配置表)。
 
 ## 状态与安全边界
 
 - Server 不将上传、请求或转换结果写入磁盘；multipart 内存
   缓冲阈值与 4 MiB 请求上限一致。
-- Server 不接收订阅 URL，不进行远程 fetch，不接入 GitHub、R2、
-  D1、Queue、数据库或账号系统。
+- Server 不接收订阅 URL，不进行远程 fetch，也不保存账号或转换历史。
+  生成配置中的 rule-set 和 Dashboard 下载由运行该配置的 sing-box 执行，
+  不属于 BoxForge Server 请求处理过程。
 - 上传内容、节点名和转换错误细节不写入 Server 日志。
 - 响应设置 `Cache-Control: no-store`、CSP、`X-Content-Type-Options:
   nosniff` 和 `Referrer-Policy: no-referrer`。

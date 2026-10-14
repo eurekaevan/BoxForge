@@ -8,6 +8,7 @@ using BoxForge.Exceptions;
 using BoxForge.Models;
 using BoxForge.Models.Singbox;
 using BoxForge.Services;
+using BoxForge.Parsers;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -26,6 +27,75 @@ public sealed class BoxForgeEngineTests
             cipher: aes-128-gcm
             password: test-only
         """;
+
+    [TestCase("metadata: &loop {next: *loop}")]
+    [TestCase("metadata: &loop [*loop]")]
+    [TestCase("metadata: &one {next: &two {next: *one}}")]
+    public void RejectsCyclicYamlGraphsAsConversionFailures(string metadata)
+    {
+        using ServiceProvider provider = CreateProvider();
+        var engine = provider.GetRequiredService<IBoxForgeEngine>();
+        var error = Assert.ThrowsAsync<BoxForgeConversionException>(async () =>
+            await engine.ConvertAsync(new ConversionRequest("cycle", ValidYaml + "\n    " + metadata,
+                [TargetPlatform.Android])));
+        Assert.That(error!.InnerException, Is.TypeOf<NodeParseException>());
+        Assert.That(error.InnerException!.Message, Does.Contain("循环引用"));
+    }
+
+    [Test]
+    public async Task PreservesOrdinarySharedYamlAnchors()
+    {
+        using ServiceProvider provider = CreateProvider();
+        var engine = provider.GetRequiredService<IBoxForgeEngine>();
+        string yaml = ValidYaml + "\n    metadata: {first: &shared {note: example}, second: *shared}";
+        ConversionBundle bundle = await engine.ConvertAsync(new ConversionRequest("shared", yaml,
+            [TargetPlatform.Android]));
+        Assert.That(bundle.Artifacts, Has.Count.EqualTo(1));
+    }
+
+    [Test]
+    public void YamlExpansionBudgetAppliesAcrossAllProxyNodes()
+    {
+        var yaml = new StringBuilder(ValidYaml).Append("\n    metadata:\n      a0: &a0 [x]");
+        for (int index = 1; index <= 14; index++)
+            yaml.Append($"\n      a{index}: &a{index} [*a{index - 1}, *a{index - 1}]");
+        var parser = new ClashParser();
+        Assert.That(parser.Parse(yaml.ToString())!.Proxies, Has.Count.EqualTo(1));
+        yaml.Append("\n  - name: second\n    metadata: *a14");
+        var error = Assert.Throws<NodeParseException>(() => parser.Parse(yaml.ToString()));
+        Assert.That(error!.Message, Does.Contain("100000"));
+    }
+
+    [Test]
+    public void YamlExpansionBudgetAlsoCountsEmptyProxyMappings()
+    {
+        string yaml = "proxies:\n  - &empty {}" + string.Concat(Enumerable.Repeat("\n  - *empty", 100_000));
+        var error = Assert.Throws<NodeParseException>(() => new ClashParser().Parse(yaml));
+        Assert.That(error!.Message, Does.Contain("100000"));
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void YamlExpansionBudgetAlsoBoundsRepeatedText(bool longKey)
+    {
+        string text = new('x', 1024 * 1024);
+        string shared = longKey ? $"{{'{text}': value}}" : $"{{key: '{text}'}}";
+        var yaml = new StringBuilder(ValidYaml).Append("\n    metadata:\n      a0: &shared ").Append(shared);
+        for (int index = 1; index <= 16; index++)
+            yaml.Append($"\n      a{index}: *shared");
+        var error = Assert.Throws<NodeParseException>(() => new ClashParser().Parse(yaml.ToString()));
+        Assert.That(error!.Message, Does.Contain("UTF-8 字节"));
+    }
+
+    [Test]
+    public void RejectsExcessiveYamlNestingWithoutTerminatingTheProcess()
+    {
+        using ServiceProvider provider = CreateProvider();
+        var engine = provider.GetRequiredService<IBoxForgeEngine>();
+        string yaml = ValidYaml + "\n    metadata: " + new string('[', 80) + "x" + new string(']', 80);
+        Assert.ThrowsAsync<BoxForgeConversionException>(async () =>
+            await engine.ConvertAsync(new ConversionRequest("deep", yaml, [TargetPlatform.Android])));
+    }
 
     [Test]
     public void StrictGenerationRejectsUnsupportedTransportBeforeBuildingArtifacts()

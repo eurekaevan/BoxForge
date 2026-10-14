@@ -76,6 +76,8 @@ public sealed class SemanticCoverageTests
                 CreateNode("vless", new Hashtable
                 {
                     ["name"] = "vless-reality",
+                    ["tls"] = true,
+                    ["client-fingerprint"] = "chrome",
                     ["reality-opts"] = new Hashtable
                     {
                         ["public-key"] = RealityPublicKey,
@@ -596,9 +598,6 @@ public sealed class SemanticCoverageTests
         Assert.That(result, Is.TypeOf<InvalidNode>());
     }
 
-    private static Hysteria2Outbound ConvertHysteria2(Hashtable fields) =>
-        (Hysteria2Outbound)((ConvertedNode)new Hysteria2Converter().Convert(CreateNode("hysteria2", fields))).Outbound;
-
     [TestCase("30", "30s")]
     [TestCase("1h30m", "1h30m")]
     [TestCase(".5s", ".5s")]
@@ -731,6 +730,9 @@ public sealed class SemanticCoverageTests
         Assert.That(outbound.Plugin, Is.Null);
         Assert.That(outbound.UdpOverTcp!.Version, Is.EqualTo(1));
     }
+
+    private static Hysteria2Outbound ConvertHysteria2(Hashtable fields) =>
+        (Hysteria2Outbound)((ConvertedNode)new Hysteria2Converter().Convert(CreateNode("hysteria2", fields))).Outbound;
 
     private static IProxyConverter Converter(string protocol) => protocol switch
     {

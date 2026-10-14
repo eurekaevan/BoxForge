@@ -61,11 +61,12 @@ public static class ProfilePlanner
         NodeCatalog nodes,
         List<SelectorOutbound> regionOutbounds)
     {
-        var groupOptions = regionOutbounds
-            .Select(outbound => outbound.Tag)
-            .ToList();
-        groupOptions.AddRange(nodes.Names);
-        groupOptions.Add(SingboxTags.DirectOutbound);
+        List<string> groupOptions =
+        [
+            .. regionOutbounds.Select(outbound => outbound.Tag),
+            .. nodes.Names,
+            SingboxTags.DirectOutbound
+        ];
 
         string fallbackSelection = regionOutbounds.Count > 0
             ? regionOutbounds[0].Tag
@@ -94,10 +95,13 @@ public static class ProfilePlanner
         IReadOnlyList<RegionInventory> inventory,
         IReadOnlyList<SelectorOutbound> regionOutbounds)
     {
-        var groupOptions = new List<string> { SingboxTags.MainProxyGroup };
-        groupOptions.AddRange(regionOutbounds.Select(outbound => outbound.Tag));
-        groupOptions.AddRange(nodes.Names);
-        groupOptions.Add(SingboxTags.DirectOutbound);
+        List<string> groupOptions =
+        [
+            SingboxTags.MainProxyGroup,
+            .. regionOutbounds.Select(outbound => outbound.Tag),
+            .. nodes.Names,
+            SingboxTags.DirectOutbound
+        ];
 
         var outbounds = new List<SelectorOutbound>();
         foreach (var service in ProfileDefinitions.Services)

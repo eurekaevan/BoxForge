@@ -4,6 +4,7 @@ using BoxForge.Exceptions;
 using BoxForge.Models;
 using BoxForge.Models.Singbox;
 using BoxForge.Configuration;
+using BoxForge.Helpers;
 
 namespace BoxForge.Services;
 
@@ -13,8 +14,8 @@ public interface ISingboxConfigValidator
 }
 
 /// <summary>
-/// Validates BoxForge-specific generation invariants that are not rejected by
-/// <c>sing-box check</c>. Structural and schema validation belongs to sing-box.
+/// Validates BoxForge generation constraints and reference integrity.
+/// This does not replace the target version's <c>sing-box check</c>.
 /// </summary>
 public sealed class SingboxConfigValidator : ISingboxConfigValidator
 {
@@ -28,7 +29,7 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
         ValidateOutbounds(config.Outbounds, context);
         ValidateInbounds(config.Inbounds, context.Diagnostics);
         ValidateDnsServers(config.Dns.Servers, context);
-        ValidateDnsRules(config.Dns.Rules, context);
+        ValidateDnsRules(config.Dns, context);
         ValidateRuleSets(config.Route.RuleSet, context);
         ValidateCacheFile(config.Experimental?.CacheFile, context.Diagnostics);
         ValidateRouteRules(config.Route.Rules, context);
@@ -419,6 +420,17 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
                 $"outbounds[{index}].tls.server_name",
                 "TLS server_name 不能为空。"));
         }
+        if (tls?.Utls is { Enabled: true } utls
+            && utls.Fingerprint != "" && !TlsConfigHelper.IsSupportedFingerprint(utls.Fingerprint))
+        {
+            diagnostics.Add(new ConfigDiagnostic("SB089", $"outbounds[{index}].tls.utls.fingerprint",
+                "uTLS 指纹不在 BoxForge 的等价映射支持范围内。"));
+        }
+        if (tls?.Reality is { Enabled: true } && (!tls.Enabled || tls.Utls?.Enabled != true))
+        {
+            diagnostics.Add(new ConfigDiagnostic("SB090", $"outbounds[{index}].tls.reality",
+                "Reality 必须启用 TLS 和有效的 uTLS。"));
+        }
     }
 
     private static void ValidateProtocolCredentials(
@@ -528,9 +540,20 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
     }
 
     private static void ValidateDnsRules(
-        List<DnsRule> rules,
+        DnsConfig dns,
         ValidationContext context)
     {
+        if (!string.IsNullOrEmpty(dns.Final))
+        {
+            ValidateReference(dns.Final, context.DnsTags, "SB084", "dns.final",
+                "引用了不存在的 DNS server。", context.Diagnostics);
+        }
+
+        var evaluatedTags = new HashSet<string>(StringComparer.Ordinal);
+        var preferredDomainTags = new HashSet<string>(
+            dns.Servers.OfType<TailscaleDnsServer>().Select(server => server.Tag!),
+            StringComparer.Ordinal);
+        List<DnsRule> rules = dns.Rules;
         for (var index = 0; index < rules.Count; index++)
         {
             DnsRule rule = rules[index];
@@ -551,6 +574,28 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
                 "引用了不存在的 DNS server。",
                 context.Diagnostics);
 
+            ValidateRuleSets(rule.RuleSet, context.RuleSetTags, $"{path}.rule_set", context.Diagnostics);
+            if (rule.PreferredBy != null)
+            {
+                for (var preferredIndex = 0; preferredIndex < rule.PreferredBy.Count; preferredIndex++)
+                {
+                    string reference = rule.PreferredBy[preferredIndex];
+                    string referencePath = $"{path}.preferred_by[{preferredIndex}]";
+                    ValidateReference(reference, context.DnsTags, "SB087", referencePath,
+                        "引用了不存在的 DNS server。", context.Diagnostics);
+                    if (context.DnsTags.Contains(reference) && !preferredDomainTags.Contains(reference))
+                    {
+                        context.Diagnostics.Add(new ConfigDiagnostic("SB088", referencePath,
+                            "DNS server 不支持 preferred_by 域名匹配。"));
+                    }
+                }
+            }
+
+            // A tagged response only exists after its evaluate rule, including for
+            // an evaluate rule that itself consumes an earlier response.
+            ValidateReference(rule.MatchResponse, evaluatedTags, "SB086", $"{path}.match_response",
+                "必须引用前置 evaluate 规则定义的响应标签。", context.Diagnostics);
+
             if (rule.Action == DnsRuleAction.Evaluate
                 && string.IsNullOrWhiteSpace(rule.Tag))
             {
@@ -558,6 +603,11 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
                     "SB027",
                     $"{path}.tag",
                     "evaluate 响应标签不能为空。"));
+            }
+            else if (rule.Action == DnsRuleAction.Evaluate && !evaluatedTags.Add(rule.Tag!))
+            {
+                context.Diagnostics.Add(new ConfigDiagnostic("SB085", $"{path}.tag",
+                    $"evaluate 响应标签 '{rule.Tag}' 重复。"));
             }
 
             if (rule.Action == DnsRuleAction.Predefined

@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
+using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -115,6 +117,107 @@ public sealed class ServerApiTests
                     "all/Windows/config.json"
                 }));
         });
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public async Task KestrelHonorsPrefixedEnvironmentAndRejectsTruncatedMultipart(bool tailscaleEnabled)
+    {
+        // Keep environment changes in a child process; they must not race the in-process API fixtures.
+        var startInfo = new ProcessStartInfo("dotnet")
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        startInfo.ArgumentList.Add("exec");
+        startInfo.ArgumentList.Add("--runtimeconfig");
+        startInfo.ArgumentList.Add(Path.Combine(TestContext.CurrentContext.TestDirectory, "BoxForge.Tests.runtimeconfig.json"));
+        startInfo.ArgumentList.Add("--depsfile");
+        startInfo.ArgumentList.Add(Path.Combine(TestContext.CurrentContext.TestDirectory, "BoxForge.Tests.deps.json"));
+        startInfo.ArgumentList.Add(typeof(ServerProgram).Assembly.Location);
+        startInfo.ArgumentList.Add("--urls");
+        startInfo.ArgumentList.Add("http://127.0.0.1:0");
+        foreach (string key in startInfo.Environment.Keys.ToArray())
+        {
+            if (key.StartsWith("BOXFORGE_", StringComparison.OrdinalIgnoreCase))
+            {
+                startInfo.Environment.Remove(key);
+            }
+        }
+
+        startInfo.Environment["BOXFORGE_Tailscale__Enabled"] = tailscaleEnabled.ToString();
+        startInfo.Environment["BOXFORGE_Tailscale__AndroidEnabled"] = tailscaleEnabled.ToString();
+        startInfo.Environment["BOXFORGE_SingboxApi__Enabled"] = (!tailscaleEnabled).ToString();
+        startInfo.Environment["Logging__LogLevel__Default"] = "Information";
+        startInfo.Environment["Logging__LogLevel__Microsoft.Hosting.Lifetime"] = "Information";
+        using var process = Process.Start(startInfo)!;
+        Task<string> errorTask = process.StandardError.ReadToEndAsync();
+        Task<string>? outputTask = null;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        try
+        {
+            const string listeningPrefix = "Now listening on: ";
+            string? line;
+            Uri? address = null;
+            while ((line = await process.StandardOutput.ReadLineAsync(timeout.Token)) != null)
+            {
+                int index = line.IndexOf(listeningPrefix, StringComparison.Ordinal);
+                if (index >= 0)
+                {
+                    address = new Uri(line[(index + listeningPrefix.Length)..].Trim());
+                    break;
+                }
+            }
+
+            Assert.That(address, Is.Not.Null, "Kestrel did not start.");
+            outputTask = process.StandardOutput.ReadToEndAsync();
+            using var client = new HttpClient { BaseAddress = address, Timeout = TimeSpan.FromSeconds(10) };
+            using HttpResponseMessage converted = await PostConversionAsync(
+                client, "environment", ValidYaml, ["Android", "Linux", "Windows"]);
+            Assert.That(converted.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            ApiConvertResponse result = (await converted.Content.ReadFromJsonAsync<ApiConvertResponse>())!;
+            Assert.That(result.Artifacts, Has.Count.EqualTo(3));
+            foreach (ApiArtifact artifact in result.Artifacts)
+            {
+                using JsonDocument config = JsonDocument.Parse(artifact.Content);
+                bool hasTailscale = config.RootElement.TryGetProperty("endpoints", out JsonElement endpoints)
+                    && endpoints.EnumerateArray().Any(endpoint => endpoint.GetProperty("type").GetString() == "tailscale");
+                bool hasApi = config.RootElement.TryGetProperty("services", out JsonElement services)
+                    && services.EnumerateArray().Any(service => service.GetProperty("type").GetString() == "api");
+                Assert.Multiple(() =>
+                {
+                    Assert.That(hasTailscale, Is.EqualTo(tailscaleEnabled), artifact.Platform);
+                    Assert.That(hasApi, Is.EqualTo(!tailscaleEnabled), artifact.Platform);
+                });
+            }
+
+            using HttpResponseMessage cyclic = await PostConversionAsync(client, "cycle",
+                ValidYaml + "\n    metadata: &cycle [*cycle]", ["Android"]);
+            await AssertProblemAsync(cyclic, HttpStatusCode.UnprocessableEntity);
+
+            using var content = new StringContent(
+                "--test-boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"input.yaml\"\r\n\r\nprivate-upload-content");
+            content.Headers.ContentType = new MediaTypeHeaderValue("multipart/form-data");
+            content.Headers.ContentType.Parameters.Add(new NameValueHeaderValue("boundary", "test-boundary"));
+            using HttpResponseMessage truncated = await client.PostAsync("/api/v1/export", content);
+            await AssertProblemAsync(truncated, HttpStatusCode.BadRequest);
+            Assert.That(await truncated.Content.ReadAsStringAsync(), Does.Not.Contain("private-upload-content"));
+        }
+        finally
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+
+            await process.WaitForExitAsync();
+            await errorTask;
+            if (outputTask != null)
+            {
+                await outputTask;
+            }
+        }
     }
 
     [Test]
