@@ -1,8 +1,16 @@
 # BoxForge
 
-BoxForge 用于将 Clash YAML 转换为 sing-box 1.15 `config.json`。
+BoxForge 从 Clash/Mihomo 节点定义生成适用于 Android、Linux 和 Windows 的
+sing-box 配置，内置明确的 DNS、路由与平台策略。
+
+BoxForge 不以完整复刻 Clash 配置为目标。它严格保留受支持且可安全映射的
+节点语义，并按 BoxForge 的 DNS、路由、平台和调优策略生成完整配置。
+输入使用 YAML 的 `proxies` 列表；来源的 `rules`、`proxy-groups` 等顶层
+配置不会被转换。支持范围与拒绝项见[协议验证边界](docs/protocol-validation.md)。
+
 CLI 会为 Windows、Android 和 Linux 批量生成平台化配置，并在
 整批成功后一次性替换输出目录；Server 则提供无状态的内存转换 API。
+两者共用同一个引擎与策略契约，分别服务自动化和 HTTP/Web 使用场景。
 
 ## 特性
 
@@ -22,6 +30,11 @@ CLI 会为 Windows、Android 和 Linux 批量生成平台化配置，并在
 - 提供最小化 ASP.NET Core HTTP API，请求和结果均不落盘
 
 ## 快速开始
+
+版本使用台北时区的日期 tag（`YYYY-MM-DD`，同日补发为 `.2`、`.3` 等）。
+发布流程提供 Linux x64 自包含 CLI 包、SHA-256 校验和及源码提交信息；
+下载安装、固定源码版本与升级检查见[版本与发布契约](docs/releases.md)。
+以下为源码运行方式。
 
 需要 .NET SDK 10.0。生成配置面向 sing-box 1.15 系列；当前最低要求为
 `1.15.0-alpha.1`，因为生成的 Tailscale endpoint 使用了该版本新增的
@@ -161,6 +174,7 @@ dotnet run --project src/BoxForge.Cli -- generate
 
 ## 文档
 
+- [版本与发布契约](docs/releases.md)：日期版本、兼容性与策略基线、发布和升级步骤
 - [架构与扩展](docs/architecture.md)：处理流程、目录职责、原子替换和校验边界
 - [HTTP API](docs/http-api.md)：JSON 转换、YAML/ZIP 导出、错误契约和安全边界
 - [配置参考](docs/configuration.md)：所有环境变量、默认值与 Tailscale 行为
