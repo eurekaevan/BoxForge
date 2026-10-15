@@ -78,7 +78,7 @@ jobs:
           ./boxforge generate --input-dir "$GITHUB_WORKSPACE/Tests/BoxForge.Tests/Fixtures" \
             --output-dir "$RUNNER_TEMP/package-output" --platform all
           diff -r "$RUNNER_TEMP/source-output" "$RUNNER_TEMP/package-output"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: boxforge-linux-x64
           path: dist/*
@@ -94,7 +94,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: boxforge-linux-x64
           path: dist
