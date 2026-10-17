@@ -22,7 +22,6 @@ public static class ReservedTagNames
             SingboxTags.ProxyGoogleDns,
             SingboxTags.ProxyCloudflareDns,
             SingboxTags.TunInbound,
-            SingboxTags.MixedInbound,
             SingboxTags.ApiService,
             HttpClientTags.RuleSetProxy,
             HttpClientTags.DashboardDirect,

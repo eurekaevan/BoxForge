@@ -11,11 +11,6 @@ public enum DnsResolverSelectionMode
 
 public static class DnsResolverSelectionPolicies
 {
-    public static DnsResolverSelectionMode For(TargetPlatform platform) => platform switch
-    {
-        TargetPlatform.Android => DnsResolverSelectionMode.SequentialFallback,
-        TargetPlatform.Linux or TargetPlatform.Windows =>
-            DnsResolverSelectionMode.ParallelFastest,
-        _ => throw new ArgumentOutOfRangeException(nameof(platform), platform, null)
-    };
+    public static DnsResolverSelectionMode For(TargetPlatform platform) =>
+        PlatformProfile.For(platform).DnsSelectionMode;
 }

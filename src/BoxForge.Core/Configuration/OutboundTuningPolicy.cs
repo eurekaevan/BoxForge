@@ -6,21 +6,20 @@ namespace BoxForge.Configuration;
 public static class OutboundTuningPolicy
 {
     private const string ConnectTimeout = "5s";
-    private const string DesktopTcpKeepAlive = "1m";
-    private const string DesktopTcpKeepAliveInterval = "30s";
     private const string Hysteria2HopInterval = "30s";
     private const string Hysteria2HopIntervalMax = "60s";
     private const string Hysteria2BbrProfile = "standard";
 
     public static ProxyOutbound Apply(ProxyOutbound outbound, TargetPlatform platform)
     {
+        PlatformProfile profile = PlatformProfile.For(platform);
         ProxyOutbound tuned = outbound with
         {
             ConnectTimeout = outbound.ConnectTimeout ?? ConnectTimeout,
             TcpKeepAlive = outbound.TcpKeepAlive
-                ?? (platform == TargetPlatform.Android ? null : DesktopTcpKeepAlive),
+                ?? profile.TcpKeepAlive,
             TcpKeepAliveInterval = outbound.TcpKeepAliveInterval
-                ?? (platform == TargetPlatform.Android ? null : DesktopTcpKeepAliveInterval)
+                ?? profile.TcpKeepAliveInterval
         };
 
         return tuned is Hysteria2Outbound hysteria2

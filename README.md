@@ -18,8 +18,8 @@ CLI 会为 Windows、Android 和 Linux 批量生成平台化配置，并在
 - 自动生成地区 URLTest AUTO、人工 selector、DNS、路由规则和远程 rule-set
 - 全局 DNS 与域名解析只使用 IPv4，所有 AAAA 查询返回空 `NOERROR`
 - TUN 保留仅用于捕获的 IPv6 地址，并在 sniff 前拒绝全部 IPv6；解析后另有兜底拒绝，防止硬编码地址、缓存和内置 DoH 逃逸
-- Linux/Windows 为 sniff 前快路径及 sniff 后 UDP 国内直连提供 `bridge` L3
-  forwarding，Linux 优先使用 `auto_redirect` kernel-level `bypass`
+- Linux 为 sniff 前快路径及 sniff 后 UDP 国内直连提供 `bridge` L3
+  forwarding，并优先使用 `auto_redirect` kernel-level `bypass`；Windows 使用普通 DIRECT
 - 默认生成 sing-box 内置 Tailscale endpoint，支持按需连接、MagicDNS、子网路由和 Taildrop
 - 可选仅监听本机的 sing-box API 与 Dashboard，默认不生成
 - 提供不依赖文件系统的 `IBoxForgeEngine` 内存转换边界

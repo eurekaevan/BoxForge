@@ -7,6 +7,7 @@ namespace BoxForge.Builders.Components;
 
 public sealed class DnsProfileBuilder(IOptions<TailscaleOptions> tailscaleOptions)
 {
+    private const string SequentialPrimaryTimeout = "2s";
     private readonly TailscaleOptions tailscale = tailscaleOptions.Value;
 
     public DnsConfig Build(TargetPlatform platform) => Build(platform, AddressFamilyPolicies.For(platform));
@@ -61,7 +62,6 @@ public sealed class DnsProfileBuilder(IOptions<TailscaleOptions> tailscaleOption
         List<string> priorityRuleSets =
         [
             .. ProfileDefinitions.Services
-                .Where(service => service.PrecedesDomesticRoutes)
                 .SelectMany(service => service.RuleSets)
                 .Distinct(StringComparer.Ordinal)
         ];
@@ -133,7 +133,7 @@ public sealed class DnsProfileBuilder(IOptions<TailscaleOptions> tailscaleOption
         List<DnsRule> rules,
         ResolverPoolDefinition pool)
     {
-        AddEvaluate(rules, pool, primary: true, timeout: "2s");
+        AddEvaluate(rules, pool, primary: true, timeout: SequentialPrimaryTimeout);
         AddAcceptedResponses(rules, pool, pool.PrimaryResponse);
         AddEvaluate(rules, pool, primary: false);
         AddAcceptedResponses(rules, pool, pool.SecondaryResponse);

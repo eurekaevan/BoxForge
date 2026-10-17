@@ -1,6 +1,5 @@
 using BoxForge.Builders.Components;
 using BoxForge.Configuration;
-using BoxForge.Models;
 using BoxForge.Models.Singbox;
 
 namespace BoxForge.Builders;
@@ -18,6 +17,7 @@ public sealed class SingboxConfigBuilder(
 {
     public SingboxConfig Build(SingboxBuildRequest request)
     {
+        PlatformProfile platform = PlatformProfile.For(request.Platform);
         var profiles = ProfilePlanner.Plan(request.Nodes);
         var endpoints = tailscaleEndpointBuilder.Build(request.Platform);
         var services = singboxApiServiceBuilder.Build();
@@ -48,13 +48,12 @@ public sealed class SingboxConfigBuilder(
         [
             profiles.MainOutbound,
             .. profiles.RegionOutbounds,
-            .. profiles.RegionAutoOutbounds.Select(outbound => request.Platform == TargetPlatform.Android
-                ? outbound
-                : outbound with { Interval = "1m" }),
+            .. profiles.RegionAutoOutbounds.Select(outbound =>
+                outbound with { Interval = platform.UrlTestInterval }),
             .. profiles.ServiceOutbounds,
             .. request.Nodes.Outbounds.Select(outbound => OutboundTuningPolicy.Apply(outbound, request.Platform))
         ];
-        if (request.Platform != TargetPlatform.Android)
+        if (platform.UseDirectForwarding)
         {
             orderedOutbounds.Add(new BridgeOutbound
             {

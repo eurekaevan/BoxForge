@@ -11,12 +11,8 @@ public enum AddressFamilyPolicy
 
 public static class AddressFamilyPolicies
 {
-    public static AddressFamilyPolicy For(TargetPlatform platform) => platform switch
-    {
-        TargetPlatform.Linux or TargetPlatform.Windows or TargetPlatform.Android =>
-            AddressFamilyPolicy.Ipv4Only,
-        _ => throw new ArgumentOutOfRangeException(nameof(platform), platform, null)
-    };
+    public static AddressFamilyPolicy For(TargetPlatform platform) =>
+        PlatformProfile.For(platform).AddressFamily;
 
     public static DnsStrategy? ToDnsStrategy(this AddressFamilyPolicy policy) => policy switch
     {

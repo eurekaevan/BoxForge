@@ -7,55 +7,53 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
 
 `RouteProfileBuilder` 按以下顺序生成顶层规则：
 
-非 Android 平台使用显式阶段扩展 `DIRECT` 规则。私网地址和 `223.5.5.5` 在
+仅 Linux 使用显式阶段扩展 `DIRECT` 规则。私网地址和 `223.5.5.5` 在
 首个 `sniff` 前加入 `bridge-out` L3 forwarding；Linux 还先尝试
 `auto_redirect` kernel-level `bypass`。需要嗅探或后续优先级才能判定的国内
 直连规则保持原位，只在 UDP sniff 后加入 `tun-in` + UDP 限定的 bridge/bypass
-伴随规则。每条原 `DIRECT` 都保留为回退，仅针对 `mixed-in` 的直连规则不扩展。
+伴随规则。每条原 `DIRECT` 都保留为回退。
 
-1. 劫持 TUN 和 mixed inbound 的 DNS 流量。
+1. 劫持 TUN inbound 的 DNS 流量。
 2. 以 `ip_version: 6` 在 Pre-match 阶段拒绝全部 IPv6，包括私网、Tailscale
    和国内 IPv6；这条规则位于任何 DIRECT、bridge 或 bypass 之前。
 3. 启用 Tailscale 时，路由 Tailscale endpoint 声明为首选的 IPv4 目标。
 4. 直连私网地址和 DoH bootstrap 的 IPv4 地址。
 5. 对未被上述 IPv6 总闸门处理的流量，分别嗅探 TCP HTTP/TLS 与 UDP QUIC/STUN。
+   TCP 跳过常见 FTP、SSH、MySQL、VNC 端口 `21/22/3306/5900`，这些连接继续
+   执行后续路由规则，不提前直连或放行。其余端口（含 `8080/8443`）保留嗅探；
+   UDP 嗅探范围不变。
 6. 拒绝识别出的 STUN 协议，然后拒绝 `ads`。
-7. mixed inbound 对所有代理服务域名和国内域名执行 `resolve` + `ipv4_only`；
-   每次解析后立即复检 Tailscale `preferred_by`，保证域名形式的通告子网目标也走 tailnet。
-8. 按服务定义顺序拒绝 AI、Google 的 UDP/443，促使 QUIC 回退 TCP；这两条及
+7. 按服务定义顺序拒绝 AI、Google 的 UDP/443，促使 QUIC 回退 TCP；这两条及
    后续 UDP/443 兜底拒绝均设置 `no_drop: true`，不因触发频率切换为静默丢弃。
-9. 再次通过后置 `ip_version: 6` 拒绝 IPv6，覆盖 mixed/domain 解析等非
-   Pre-match 路径。
-10. 将 AI 路由到 `AI`，再将 Google 路由到 `Google`。它们位于后置 IPv6
+8. 再次通过后置 `ip_version: 6` 拒绝 IPv6，保留服务路由前的兜底防护。
+9. 将 AI 路由到 `AI`，再将 Google 路由到 `Google`。它们位于后置 IPv6
    拒绝规则之后，因此 IPv6 地址不会进入代理出站。
-11. 放行国内域名的 UDP/443；mixed inbound 先以 `ipv4_only` 解析目标、复检 Tailscale 后再放行 `cnip`，
-   其他 UDP/443 全部拒绝。
-12. 生成其他服务分流，当前为 Spotify、Games 和 Microsoft。
-13. 直连 `cn`；mixed inbound 对剩余目标执行
-    `resolve` + `ipv4_only`，解析后先复检 Tailscale 通告路由，未命中时再直连私网地址，
-    然后按 `cnip` 直连。Tailscale 关闭时不生成这些复检规则。
-14. 未命中规则的流量使用主代理组。
+10. 放行国内域名和 `cnip` 的 UDP/443，其他 UDP/443 全部拒绝。
+11. 生成其他服务分流，当前为 Spotify、Games 和 Microsoft。
+12. 按 `cn`、`cnip` 顺序直连国内目标。
+13. 未命中规则的流量使用主代理组。
 
-第 11、13 步中的国内 `DIRECT` 在 Linux/Windows 会紧邻原规则之前生成 L3
-伴随规则：Windows 为 bridge，Linux 为 bypass 后接 bridge。伴随规则仅匹配
+第 10、12 步中的国内 `DIRECT` 在 Linux 会紧邻原规则之前生成 L3
+伴随规则：bypass 后接 bridge。伴随规则仅匹配
 `tun-in` UDP，原规则的 rule-set、端口与服务顺序条件不变；TCP 在 sniff
-后不会尝试这些 L3 层，仍由原 `DIRECT` 处理。Android 不生成伴随规则。
+后不会尝试这些 L3 层，仍由原 `DIRECT` 处理。Windows 和 Android 不生成伴随规则，使用原有 `DIRECT`。
+
+全平台仅生成 TUN inbound；不再生成 mixed 入口、其专用的域名 `resolve`、
+解析后 Tailscale 复检或私网回退规则。TUN 原有的路由顺序保持不变。
 
 对业务分流而言，核心优先级是：
 
 ```text
-IPv6 早期拒绝 → 广告拒绝 → IPv4-only 域名解析 → IPv6 兜底拒绝 → 代理服务 → 国内 IPv4 → 最终代理
+IPv6 早期拒绝 → 广告拒绝 → IPv6 兜底拒绝 → 代理服务 → 国内 IPv4 → 最终代理
 ```
 
-代理服务的 `ipv4_only` 解析规则必须位于国内域名解析之前，因为
-`cn` 可能与 Google 等业务 rule-set 相交。所有代理服务路由则必须
-位于后置 IPv6 拒绝之后，确保服务分流只处理 IPv4 目标。
+所有代理服务路由位于后置 IPv6 拒绝之后，确保服务分流只处理 IPv4 目标。
 
 ## DNS 分类与控制面解析
 
 `AddressFamilyPolicies` 为 Linux、Windows、Android 统一选择 `Ipv4Only`。
 它同时生成 `dns.strategy = ipv4_only`、最前面的全局 AAAA 空 `NOERROR`，
-以及 route 的早期和解析后 IPv6 reject。保留 `DualStack` 策略入口，但当前
+以及 route 的早期和后置 IPv6 reject。保留 `DualStack` 策略入口，但当前
 没有平台使用它。路由 reject 仍覆盖字面量 IPv6 和不经 sing-box DNS 的连接。
 
 控制平面域名由 `route.default_domain_resolver` 解析：直连
@@ -69,10 +67,14 @@ client DNS 依次分类：
 2. 启用 Tailscale 时，`preferred_by` 命中的 MagicDNS 和 split DNS 交给
    `dns-tailscale`，禁用 optimistic 缓存。
 3. `ads` 返回 `NXDOMAIN`。
-4. 从 `ProfileDefinitions.Services` 中所有 `PrecedesDomesticRoutes` 服务导出
-   rule-set；当前 AI 和 Google 进入 GLOBAL pool，优先于 `cn`。
+4. 从 `ProfileDefinitions.Services` 中所有服务导出 rule-set；AI、Google、
+   Spotify、Games 和 Microsoft 进入 GLOBAL pool，优先于 `cn`。
+   与服务同时命中 `cn` 的域名也使用代理 DNS，保持与普通业务路由的服务优先级一致。
 5. `cn` 进入 DOMESTIC pool。
 6. 其余查询进入 GLOBAL pool。
+
+`PrecedesDomesticRoutes` 仅控制路由中服务与国内 UDP/443 特例的相对顺序，
+不再用于筛选 DNS 服务分类。国内 UDP/443 的原有直连特例保持不变。
 
 ## Resolver pool 响应语义
 

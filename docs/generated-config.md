@@ -46,18 +46,26 @@ optimistic `6h` 等非默认策略继续显式输出。Linux/Windows 的 DNS A �
 
 ## 平台差异
 
-每个平台都包含一个 TUN inbound 和一个仅监听 `127.0.0.1:8848` 的 mixed inbound。
+平台默认值集中在不可变的 `PlatformProfile`：Mobile 用于 Android，Desktop
+共享 Windows/Linux 默认值，再覆盖 Linux 转发能力和各平台 Taildrop 路径。
+现有 `TargetPlatform` 调用入口不变，不新增 CLI 或环境变量选项。
+用户显式提供的节点参数优先于平台调优默认值，Tailscale 启用状态仍由
+`TailscaleOptions` 的桌面与 Android 独立开关控制；显式地址族请求也不会被预设覆盖。
+DNS 顺序回退的首选 `2s` 预算属于算法常量，不是 Mobile 的全局 DNS 超时。
+
+每个平台都只生成一个 TUN inbound，不再提供本地 SOCKS/HTTP mixed 入口。
+原先显式使用 `127.0.0.1:8848` 的客户端须改为通过 TUN 联网。
 TUN 固定启用 `auto_route`，DNS 模式使用核心默认的 `hijack`，不输出 `dns_mode`。
 `strict_route` 仅在 Linux/Windows 显式启用；指定版本 Android feature matrix
-标记该能力未实现，因此省略。`mixed-in` 供显式配置的 SOCKS/HTTP 客户端使用，
-但不生成 `set_system_proxy` 或 `platform.http_proxy`，因此不会由
+标记该能力未实现，因此省略。不生成 `set_system_proxy` 或
+`platform.http_proxy`，因此不会由
 sing-box 自动修改系统 HTTP 代理设置。
 
 | 平台 | 差异 |
 | --- | --- |
 | Android | 不为代理出站写入 TCP keepalive |
 | Linux | `auto_redirect: true`、`multi_queue: true`；生成 `bridge-out` L3 直连和 kernel-level `bypass`；代理出站使用 `tcp_keep_alive: 1m` 和 `tcp_keep_alive_interval: 30s`；地区 AUTO 探测周期 `1m` |
-| Windows | 生成 `bridge-out` L3 直连；代理出站使用 `tcp_keep_alive: 1m` 和 `tcp_keep_alive_interval: 30s`；地区 AUTO 探测周期 `1m` |
+| Windows | 不生成 bridge 或 bypass，直连使用 `DIRECT`；代理出站使用 `tcp_keep_alive: 1m` 和 `tcp_keep_alive_interval: 30s`；地区 AUTO 探测周期 `1m` |
 
 三个平台均不生成已弃用的 `stack`，由 sing-box 1.15 使用 sing-tun 自有 TCP/IP
 栈；也不生成 `mtu`，由 sing-box 按目标平台和运行环境采用默认值。
@@ -65,7 +73,7 @@ Linux 显式启用 `multi_queue: true`，允许自有栈通过 TUN 多队列并�
 Windows/Android 省略该字段。实际吞吐收益尚未验证，可按
 [对照实验](protocol-validation.md#linux-tun-多队列对照)方法测量。
 
-Linux 和 Windows 额外生成 sing-box 1.15 `bridge` outbound，并按规则可判定的
+仅 Linux 额外生成 sing-box 1.15 `bridge` outbound，并按规则可判定的
 阶段生成两类 L3 forwarding 层：
 
 - 私网地址和 `223.5.5.5` 在首个 `sniff` 之前预匹配；原 `DIRECT` 前增加带
@@ -76,25 +84,24 @@ Linux 和 Windows 额外生成 sing-box 1.15 `bridge` outbound，并按规则可
 
 TUN 仍配置 `fd00::1/126`，但它只用于让操作系统把 IPv6 流量送入 sing-box，
 不是 IPv6 连通能力。DNS 劫持之后立即生成全局 `ip_version: 6` 拒绝，在任何
-DIRECT、Tailscale、bridge、bypass 或 sniff 之前终止 IPv6。解析阶段之后再生成
-同样的兜底拒绝，覆盖 mixed/domain 等无法在 Pre-match 阶段判定的路径。
+DIRECT、Tailscale、bridge、bypass 或 sniff 之前终止 IPv6。服务分流之前再生成
+同样的兜底拒绝，保留后置 IPv6 防护。
 
 Linux 在每条上述 L3 route 之前再生成无 `outbound` 的 `bypass` 动作，使
 `auto_redirect` 流量在相同条件下从内核层直接绕过 sing-box；该动作在其他
 上下文会被跳过。每条原 `DIRECT` 都原位保留作为 correctness fallback，覆盖
-TCP 和 UDP 无法完成 sniff 等不能使用 L3 forwarding 的情况。仅属于 `mixed-in`
-的规则不参与 L3/bypass 扩展，loopback mixed 入站与 DIRECT 分流范围保持不变。
+TCP 和 UDP 无法完成 sniff 等不能使用 L3 forwarding 的情况。
 
-`bridge` 需要系统权限；Windows 依赖 WinDivert，Linux 的 `bypass` 依赖已启用的
-`auto_redirect`。Android 不生成这些字段。
+Linux 的 `bridge` 需要系统权限，`bypass` 依赖已启用的 `auto_redirect`。
+Windows 和 Android 不生成这些转发层；Windows 不再通过生成配置启用 bridge/WinDivert。
 
 三个平台默认生成 Tailscale endpoint，并启用 `on_demand: true`。启用时，
 `taildrop_directory` 始终按目标平台生成：Android 使用
 SFA 工作目录下的 `Taildrop`，Windows 使用
 `$USERPROFILE\Downloads\Taildrop`，Linux 使用 `$HOME/Downloads/Taildrop`。环境
 变量由目标机器上的 sing-box 在运行时展开。
-mixed 入站在每次域名解析后重新检查 Tailscale `preferred_by`，因此解析到 tailnet
-通告子网的域名优先走 Tailscale；未命中的私网地址仍按原策略走 DIRECT。
+TUN 的 Tailscale `preferred_by` 路由位于私网直连之前，保证通告子网优先走
+Tailscale；未命中的私网地址仍按原策略走 DIRECT。
 
 ## DNS 与持久化缓存
 
@@ -189,9 +196,13 @@ mixed 入站在每次域名解析后重新检查 Tailscale `preferred_by`，因�
   广告过滤使用 `ads`；Games 使用 `games`，覆盖范围由上游规则维护，
   不限于单一游戏平台。DustinWin 的 `ads` 来源于 anti-AD，`games` 明确排除
   `games-cn`；不能把上游分类名称当作具体域名覆盖范围的保证。
-- mixed inbound 的代理业务域名、国内域名和最终代理回退域名在路由前执行
-  `resolve` + `ipv4_only`。全部 IPv6 使用原生 `ip_version: 6` 匹配，并在
-  DIRECT、Tailscale 和所有代理业务路由之前被拒绝。
+- 全部 IPv6 使用原生 `ip_version: 6` 匹配，并在 DIRECT、Tailscale 和所有
+  代理业务路由之前被拒绝。不生成仅供 mixed 域名目标使用的 `resolve` 和复检规则。
+- TCP HTTP/TLS 嗅探排除 `21/22/3306/5900`，避免这些端口上客户端等待服务器
+  先发数据时产生嗅探超时等待；排除只作用于 sniff，不跳过任何后续分流或拒绝规则。
+  其他端口继续使用 `300ms` 嗅探预算，保留 `8080/8443` 等非标准 Web 端口的
+  域名识别能力。自定义端口上的静默客户端仍可能等待超时；将 Web 服务部署到
+  上述排除端口时，只能依靠 DNS 映射等已有信息进行域名分流。
 - 未被前置 Tailscale、私网或 bootstrap 直连规则处理的 UDP 流量会同时嗅探
   QUIC 和 STUN，并拒绝识别出的 STUN 协议；不根据 3478、3479、19302 或
   19303 等固定端口拒绝普通 UDP 流量。

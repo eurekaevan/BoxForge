@@ -206,7 +206,7 @@ public sealed class TransportMappingTests
             ["client-fingerprint"] = "chrome",
             ["reality-opts"] = new Hashtable { ["public-key"] = PublicKey, ["short-id"] = "00" }
         }) with
-        { ConnectTimeout = "9s", TcpKeepAlive = "2m" };
+        { ConnectTimeout = "9s", TcpKeepAlive = "2m", TcpKeepAliveInterval = "15s" };
         foreach (TargetPlatform platform in Enum.GetValues<TargetPlatform>())
         {
             JsonElement tuned = Serialize(OutboundTuningPolicy.Apply(source, platform));
@@ -218,6 +218,7 @@ public sealed class TransportMappingTests
                 Assert.That(tuned.GetProperty("transport").GetProperty("service_name").GetString(), Is.EqualTo("example"));
                 Assert.That(tuned.GetProperty("connect_timeout").GetString(), Is.EqualTo("9s"));
                 Assert.That(tuned.GetProperty("tcp_keep_alive").GetString(), Is.EqualTo("2m"));
+                Assert.That(tuned.GetProperty("tcp_keep_alive_interval").GetString(), Is.EqualTo("15s"));
             });
         }
     }

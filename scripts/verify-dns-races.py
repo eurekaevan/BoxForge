@@ -142,10 +142,13 @@ async def main(core, generated):
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as reservation:
             reservation.bind(("127.0.0.1", 0))
             port = reservation.getsockname()[1]
+        overlap_services = ("spotify", "games", "microsoft")
         rule_sets = [{"type": "inline", "tag": tag,
                       "rules": [{"domain_suffix": [f"{tag}.test"]
-                                 + (["overlap.test"] if tag in ("google", "cn") else [])}]}
-                     for tag in ("ads", "ai", "google", "cn")]
+                                 + (["overlap.test"] if tag in ("google", "cn") else [])
+                                 + [f"{service}-overlap.test" for service in overlap_services
+                                    if tag in (service, "cn")]}]}
+                     for tag in ("ads", "ai", "google", *overlap_services, "cn")]
         config = {"log": {"level": "debug"}, "dns": dns,
                   "inbounds": [{"type": "direct", "tag": "dns-test", "listen": "127.0.0.1",
                                 "listen_port": port, "network": "udp"}],
@@ -212,6 +215,11 @@ async def main(core, generated):
             ("svcb-nodata", "google", "empty", "empty", .03, .25, 64, 0, 0),
             ("mx-nodata", "google", "empty", "empty", .03, .25, 15, 0, 0),
         ]
+        for service in overlap_services:
+            cases.extend([
+                (f"{service}-cn-overlap", f"{service}-overlap", "a", "a", .03, .05, 1, 0, 1),
+                (f"{service}-cn-overlap-failure", f"{service}-overlap", "servfail", "refused", .03, .05, 1, 2, 0),
+            ])
         for index, (label, suffix, primary, secondary, pd, sd, qt, rcode, answers) in enumerate(cases):
             specs[:] = [(0.01, "a", 60)] * 4
             pair = (0, 1) if suffix == "cn" else (2, 3)

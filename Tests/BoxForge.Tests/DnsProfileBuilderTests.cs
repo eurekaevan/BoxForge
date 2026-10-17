@@ -66,15 +66,22 @@ public sealed class DnsProfileBuilderTests
         });
     }
 
-    [Test]
-    public void PriorityServiceSetsComeFromDefinitionsAndPrecedeDomesticPool()
+    [TestCase(TargetPlatform.Android)]
+    [TestCase(TargetPlatform.Linux)]
+    [TestCase(TargetPlatform.Windows)]
+    public void ServiceDnsClassificationMatchesRoutesBeforeDomesticPool(TargetPlatform platform)
     {
-        DnsConfig dns = CreateBuilder().Build(TargetPlatform.Linux);
-        string[] expectedRuleSets = ProfileDefinitions.Services
-            .Where(service => service.PrecedesDomesticRoutes)
-            .SelectMany(service => service.RuleSets)
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
+        DnsConfig dns = CreateBuilder().Build(platform);
+        RouteConfig route = new RouteProfileBuilder(Options.Create(new TailscaleOptions())).Build(platform);
+        string[] expectedRuleSets =
+        [
+            RuleSetTags.Ai, RuleSetTags.Google, RuleSetTags.Spotify,
+            RuleSetTags.Games, RuleSetTags.Microsoft
+        ];
+        int domesticRouteIndex = route.Rules.FindIndex(rule =>
+            rule.Outbound == SingboxTags.DirectOutbound
+            && rule.RuleSet?.SequenceEqual([RuleSetTags.Cn]) == true
+            && rule.Port == null && rule.Network == null);
         DnsRule primary = dns.Rules.Single(rule =>
             rule.Tag == DnsResponseTags.PriorityPrimary);
         DnsRule secondary = dns.Rules.Single(rule =>
@@ -90,6 +97,15 @@ public sealed class DnsProfileBuilderTests
             Assert.That(secondary.RuleSet, Is.EqualTo(expectedRuleSets));
             Assert.That(priorityIndex, Is.GreaterThan(adsIndex));
             Assert.That(priorityIndex, Is.LessThan(domesticIndex));
+            Assert.That(domesticRouteIndex, Is.GreaterThanOrEqualTo(0));
+            foreach (string ruleSet in expectedRuleSets)
+            {
+                int serviceRouteIndex = route.Rules.FindIndex(rule =>
+                    rule.Action == RouteRuleAction.Route
+                    && rule.RuleSet?.SequenceEqual([ruleSet]) == true);
+                Assert.That(serviceRouteIndex, Is.GreaterThanOrEqualTo(0), ruleSet);
+                Assert.That(serviceRouteIndex, Is.LessThan(domesticRouteIndex), ruleSet);
+            }
         });
     }
 
@@ -98,7 +114,6 @@ public sealed class DnsProfileBuilderTests
     {
         DnsConfig dns = CreateBuilder().Build(TargetPlatform.Android);
         List<string> priorityRuleSets = ProfileDefinitions.Services
-            .Where(service => service.PrecedesDomesticRoutes)
             .SelectMany(service => service.RuleSets)
             .Distinct(StringComparer.Ordinal)
             .ToList();
@@ -133,7 +148,6 @@ public sealed class DnsProfileBuilderTests
     {
         DnsConfig dns = CreateBuilder().Build(platform);
         List<string> priorityRuleSets = ProfileDefinitions.Services
-            .Where(service => service.PrecedesDomesticRoutes)
             .SelectMany(service => service.RuleSets)
             .Distinct(StringComparer.Ordinal)
             .ToList();
@@ -275,7 +289,6 @@ public sealed class DnsProfileBuilderTests
     {
         DnsConfig dns = CreateBuilder().Build(TargetPlatform.Linux);
         List<string> priorityRuleSets = ProfileDefinitions.Services
-            .Where(service => service.PrecedesDomesticRoutes)
             .SelectMany(service => service.RuleSets)
             .Distinct(StringComparer.Ordinal)
             .ToList();

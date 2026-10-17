@@ -52,7 +52,7 @@ public sealed class RouteProfileBuilder(
                 Mode = RouteLogicalMode.And,
                 Rules =
                 [
-                    new RouteRule { Inbound = [SingboxTags.TunInbound, SingboxTags.MixedInbound] },
+                    new RouteRule { Inbound = [SingboxTags.TunInbound] },
                     new RouteRule
                     {
                         Type = RouteRuleType.Logical,
@@ -68,18 +68,16 @@ public sealed class RouteProfileBuilder(
             rules.Add(CreateIpv6RejectRule());
         }
 
-        RouteRule? tailscaleRule = null;
         if (tailscale.IsEnabled(platform))
         {
             // 必须位于私网直连规则之前，才能覆盖 tailnet 通告的私有子网路由。
-            tailscaleRule = new RouteRule
+            rules.Add(new RouteRule
             {
-                Inbound = [SingboxTags.TunInbound, SingboxTags.MixedInbound],
+                Inbound = [SingboxTags.TunInbound],
                 PreferredBy = [SingboxTags.TailscaleEndpoint],
                 Action = RouteRuleAction.Route,
                 Outbound = SingboxTags.TailscaleEndpoint
-            };
-            rules.Add(tailscaleRule);
+            });
         }
 
         rules.AddRange([
@@ -89,11 +87,31 @@ public sealed class RouteProfileBuilder(
             MarkDirectForwarding(
                 new RouteRule { IpCidr = ["223.5.5.5/32"], Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound },
                 DirectForwardingMode.PreSniff),
-            CreateSniffRule("tcp", ["http", "tls"]),
-            CreateSniffRule("udp", ["quic", "stun"]),
             new()
             {
-                Inbound = [SingboxTags.TunInbound, SingboxTags.MixedInbound],
+                Type = RouteRuleType.Logical,
+                Mode = RouteLogicalMode.And,
+                Rules =
+                [
+                    new RouteRule { Inbound = [SingboxTags.TunInbound], Network = ["tcp"] },
+                    // Skip common server-first services without bypassing later routing policy.
+                    new RouteRule { Port = [21, 22, 3306, 5900], Invert = true }
+                ],
+                Action = RouteRuleAction.Sniff,
+                Sniffer = ["http", "tls"],
+                Timeout = RouteTuningPolicy.SniffTimeout
+            },
+            new()
+            {
+                Inbound = [SingboxTags.TunInbound],
+                Network = ["udp"],
+                Action = RouteRuleAction.Sniff,
+                Sniffer = ["quic", "stun"],
+                Timeout = RouteTuningPolicy.SniffTimeout
+            },
+            new()
+            {
+                Inbound = [SingboxTags.TunInbound],
                 Protocol = ["stun"],
                 Network = ["udp"],
                 Action = RouteRuleAction.Reject
@@ -105,19 +123,6 @@ public sealed class RouteProfileBuilder(
             }
         ]);
 
-        List<string> proxyServiceRuleSets =
-        [
-            .. ProfileDefinitions.Services
-                .SelectMany(service => service.RuleSets)
-                .Distinct(StringComparer.Ordinal)
-        ];
-        rules.Add(CreateMixedResolveRule(
-            proxyServiceRuleSets,
-            addressFamily.ToDnsStrategy()));
-        rules.Add(CreateMixedResolveRule(
-            [RuleSetTags.Cn],
-            addressFamily.ToDnsStrategy()));
-
         var prioritizedServices = ProfileDefinitions.Services.Where(
             service => service.PrecedesDomesticRoutes
                 && service.RuleSets.Length > 0).ToList();
@@ -126,8 +131,7 @@ public sealed class RouteProfileBuilder(
             rules.Add(CreateUdp443RejectRule([.. service.RuleSets]));
         }
 
-        // Re-check after non-final resolve actions so a domain can never turn
-        // into an IPv6 route target later in evaluation.
+        // Preserve the late IPv6 guard before service routing as defense in depth.
         if (addressFamily == AddressFamilyPolicy.Ipv4Only)
         {
             rules.Add(CreateIpv6RejectRule());
@@ -142,14 +146,6 @@ public sealed class RouteProfileBuilder(
             MarkDirectForwarding(
                 CreateDomesticUdp443DirectRule([RuleSetTags.Cn], SingboxTags.DirectOutbound),
                 DirectForwardingMode.PostUdpSniff),
-            new RouteRule
-            {
-                Inbound = [SingboxTags.MixedInbound],
-                Port = [443],
-                Network = ["udp"],
-                Action = RouteRuleAction.Resolve,
-                Strategy = addressFamily.ToDnsStrategy()
-            },
             MarkDirectForwarding(
                 CreateDomesticUdp443DirectRule([RuleSetTags.CnIp], SingboxTags.DirectOutbound),
                 DirectForwardingMode.PostUdpSniff),
@@ -167,61 +163,32 @@ public sealed class RouteProfileBuilder(
             MarkDirectForwarding(
                 new RouteRule { RuleSet = [RuleSetTags.Cn], Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound },
                 DirectForwardingMode.PostUdpSniff),
-            new RouteRule
-            {
-                Inbound = [SingboxTags.MixedInbound],
-                Action = RouteRuleAction.Resolve,
-                Strategy = addressFamily.ToDnsStrategy()
-            },
-            new RouteRule
-            {
-                Inbound = [SingboxTags.MixedInbound],
-                IpIsPrivate = true,
-                Action = RouteRuleAction.Route,
-                Outbound = SingboxTags.DirectOutbound
-            },
             MarkDirectForwarding(
                 new RouteRule { RuleSet = [RuleSetTags.CnIp], Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound },
                 DirectForwardingMode.PostUdpSniff)
         ]);
 
-        if (tailscaleRule != null)
-        {
-            // A mixed hostname has no destination address at the early gate.
-            // Re-check after every resolve, before private/CNIP or service policy.
-            for (int index = rules.Count - 1; index >= 0; index--)
-            {
-                if (rules[index].Action == RouteRuleAction.Resolve)
-                    rules.Insert(index + 1, tailscaleRule with { Inbound = [SingboxTags.MixedInbound] });
-            }
-        }
-
         route.Rules.AddRange(AddDirectForwardingLayers(
             rules,
-            platform,
+            PlatformProfile.For(platform).UseDirectForwarding,
             directForwardingModes));
         return route;
     }
 
     private static IEnumerable<RouteRule> AddDirectForwardingLayers(
         IEnumerable<RouteRule> rules,
-        TargetPlatform platform,
+        bool useDirectForwarding,
         IReadOnlyDictionary<RouteRule, DirectForwardingMode> forwardingModes)
     {
         foreach (RouteRule rule in rules)
         {
-            if (platform != TargetPlatform.Android
+            if (useDirectForwarding
                 && forwardingModes.TryGetValue(
                     rule,
-                    out DirectForwardingMode forwardingMode)
-                && forwardingMode != DirectForwardingMode.None)
+                    out DirectForwardingMode forwardingMode))
             {
                 EnsureDirectForwardingRule(rule);
-                if (platform == TargetPlatform.Linux)
-                {
-                    yield return CreateBypassRule(rule, forwardingMode);
-                }
-
+                yield return CreateBypassRule(rule, forwardingMode);
                 yield return CreateBridgeRouteRule(rule, forwardingMode);
             }
 
@@ -231,11 +198,12 @@ public sealed class RouteProfileBuilder(
 
     private static void EnsureDirectForwardingRule(RouteRule rule)
     {
-        if (rule.Action != RouteRuleAction.Route
+        if (rule.Type == RouteRuleType.Logical
+            || rule.Action != RouteRuleAction.Route
             || rule.Outbound != SingboxTags.DirectOutbound)
         {
             throw new InvalidOperationException(
-                "Only DIRECT route rules can opt in to direct forwarding.");
+                "Only non-logical DIRECT route rules can opt in to direct forwarding.");
         }
     }
 
@@ -267,59 +235,17 @@ public sealed class RouteProfileBuilder(
         List<string>? network = forwardingMode == DirectForwardingMode.PostUdpSniff
             ? ["udp"]
             : directRule.Network;
-        if (directRule.Type != RouteRuleType.Logical)
-        {
-            return directRule with
-            {
-                Inbound = [SingboxTags.TunInbound],
-                Network = network,
-                PreferredBy = useBridgeGate
-                    ? [SingboxTags.BridgeOutbound]
-                    : null,
-                Action = action,
-                Outbound = outbound
-            };
-        }
-
-        if (directRule.Mode != RouteLogicalMode.And || directRule.Rules == null)
-        {
-            throw new InvalidOperationException(
-                "Direct forwarding only supports logical AND rules.");
-        }
-
-        var matchers = new List<RouteRule>(directRule.Rules)
-        {
-            new() { Inbound = [SingboxTags.TunInbound] }
-        };
-        if (network != null)
-        {
-            matchers.Add(new RouteRule { Network = network });
-        }
-        if (useBridgeGate)
-        {
-            matchers.Add(new RouteRule
-            {
-                PreferredBy = [SingboxTags.BridgeOutbound]
-            });
-        }
-
         return directRule with
         {
-            Rules = matchers,
+            Inbound = [SingboxTags.TunInbound],
+            Network = network,
+            PreferredBy = useBridgeGate
+                ? [SingboxTags.BridgeOutbound]
+                : null,
             Action = action,
             Outbound = outbound
         };
     }
-
-    private static RouteRule CreateSniffRule(string network, List<string> sniffers) =>
-        new()
-        {
-            Inbound = [SingboxTags.TunInbound, SingboxTags.MixedInbound],
-            Network = [network],
-            Action = RouteRuleAction.Sniff,
-            Sniffer = sniffers,
-            Timeout = RouteTuningPolicy.SniffTimeout
-        };
 
     private static RouteRule CreateIpv6RejectRule() =>
         new()
@@ -328,23 +254,12 @@ public sealed class RouteProfileBuilder(
             Action = RouteRuleAction.Reject
         };
 
-    private static RouteRule CreateMixedResolveRule(
-        List<string> ruleSets,
-        DnsStrategy? strategy) =>
-        new()
-        {
-            Inbound = [SingboxTags.MixedInbound],
-            RuleSet = ruleSets,
-            Action = RouteRuleAction.Resolve,
-            Strategy = strategy
-        };
-
     private static RouteRule CreateDomesticUdp443DirectRule(
         List<string> ruleSets,
         string directOutbound) =>
         new()
         {
-            Inbound = [SingboxTags.TunInbound, SingboxTags.MixedInbound],
+            Inbound = [SingboxTags.TunInbound],
             Port = [443],
             Network = ["udp"],
             RuleSet = ruleSets,
@@ -356,7 +271,7 @@ public sealed class RouteProfileBuilder(
         List<string>? ruleSets = null) =>
         new()
         {
-            Inbound = [SingboxTags.TunInbound, SingboxTags.MixedInbound],
+            Inbound = [SingboxTags.TunInbound],
             Port = [443],
             Network = ["udp"],
             RuleSet = ruleSets,
@@ -366,7 +281,6 @@ public sealed class RouteProfileBuilder(
 
     private enum DirectForwardingMode
     {
-        None,
         PreSniff,
         PostUdpSniff
     }

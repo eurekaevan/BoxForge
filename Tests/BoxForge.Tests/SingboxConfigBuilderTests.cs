@@ -15,7 +15,7 @@ public sealed class SingboxConfigBuilderTests
     [TestCase(TargetPlatform.Android)]
     [TestCase(TargetPlatform.Linux)]
     [TestCase(TargetPlatform.Windows)]
-    public void AllPlatformsKeepMixedInboundWithoutSystemProxy(
+    public void AllPlatformsGenerateOnlyTunInbound(
         TargetPlatform platform)
     {
         SingboxConfig config = CreateBuilder().Build(new SingboxBuildRequest(
@@ -25,8 +25,6 @@ public sealed class SingboxConfigBuilderTests
 
         Inbound tunInbound = config.Inbounds.Single(inbound =>
             inbound.Tag == SingboxTags.TunInbound);
-        Inbound mixedInbound = config.Inbounds.Single(inbound =>
-            inbound.Tag == SingboxTags.MixedInbound);
         bool hasBridge = config.Outbounds
             .OfType<BridgeOutbound>()
             .Any(outbound => outbound.Tag == SingboxTags.BridgeOutbound);
@@ -37,15 +35,14 @@ public sealed class SingboxConfigBuilderTests
 
         Assert.Multiple(() =>
         {
+            Assert.That(config.Inbounds, Has.Count.EqualTo(1));
             Assert.That(tunInbound.Type, Is.EqualTo("tun"));
+            Assert.That(json, Does.Not.Contain("mixed-in"));
             Assert.That(tunInbound.Address,
                 Is.EqualTo(new[] { "172.19.0.1/30", "fd00::1/126" }));
-            Assert.That(mixedInbound.Type, Is.EqualTo("mixed"));
-            Assert.That(mixedInbound.Listen, Is.EqualTo("127.0.0.1"));
-            Assert.That(mixedInbound.ListenPort, Is.EqualTo(8848));
             Assert.That(
                 hasBridge,
-                Is.EqualTo(platform != TargetPlatform.Android));
+                Is.EqualTo(platform == TargetPlatform.Linux));
             Assert.That(json, Does.Not.Contain("\"set_system_proxy\""));
             Assert.That(json, Does.Not.Contain("\"platform\""));
             Assert.That(json, Does.Not.Contain("\"http_proxy\""));
@@ -60,12 +57,11 @@ public sealed class SingboxConfigBuilderTests
             {
                 Assert.That(serializedTun.TryGetProperty("multi_queue", out _), Is.False);
             }
-            Assert.That(mixedInbound.MultiQueue, Is.Null);
             Assert.That(tunInbound.StrictRoute, Is.EqualTo(platform == TargetPlatform.Android ? (bool?)null : true));
             Assert.That(json.Contains("\"strict_route\"", StringComparison.Ordinal), Is.EqualTo(platform != TargetPlatform.Android));
             Assert.That(
                 json.Contains("\"type\": \"bridge\"", StringComparison.Ordinal),
-                Is.EqualTo(platform != TargetPlatform.Android));
+                Is.EqualTo(platform == TargetPlatform.Linux));
         });
 
         Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Ipv4Only));
@@ -245,6 +241,11 @@ public sealed class SingboxConfigBuilderTests
             new string('a', 64)));
 
         string json = new ConfigSerializer().Serialize(config);
+        using JsonDocument document = JsonDocument.Parse(json);
+        List<JsonElement> ipv6Rejects = document.RootElement.GetProperty("route")
+            .GetProperty("rules").EnumerateArray()
+            .Where(rule => rule.TryGetProperty("ip_version", out JsonElement version)
+                && version.GetInt32() == 6).ToList();
 
         Assert.Multiple(() =>
         {
@@ -257,7 +258,12 @@ public sealed class SingboxConfigBuilderTests
                 json.Split("\"no_drop\": true", StringSplitOptions.None).Length - 1,
                 Is.EqualTo(3));
             Assert.That(json, Does.Not.Contain("\"no_drop\": false"));
-            Assert.That(json, Does.Not.Contain("\"invert\": true"));
+            Assert.That(ipv6Rejects, Has.Count.EqualTo(2));
+            Assert.That(ipv6Rejects.All(rule =>
+                rule.GetProperty("action").GetString() == "reject"
+                && !rule.TryGetProperty("invert", out _)
+                && !rule.TryGetProperty("inbound", out _)
+                && !rule.TryGetProperty("network", out _)), Is.True);
             Assert.That(json, Does.Not.Contain("\"invert\": false"));
         });
 

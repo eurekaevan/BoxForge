@@ -24,17 +24,8 @@ public sealed class TailscaleEndpointBuilder(IOptions<TailscaleOptions> options)
                 StateDirectory = SingboxTags.TailscaleStateDirectory,
                 AcceptRoutes = true,
                 OnDemand = true,
-                TaildropDirectory = GetTaildropDirectory(platform)
+                TaildropDirectory = PlatformProfile.For(platform).TaildropDirectory
             }
         ];
     }
-
-    private static string GetTaildropDirectory(TargetPlatform platform) =>
-        platform switch
-        {
-            TargetPlatform.Android => "Taildrop",
-            TargetPlatform.Windows => "$USERPROFILE\\Downloads\\Taildrop",
-            TargetPlatform.Linux => "$HOME/Downloads/Taildrop",
-            _ => throw new ArgumentOutOfRangeException(nameof(platform), platform, null)
-        };
 }

@@ -54,8 +54,8 @@ kebab-case，并按对象用途区分。地区组固定为：
 
 | 类型 | 固定 tag |
 | --- | --- |
-| TUN / mixed inbound | `tun-in`、`mixed-in` |
-| L3 bridge outbound | `bridge-out` |
+| TUN inbound | `tun-in` |
+| L3 bridge outbound（仅 Linux） | `bridge-out` |
 | Tailscale endpoint / DNS | `tailscale`、`dns-tailscale` |
 | 直连 DNS | `dns-direct-alidns`、`dns-direct-tencent` |
 | 代理 DNS | `dns-proxy-google`、`dns-proxy-cloudflare` |
