@@ -20,7 +20,8 @@
   模型层的显式空 `packet_encoding` 表示原生 UDP，仍输出；但来源 Mihomo 的空
   `packet-encoding` 实际使用 XUDP，转换时按 XUDP 处理并省略默认值。UoT v1 仍显式写版本。
 - URLTest 的官方 URL、`3m` 周期、`50` 容差、`30m` 空闲超时及
-  `interrupt_exist_connections: false`；selector 的 `true` 策略不变。
+  `interrupt_exist_connections: false`；Linux/Windows 的 `1m` 周期显式输出，
+  selector 的 `true` 策略不变。
 - 默认 route action、sniff `300ms`、predefined 响应 `NOERROR`、`.srs` URL
   可推导的 binary 格式、规则集更新周期 `24h`、缓存路径 `cache.db`。
   DNS `response_rcode: NOERROR` 是匹配条件，不会删除。
@@ -55,11 +56,14 @@ sing-box 自动修改系统 HTTP 代理设置。
 | 平台 | 差异 |
 | --- | --- |
 | Android | 不为代理出站写入 TCP keepalive |
-| Linux | `auto_redirect: true`；生成 `bridge-out` L3 直连和 kernel-level `bypass`；代理出站使用 `tcp_keep_alive: 1m` 和 `tcp_keep_alive_interval: 30s` |
-| Windows | 生成 `bridge-out` L3 直连；代理出站使用 `tcp_keep_alive: 1m` 和 `tcp_keep_alive_interval: 30s` |
+| Linux | `auto_redirect: true`、`multi_queue: true`；生成 `bridge-out` L3 直连和 kernel-level `bypass`；代理出站使用 `tcp_keep_alive: 1m` 和 `tcp_keep_alive_interval: 30s`；地区 AUTO 探测周期 `1m` |
+| Windows | 生成 `bridge-out` L3 直连；代理出站使用 `tcp_keep_alive: 1m` 和 `tcp_keep_alive_interval: 30s`；地区 AUTO 探测周期 `1m` |
 
 三个平台均不生成已弃用的 `stack`，由 sing-box 1.15 使用 sing-tun 自有 TCP/IP
 栈；也不生成 `mtu`，由 sing-box 按目标平台和运行环境采用默认值。
+Linux 显式启用 `multi_queue: true`，允许自有栈通过 TUN 多队列并行处理；
+Windows/Android 省略该字段。实际吞吐收益尚未验证，可按
+[对照实验](protocol-validation.md#linux-tun-多队列对照)方法测量。
 
 Linux 和 Windows 额外生成 sing-box 1.15 `bridge` outbound，并按规则可判定的
 阶段生成两类 L3 forwarding 层：
@@ -304,8 +308,10 @@ origin 被限制为同端口的 `127.0.0.1` 与 `localhost`，
   `🇺🇸 US AUTO`、`🇯🇵 JP AUTO`、`🇭🇰 HK AUTO`、`🇸🇬 SG AUTO`。
   地区 AUTO 只测试该地区真实节点；地区 selector 保留逐节点人工选择，并默认
   选择自己的 AUTO。
-- URLTest 的 `url`、`interval`、`tolerance`、`idle_timeout` 和
-  `interrupt_exist_connections` 均省略，使用 sing-box 官方默认值。现有 selector
+- 地区 URLTest 在 Linux/Windows 显式设置 `interval: 1m`；Android 省略该字段，
+  使用官方默认 `3m`。缩短周期用于更及时地发现节点延迟变化，不保证单连接提速。
+  `url`、`tolerance`、`idle_timeout` 和 `interrupt_exist_connections` 继续省略，
+  使用 sing-box 官方默认值，因此 AUTO 切换不主动中断已有连接。现有 selector
   继续生成 `interrupt_exist_connections: true`。
 - 主 `🚀 PROXIES` selector 依次保留地区组、单个节点和 `DIRECT` 的人工
   选择能力，不生成跨地区的全局 URLTest。美国地区组可用时默认选择 `🇺🇸 US`；

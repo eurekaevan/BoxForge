@@ -48,7 +48,9 @@ public sealed class SingboxConfigBuilder(
         [
             profiles.MainOutbound,
             .. profiles.RegionOutbounds,
-            .. profiles.RegionAutoOutbounds,
+            .. profiles.RegionAutoOutbounds.Select(outbound => request.Platform == TargetPlatform.Android
+                ? outbound
+                : outbound with { Interval = "1m" }),
             .. profiles.ServiceOutbounds,
             .. request.Nodes.Outbounds.Select(outbound => OutboundTuningPolicy.Apply(outbound, request.Platform))
         ];

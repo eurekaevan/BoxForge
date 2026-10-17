@@ -31,6 +31,9 @@ public sealed class SingboxConfigBuilderTests
             .OfType<BridgeOutbound>()
             .Any(outbound => outbound.Tag == SingboxTags.BridgeOutbound);
         string json = new ConfigSerializer().Serialize(config);
+        using JsonDocument document = JsonDocument.Parse(json);
+        JsonElement serializedTun = document.RootElement.GetProperty("inbounds")
+            .EnumerateArray().Single(inbound => inbound.GetProperty("type").GetString() == "tun");
 
         Assert.Multiple(() =>
         {
@@ -48,6 +51,16 @@ public sealed class SingboxConfigBuilderTests
             Assert.That(json, Does.Not.Contain("\"http_proxy\""));
             Assert.That(json, Does.Not.Contain("\"mtu\""));
             Assert.That(json, Does.Not.Contain("\"stack\""));
+            Assert.That(tunInbound.MultiQueue, Is.EqualTo(platform == TargetPlatform.Linux ? (bool?)true : null));
+            if (platform == TargetPlatform.Linux)
+            {
+                Assert.That(serializedTun.GetProperty("multi_queue").GetBoolean(), Is.True);
+            }
+            else
+            {
+                Assert.That(serializedTun.TryGetProperty("multi_queue", out _), Is.False);
+            }
+            Assert.That(mixedInbound.MultiQueue, Is.Null);
             Assert.That(tunInbound.StrictRoute, Is.EqualTo(platform == TargetPlatform.Android ? (bool?)null : true));
             Assert.That(json.Contains("\"strict_route\"", StringComparison.Ordinal), Is.EqualTo(platform != TargetPlatform.Android));
             Assert.That(
@@ -431,8 +444,10 @@ public sealed class SingboxConfigBuilderTests
         Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Ipv4Only));
     }
 
-    [Test]
-    public void GeneratedUrlTestsContainOnlyLeafNodesAndOmitOfficialDefaults()
+    [TestCase(TargetPlatform.Android)]
+    [TestCase(TargetPlatform.Linux)]
+    [TestCase(TargetPlatform.Windows)]
+    public void GeneratedUrlTestsContainOnlyLeafNodesAndUsePlatformProbeInterval(TargetPlatform platform)
     {
         ProxyOutbound usFirst = CreateProxy("美国 01", "us-1.example.com");
         ProxyOutbound usSecond = CreateProxy("美国 02", "us-2.example.com");
@@ -444,7 +459,7 @@ public sealed class SingboxConfigBuilderTests
 
         SingboxConfig config = CreateBuilder().Build(new SingboxBuildRequest(
             nodes,
-            TargetPlatform.Linux,
+            platform,
             new string('c', 64)));
         HashSet<string> leafTags = config.Outbounds
             .OfType<ProxyOutbound>()
@@ -464,13 +479,25 @@ public sealed class SingboxConfigBuilderTests
         Assert.Multiple(() =>
         {
             Assert.That(urlTests, Has.Count.EqualTo(2));
+            Assert.That(urlTests.Select(outbound => outbound.Interval),
+                Is.All.EqualTo(platform == TargetPlatform.Android ? null : "1m"));
+            foreach (JsonElement outbound in serializedUrlTests)
+            {
+                if (platform == TargetPlatform.Android)
+                {
+                    Assert.That(outbound.TryGetProperty("interval", out _), Is.False);
+                }
+                else
+                {
+                    Assert.That(outbound.GetProperty("interval").GetString(), Is.EqualTo("1m"));
+                }
+            }
             Assert.That(
                 urlTests.SelectMany(urlTest => urlTest.Outbounds),
                 Is.All.Matches<string>(leafTags.Contains));
             Assert.That(
                 serializedUrlTests.All(outbound =>
                     !outbound.TryGetProperty("url", out _)
-                    && !outbound.TryGetProperty("interval", out _)
                     && !outbound.TryGetProperty("tolerance", out _)
                     && !outbound.TryGetProperty("idle_timeout", out _)
                     && !outbound.TryGetProperty(

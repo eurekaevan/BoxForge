@@ -13,4 +13,5 @@ public record Inbound
     [JsonPropertyName("auto_route")] public bool? AutoRoute { get; init; }
     [JsonPropertyName("strict_route")] public bool? StrictRoute { get; init; }
     [JsonPropertyName("auto_redirect")] public bool? AutoRedirect { get; init; }
+    [JsonPropertyName("multi_queue")] public bool? MultiQueue { get; init; }
 }

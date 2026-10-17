@@ -23,6 +23,7 @@ public static class InboundBuilder
                 DnsMode = "hijack",
                 AutoRoute = true,
                 AutoRedirect = platform == TargetPlatform.Linux ? true : null,
+                MultiQueue = platform == TargetPlatform.Linux ? true : null,
                 StrictRoute = platform == TargetPlatform.Android ? null : true
             },
             new Inbound

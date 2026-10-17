@@ -115,6 +115,44 @@ early-data 保留；真实 Kestrel 子进程覆盖环境开关和截断 multipar
 | AnyTLS session fields | 生成字段断言与 HTTP body |
 | VLESS WS/gRPC、Trojan WS、VLESS/Trojan HTTPUpgrade | HTTP body；HTTPUpgrade 仍有下述历史风险 |
 
+## Linux TUN 多队列对照
+
+[`multi_queue`](https://sing-box.sagernet.org/configuration/inbound/tun/#multi_queue)
+仅适用于 Linux 自有栈。BoxForge 的 Linux 输出显式启用该字段，Windows/Android
+省略；配置检查已覆盖，真实吞吐收益尚未验证。下面从同一份 Linux 配置生成
+仅此字段不同的两个候选，不修改来源文件：
+
+```bash
+python3 - /absolute/path/to/Linux/config.json /tmp/boxforge-tun-comparison <<'PY'
+import copy
+import json
+import os
+import pathlib
+import sys
+
+source = json.loads(pathlib.Path(sys.argv[1]).read_text())
+assert sum(item["type"] == "tun" for item in source["inbounds"]) == 1
+root = pathlib.Path(sys.argv[2])
+root.mkdir(mode=0o700)  # Existing directories are rejected; configs can contain credentials.
+for name, enabled in [("single", False), ("multi", True)]:
+    candidate = copy.deepcopy(source)
+    next(item for item in candidate["inbounds"] if item["type"] == "tun")["multi_queue"] = enabled
+    with os.fdopen(os.open(root / f"{name}.json", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as output:
+        json.dump(candidate, output, ensure_ascii=False, indent=2)
+        output.write("\n")
+PY
+
+"$singbox_core" check -c /tmp/boxforge-tun-comparison/single.json
+"$singbox_core" check -c /tmp/boxforge-tun-comparison/multi.json
+```
+
+吞吐测试必须使用有真实 TUN 权限的 Linux 环境和可用节点；fixture 的虚构凭据
+只能用于配置检查。顺序运行两个候选，固定同一节点、核心、测试服务器和负载，
+避免 AUTO 在轮次间选中不同节点；使用相同预热时间，交替重复单流/多流 TCP 和 UDP，
+记录吞吐、尾延迟、丢包和 CPU。保留生成配置原有的 `auto_redirect` 等设置；部分
+TCP 会由 redirect 路径处理，因此需确认测试流量经过 TUN，不能将其他路径的结果
+归因于多队列。官方 `check` 不创建 TUN，也不能替代上述性能对照。
+
 ## 已知验证边界
 
 协议脚本仅验证 sing-box 与 sing-box 回环，配置检查不等于实时 DNS、tailnet、
