@@ -31,7 +31,8 @@ CLI 会为 Windows、Android 和 Linux 批量生成平台化配置，并在
 
 ## 快速开始
 
-版本使用台北时区的日期 tag（`YYYY-MM-DD`，同日补发为 `.2`、`.3` 等）。
+Release workflow 自动使用台北时区的日期 tag（`YYYY-MM-DD`，同日补发为 `.2`、`.3` 等）。
+发布说明默认留空，可选 GitHub 原生自动生成；无需在仓库提交每个 tag 的更新文档。
 发布流程提供 Linux x64 自包含 CLI 包、SHA-256 校验和及源码提交信息；
 下载安装、固定源码版本与升级检查见[版本与发布契约](docs/releases.md)。
 以下为源码运行方式。

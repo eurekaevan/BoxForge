@@ -6,13 +6,18 @@ HTTP/Web 保留无状态输入到结果的边界；本阶段不改变配置生�
 
 ## 日期版本
 
-版本与 Git tag 使用发布当天在 `Asia/Taipei` 的日期，不加 `v`：
+手动运行 Release workflow 时，自动按 `Asia/Taipei` 当前时间计算版本与 Git tag，不加 `v`：
 `YYYY-MM-DD`；同日第二次发布为 `YYYY-MM-DD.2`，之后递增。
-日期只表示发布顺序，不表示兼容程度。已发布的 tag、包和说明不可覆盖或移动；
+工作流根据已有 tag 的最大同日序号递增，并串行执行发布流程以减少竞争。
+日期只表示发布顺序，不表示兼容程度。已发布的 tag 和包不可覆盖或移动；
 修复应使用新版本。不要用字典序决定同日版本先后（`.10` 晚于 `.9`）。
 
-每个 tag 必须有同名的 `docs/release-notes/<tag>.md`，并对应固定源码提交。
-仓库中的日期说明是发布候选材料；GitHub Release 实际发布后才代表可下载版本。
+每个 tag 对应固定源码提交，GitHub Release 实际发布后才代表可下载版本。
+不要求提交 `docs/release-notes/<tag>.md`，现有文件仅保留为历史记录。
+发布说明默认留空；手动运行时可勾选 `generate_notes`，使用 GitHub 原生生成的
+PR 摘要和比较链接。这不是 Copilot AI 总结，也不需要额外凭据。说明可在 Release
+页面补充。Copilot 官方 Action 需要有效许可证及独立的 `COPILOT_GITHUB_TOKEN`，
+本流程不引入这项依赖。
 
 ## 当前契约基线
 
@@ -23,9 +28,9 @@ HTTP/Web 保留无状态输入到结果的边界；本阶段不改变配置生�
 | CLI | `generate`；既有参数、退出码、三平台目录结构与整批事务替换语义保持稳定 | [CLI 契约](../README.md#输出与事务语义) |
 | Behavior | IPv4-only、DNS/route 顺序、地区 selector/URLTest、平台 TUN/bridge、默认 Tailscale 与缺失字段 tuning 均是 BoxForge 策略 | [生成配置](generated-config.md)、[DNS 与路由](routing-and-dns.md)、[开关与默认值](configuration.md) |
 
-每次发布说明都必须逐项记录 Input、Target、CLI、Behavior；未变化也明确写出。
-策略变化应说明受影响的平台、触发条件、前后行为，以及同一 YAML 是否会产生
-不同配置。首次发布记录基线，不声称与不存在的旧版本兼容。
+手动补充发布说明时，建议记录 Input、Target、CLI、Behavior，尤其说明策略变化
+影响的平台、触发条件、前后行为，以及同一 YAML 是否会产生不同配置。
+这属于说明建议，不是构建或发布门禁；首次发布可记录基线。
 
 固定 BoxForge 版本只消除工具源码漂移。复现生成文件还需要固定输入内容、目标
 平台、`BOXFORGE_` 开关和运行目录中的宿主配置（CLI 使用 .NET 默认配置加载）。
@@ -34,17 +39,20 @@ HTTP/Web 保留无状态输入到结果的边界；本阶段不改变配置生�
 
 ## 发布流程
 
-1. 在 `docs/release-notes/<tag>.md` 写完整的四类契约、验证范围和升级注意事项。
-2. 按[协议验证边界](protocol-validation.md)完成适用于本次变更的官方核心检查；
-   涉及协议时执行对应回环验证，记录结果，不把单元测试当作设备或真实网络证明。
-3. 提交变更后，可手动运行 Release workflow，输入候选 tag；只构建验证并保存
-   Actions artifact，不创建 tag 或 GitHub Release。
-4. 确认后在该提交创建并推送日期 tag。tag 触发完整测试、自包含打包、解包后
-   三平台 fixture 生成与源码产物比对，通过后创建 GitHub Release。
+1. 按[协议验证边界](protocol-validation.md)完成适用于本次变更的官方核心检查；
+   涉及协议时执行对应回环验证，不把单元测试当作设备或真实网络证明。
+2. 提交变更后，手动运行 Release workflow 并选择源码分支。无需输入日期 tag；
+   默认只构建验证并保存 Actions artifact，不创建 tag 或 GitHub Release。
+3. 准备发布时，勾选 `publish_release`。工作流会重新计算日期版本并执行完整测试、
+   自包含打包、解包后生成与源码产物比对；全部通过后才为该次构建的固定提交创建
+   tag 并发布。可选勾选 `generate_notes`，否则正文为空。
+4. 也可继续推送符合日期规范的 tag 触发自动发布，正文默认留空。tag 指向、源码提交、
+   包内 manifest 和 SHA-256 仍会核对；已有同名发布不会被覆盖。发布步骤重试时，
+   已存在的 tag 只有指向同一个已验证提交才可继续。
 5. 发布成功后再更新 BoxVault 的固定版本与 SHA，并检查真实生成流程。
 
 自动发布门禁覆盖 .NET 测试与包的真实生成行为，不自动下载官方 sing-box，
-不替代第 2 步的资格验证。首次交付仅提供 Linux x64（glibc，CI 使用 Ubuntu
+不替代第 1 步的资格验证。首次交付仅提供 Linux x64（glibc，CI 使用 Ubuntu
 24.04），不包含 Server，也不声称支持 Alpine/musl 或其他主机架构。
 包内包含 .NET runtime，无需安装 SDK；系统原生依赖仍遵循
 [.NET Linux 部署要求](https://learn.microsoft.com/en-us/dotnet/core/install/linux)。
@@ -87,5 +95,6 @@ tar -xzf "boxforge-$boxforge_tag-linux-x64.tar.gz" -C boxforge
   --output-dir /path/to/singboxConfigs --platform all
 ```
 
-升级时先读四类变化，在独立输出目录对比旧版与新版生成结果，再用相应官方
+升级时先阅读已有发布说明；说明为空时应自行核对源码变化。在独立输出目录
+对比旧版与新版生成结果，再用相应官方
 核心检查新产物。确认之后更新消费端版本；不要直接用正式输出目录做升级试验。

@@ -5,40 +5,62 @@ on:
     tags: ['[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*']
   workflow_dispatch:
     inputs:
-      release_tag:
-        description: 'Candidate date tag (build only; no publication)'
-        required: true
-        type: string
+      publish_release:
+        description: 'Publish after verification (otherwise build only)'
+        default: false
+        type: boolean
+      generate_notes:
+        description: 'Generate GitHub release notes (otherwise leave empty)'
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.event_name }}-${{ github.ref }}
+  group: release
   cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-24.04
-    env:
-      RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.release_tag }}
+    outputs:
+      release_tag: ${{ steps.version.outputs.tag }}
+      commit: ${{ steps.version.outputs.commit }}
     steps:
       - uses: actions/checkout@v6
         with:
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
-      - name: Validate date tag and release notes
+      - name: Resolve and validate date tag
+        id: version
+        env:
+          PUSH_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
         run: |
           python3 - <<'PY'
-          import datetime, os, pathlib, re
-          tag = os.environ['RELEASE_TAG']
+          import datetime, os, pathlib, re, subprocess, zoneinfo
+          tag = os.environ['PUSH_TAG']
+          if not tag:
+              today = datetime.datetime.now(zoneinfo.ZoneInfo('Asia/Taipei')).date().isoformat()
+              tags = subprocess.check_output(['git', 'tag', '--list'], text=True).splitlines()
+              suffixes = []
+              for existing in tags:
+                  match = re.fullmatch(re.escape(today) + r'(?:\.([2-9]|[1-9][0-9]+))?', existing)
+                  if match:
+                      suffixes.append(int(match[1]) if match[1] else 1)
+              sequence = max(suffixes, default=0) + 1
+              tag = today if sequence == 1 else f'{today}.{sequence}'
           assert re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2}(?:\.(?:[2-9]|[1-9][0-9]+))?', tag), 'Invalid date tag'
           datetime.date.fromisoformat(tag[:10])
-          notes = pathlib.Path(f'docs/release-notes/{tag}.md').read_text()
-          for heading in ('Input', 'Target', 'CLI', 'Behavior'):
-              assert f'\n## {heading}\n' in notes, f'Missing {heading} contract'
+          commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          with pathlib.Path(os.environ['GITHUB_ENV']).open('a') as output:
+              output.write(f'RELEASE_TAG={tag}\n')
+          with pathlib.Path(os.environ['GITHUB_OUTPUT']).open('a') as output:
+              output.write(f'tag={tag}\ncommit={commit}\n')
+          print(f'Release version: {tag} @ {commit}')
           PY
       - name: Build and test
         run: |
@@ -85,7 +107,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || inputs.publish_release
     needs: build
     runs-on: ubuntu-24.04
     permissions:
@@ -93,6 +115,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ needs.build.outputs.commit }}
           persist-credentials: false
       - uses: actions/download-artifact@v7
         with:
@@ -102,18 +125,32 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
+          RELEASE_COMMIT: ${{ needs.build.outputs.commit }}
+          CREATE_TAG: ${{ github.event_name == 'workflow_dispatch' }}
+          GENERATE_NOTES: ${{ inputs.generate_notes || false }}
         run: |
           (cd dist && sha256sum --check SHA256SUMS)
-          remote_commit=$(gh api "repos/$GH_REPO/commits/$RELEASE_TAG" --jq .sha)
-          export REMOTE_COMMIT="$remote_commit"
           python3 - <<'PY'
           import json, os, subprocess
           with open('dist/RELEASE.json') as source:
               manifest = json.load(source)
           commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
           assert manifest['tag'] == os.environ['RELEASE_TAG'], 'Artifact tag mismatch'
-          assert manifest['commit'] == commit == os.environ['REMOTE_COMMIT'], 'Release tag moved or artifact commit mismatch'
+          assert manifest['commit'] == commit == os.environ['RELEASE_COMMIT'], 'Artifact commit mismatch'
           PY
+          if [ "$CREATE_TAG" = true ]; then
+            if ! gh api --method POST "repos/$GH_REPO/git/refs" \
+              -f ref="refs/tags/$RELEASE_TAG" -f sha="$RELEASE_COMMIT"; then
+              echo 'Tag creation failed; checking whether the existing tag has the verified commit.'
+            fi
+          fi
+          remote_commit=$(gh api "repos/$GH_REPO/commits/$RELEASE_TAG" --jq .sha)
+          test "$remote_commit" = "$RELEASE_COMMIT" || { echo 'Release tag moved'; exit 1; }
+          if [ "$GENERATE_NOTES" = true ]; then
+            notes=(--generate-notes)
+          else
+            notes=(--notes-file /dev/null)
+          fi
           gh release create "$RELEASE_TAG" dist/* --verify-tag \
-            --title "BoxForge $RELEASE_TAG" --notes-file "docs/release-notes/$RELEASE_TAG.md"
+            --title "BoxForge $RELEASE_TAG" "${notes[@]}"
