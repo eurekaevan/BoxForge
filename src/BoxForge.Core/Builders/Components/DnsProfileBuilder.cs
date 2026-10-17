@@ -117,22 +117,26 @@ public sealed class DnsProfileBuilder(IOptions<TailscaleOptions> tailscaleOption
                     nameof(selectionMode), selectionMode, null);
         }
 
+        AddTerminalServfail(rules, pool);
+    }
+
+    private static void AddTerminalServfail(List<DnsRule> rules, ResolverPoolDefinition pool) =>
         rules.Add(new DnsRule
         {
             RuleSet = pool.RuleSets,
+            QueryType = pool.QueryType is null ? null : [pool.QueryType],
             Action = DnsRuleAction.Predefined,
             Rcode = DnsResponseCode.ServerFailure
         });
-    }
 
     private static void CompileSequentialFallback(
         List<DnsRule> rules,
         ResolverPoolDefinition pool)
     {
         AddEvaluate(rules, pool, primary: true, timeout: "2s");
-        AddAcceptedResponses(rules, pool.RuleSets, pool.PrimaryResponse);
+        AddAcceptedResponses(rules, pool, pool.PrimaryResponse);
         AddEvaluate(rules, pool, primary: false);
-        AddAcceptedResponses(rules, pool.RuleSets, pool.SecondaryResponse);
+        AddAcceptedResponses(rules, pool, pool.SecondaryResponse);
     }
 
     private static void CompileParallelPrimaryPreferred(
@@ -141,23 +145,43 @@ public sealed class DnsProfileBuilder(IOptions<TailscaleOptions> tailscaleOption
     {
         AddEvaluate(rules, pool, primary: true);
         AddEvaluate(rules, pool, primary: false);
-        AddAcceptedResponses(rules, pool.RuleSets, pool.PrimaryResponse);
-        AddAcceptedResponses(rules, pool.RuleSets, pool.SecondaryResponse);
+        AddAcceptedResponses(rules, pool, pool.PrimaryResponse);
+        AddAcceptedResponses(rules, pool, pool.SecondaryResponse);
     }
 
     private static void CompileParallelFastest(
         List<DnsRule> rules,
         ResolverPoolDefinition pool)
     {
+        var addressPool = pool with
+        {
+            QueryType = "A",
+            PrimaryResponse = pool.PrimaryResponse + "-a",
+            SecondaryResponse = pool.SecondaryResponse + "-a"
+        };
+        AddEvaluate(rules, addressPool, primary: true);
+        AddEvaluate(rules, addressPool, primary: false);
+        AddResponse(rules, addressPool, addressPool.PrimaryResponse,
+            DnsResponseCode.NoError, race: true, requireIpv4: true);
+        AddResponse(rules, addressPool, addressPool.SecondaryResponse,
+            DnsResponseCode.NoError, race: true, requireIpv4: true);
+        // Empty answers and negative responses are fallbacks after both address races.
+        AddResponse(rules, addressPool, addressPool.PrimaryResponse, DnsResponseCode.NoError);
+        AddResponse(rules, addressPool, addressPool.SecondaryResponse, DnsResponseCode.NoError);
+        AddResponse(rules, addressPool, addressPool.PrimaryResponse, DnsResponseCode.NameError);
+        AddResponse(rules, addressPool, addressPool.SecondaryResponse, DnsResponseCode.NameError);
+        AddTerminalServfail(rules, addressPool);
+
+        // The scoped A terminal prevents A queries from entering this unchanged general pool.
         AddEvaluate(rules, pool, primary: true);
         AddEvaluate(rules, pool, primary: false);
-        AddResponse(rules, pool.RuleSets, pool.PrimaryResponse,
+        AddResponse(rules, pool, pool.PrimaryResponse,
             DnsResponseCode.NoError, race: true);
-        AddResponse(rules, pool.RuleSets, pool.SecondaryResponse,
+        AddResponse(rules, pool, pool.SecondaryResponse,
             DnsResponseCode.NoError, race: true);
-        AddResponse(rules, pool.RuleSets, pool.PrimaryResponse,
+        AddResponse(rules, pool, pool.PrimaryResponse,
             DnsResponseCode.NameError);
-        AddResponse(rules, pool.RuleSets, pool.SecondaryResponse,
+        AddResponse(rules, pool, pool.SecondaryResponse,
             DnsResponseCode.NameError);
     }
 
@@ -170,6 +194,8 @@ public sealed class DnsProfileBuilder(IOptions<TailscaleOptions> tailscaleOption
         rules.Add(new DnsRule
         {
             RuleSet = pool.RuleSets,
+            QueryType = pool.QueryType is null ? null : [pool.QueryType],
+            DisableOptimisticCache = pool.QueryType == "A" ? true : null,
             Action = DnsRuleAction.Evaluate,
             Server = primary ? pool.PrimaryServer : pool.SecondaryServer,
             Tag = primary ? pool.PrimaryResponse : pool.SecondaryResponse,
@@ -179,25 +205,30 @@ public sealed class DnsProfileBuilder(IOptions<TailscaleOptions> tailscaleOption
 
     private static void AddAcceptedResponses(
         List<DnsRule> rules,
-        List<string>? ruleSets,
+        ResolverPoolDefinition pool,
         string responseTag)
     {
         foreach (DnsResponseCode rcode in new[]
                  { DnsResponseCode.NoError, DnsResponseCode.NameError })
         {
-            AddResponse(rules, ruleSets, responseTag, rcode);
+            AddResponse(rules, pool, responseTag, rcode);
         }
     }
 
     private static void AddResponse(
         List<DnsRule> rules,
-        List<string>? ruleSets,
+        ResolverPoolDefinition pool,
         string responseTag,
         DnsResponseCode rcode,
-        bool race = false) =>
+        bool race = false,
+        bool requireIpv4 = false) =>
         rules.Add(new DnsRule
         {
-            RuleSet = ruleSets,
+            // Domain rule-sets and IP predicates share an OR group in sing-box.
+            // The unique evaluated-response tag already carries the pool's domain scope.
+            RuleSet = requireIpv4 ? null : pool.RuleSets,
+            QueryType = pool.QueryType is null ? null : [pool.QueryType],
+            IpCidr = requireIpv4 ? ["0.0.0.0/0"] : null,
             MatchResponse = responseTag,
             ResponseRcode = rcode,
             Action = DnsRuleAction.Respond,
@@ -209,5 +240,6 @@ public sealed class DnsProfileBuilder(IOptions<TailscaleOptions> tailscaleOption
         string PrimaryServer,
         string SecondaryServer,
         string PrimaryResponse,
-        string SecondaryResponse);
+        string SecondaryResponse,
+        string? QueryType = null);
 }

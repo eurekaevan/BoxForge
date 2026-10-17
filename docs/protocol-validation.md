@@ -57,6 +57,9 @@ for config in "$verification_root"/*/*/*/config.json; do
   "$singbox_core" check -c "$config" || exit
 done
 
+python3 scripts/verify-dns-races.py "$singbox_core" \
+  "$verification_root/standard/profiles/Linux/config.json" || exit
+
 node scripts/verify-transports.mjs "$singbox_core" \
   "$verification_root/standard/transport/Linux/config.json" || exit
 node scripts/verify-shadowsocks.mjs "$singbox_core" \
@@ -67,7 +70,14 @@ node scripts/verify-session-protocols.mjs "$singbox_core" \
   "$verification_root/standard/anytls/Linux/config.json" anytls || exit
 ```
 
-验证脚本使用真实生成的 Linux leaf，而不是重新手写客户端字段。对应范围：
+DNS 验证脚本读取真实生成的桌面 DNS 规则，将上游替换为本地受控 DoH，
+将分类替换为同标签 inline 测试域名；不创建 TUN、不使用真实订阅或公网 DNS。
+需要 Python 3 和 OpenSSL，本地 DoH 通过显式信任证书使用 HTTP/1.1，不能据此
+证明生产 DoH 的 HTTP/2、代理链路或 Gmail 实际性能。它覆盖地址/空答竞争、
+CNAME、附加区与 IPv6 地址、非 A 查询、分类隔离、TTL/过期缓存和未变的 5 秒
+负答等待。诊断和结果写入独立的 `/tmp/boxforge-dns-races.*` 目录。
+
+协议验证脚本使用真实生成的 Linux leaf，而不是重新手写客户端字段。对应范围：
 
 - `scripts/verify-transports.mjs`：既有 VLESS WS/gRPC/HTTPUpgrade、Trojan WS/HTTPUpgrade。
 - `scripts/verify-shadowsocks.mjs`：普通 SS TCP 与 UoT v1/v2 UDP echo；SS 服务端仅监听 TCP，防止原生 UDP 假通过。

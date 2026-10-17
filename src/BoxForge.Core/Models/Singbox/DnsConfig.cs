@@ -78,6 +78,7 @@ public record DnsRule
     [JsonPropertyName("preferred_by")] public List<string>? PreferredBy { get; init; }
     [JsonPropertyName("match_response")] public string? MatchResponse { get; init; }
     [JsonPropertyName("ip_accept_any")] public bool? IpAcceptAny { get; init; }
+    [JsonPropertyName("ip_cidr")] public List<string>? IpCidr { get; init; }
     [JsonPropertyName("response_rcode")] public DnsResponseCode? ResponseRcode { get; init; }
     [JsonPropertyName("action")] public DnsRuleAction? Action { get; init; }
     [JsonPropertyName("server")] public string? Server { get; init; }

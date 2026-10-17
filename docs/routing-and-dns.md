@@ -87,11 +87,20 @@ secondary `evaluate`；secondary 继承全局 `dns.timeout = 5s`。健康情况�
 只产生一个上游请求。
 
 Linux/Windows 先连续执行两个 `evaluate`，让 primary 和 secondary 并行查询。
-两条 `NOERROR` `respond` 启用 `race: true`，最快有效答案立即提交并取消其余
-查询。primary、secondary 的 NXDOMAIN `respond` 不启用 race；它们会被未决的
-NOERROR race 阻挡，直到两条正向竞速均未命中，再按 primary、secondary 顺序
-判断。因此快速 NXDOMAIN 不会压掉稍慢的 NOERROR，双方均 NXDOMAIN 时仍返回
-primary NXDOMAIN。
+A 查询先进入独立的地址池，两条 `NOERROR` `respond` 同时要求响应中有
+IPv4 地址（`ip_cidr: 0.0.0.0/0`）并启用 `race: true`。最快含地址的响应
+立即提交，空 NOERROR、仅 CNAME 或仅附加区地址不能抢赢。响应条件不重复带
+域名 rule-set，避免其与地址条件的 OR 组合绕过检查；唯一的 `match_response`
+标签继承前面 evaluate 的分类范围。仅 CNAME 仍可作为后备返回，不被改写为失败。
+
+两条地址竞速均未命中后，依次接受 primary/secondary 的 NOERROR 后备，再依次
+接受 primary/secondary 的 NXDOMAIN。地址池以同 scope 的 SERVFAIL 结束，
+不会进入后续通用池重复查询。HTTPS、SVCB、MX 等非 A 查询保持原有 NOERROR
+竞速，不要求响应含 IP；AAAA 在进入池前已返回空答。Android 策略不变。
+
+非 A 查询的 NXDOMAIN `respond` 同样不启用 race，等待未决的 NOERROR 竞速。
+所有查询的全局超时仍为 `5s`：快负答或空答与另一侧不响应的组合仍可能等满
+5 秒。这是保留有效结果优先的代价，本轮没有缩短负响应等待预算。
 
 每个 pool 最后都有同 scope 的 `predefined SERVFAIL`。双方传输失败、超时、
 SERVFAIL 或 REFUSED 时在本 pool 终止，priority 和 CN 不会穿透到后一分类。
@@ -99,7 +108,10 @@ SERVFAIL 或 REFUSED 时在本 pool 终止，priority 和 CN 不会穿透到后�
 结束。
 
 正常 TTL 缓存和容量 4096 的 reverse mapping 保留；optimistic 缓存超时为
-`6h`。控制平面解析和 Tailscale split DNS 禁用 optimistic 缓存。
+`6h`。Linux/Windows 地址池的 A evaluate 单独设置
+`disable_optimistic_cache: true`，只使用正常 TTL 内的缓存，避免过期空答或旧
+地址抢赢新查询；它同时牺牲了 A 查询过期正向缓存的立即返回能力。其他查询
+仍保留 optimistic。控制平面解析和 Tailscale split DNS 也禁用 optimistic 缓存。
 
 生成校验器检查 `dns.final`、DNS 规则的 `server` 和 `rule_set` 引用。
 DNS `preferred_by` 引用 DNS server，而不是路由 outbound/endpoint；当前

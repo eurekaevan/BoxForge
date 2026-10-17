@@ -213,6 +213,46 @@ public sealed class DnsProfileBuilderTests
         });
     }
 
+    [TestCase(TargetPlatform.Linux, DnsResponseTags.PriorityPrimary, DnsResponseTags.PrioritySecondary)]
+    [TestCase(TargetPlatform.Linux, DnsResponseTags.DomesticPrimary, DnsResponseTags.DomesticSecondary)]
+    [TestCase(TargetPlatform.Linux, DnsResponseTags.GlobalPrimary, DnsResponseTags.GlobalSecondary)]
+    [TestCase(TargetPlatform.Windows, DnsResponseTags.PriorityPrimary, DnsResponseTags.PrioritySecondary)]
+    [TestCase(TargetPlatform.Windows, DnsResponseTags.DomesticPrimary, DnsResponseTags.DomesticSecondary)]
+    [TestCase(TargetPlatform.Windows, DnsResponseTags.GlobalPrimary, DnsResponseTags.GlobalSecondary)]
+    public void DesktopAddressPoolsPreferIpv4BeforeEmptyAnswersWithoutUsingExpiredCache(
+        TargetPlatform platform, string primaryTag, string secondaryTag)
+    {
+        DnsConfig dns = CreateBuilder().Build(platform);
+        List<DnsRule> pool = GetPoolRules(dns.Rules, primaryTag + "-a");
+        DnsRule generalPrimary = dns.Rules.Single(rule => rule.Tag == primaryTag);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(pool, Has.Count.EqualTo(9));
+            Assert.That(pool.All(rule => rule.QueryType?.SequenceEqual(["A"]) == true), Is.True);
+            Assert.That(pool.Take(2).All(rule =>
+                rule.Action == DnsRuleAction.Evaluate && rule.DisableOptimisticCache == true), Is.True);
+            Assert.That(pool[0].Server, Is.EqualTo(generalPrimary.Server));
+            Assert.That(pool[1].Tag, Is.EqualTo(secondaryTag + "-a"));
+            Assert.That(pool.Skip(2).Take(2).All(rule =>
+                rule.Action == DnsRuleAction.Respond
+                && rule.ResponseRcode == DnsResponseCode.NoError
+                && rule.Race == true
+                && rule.IpCidr?.SequenceEqual(["0.0.0.0/0"]) == true
+                && rule.RuleSet is null), Is.True,
+                "Address races inherit scope from unique response tags, not OR-combined domain matchers.");
+            AssertResponses(pool.Skip(4).Take(4).ToList(), generalPrimary.RuleSet,
+                [primaryTag + "-a", secondaryTag + "-a", primaryTag + "-a", secondaryTag + "-a"],
+                [DnsResponseCode.NoError, DnsResponseCode.NoError,
+                    DnsResponseCode.NameError, DnsResponseCode.NameError],
+                [null, null, null, null]);
+            AssertTerminalServfail(pool[^1], generalPrimary.RuleSet);
+            Assert.That(dns.Rules.IndexOf(pool[^1]), Is.LessThan(dns.Rules.IndexOf(generalPrimary)));
+            Assert.That(generalPrimary.DisableOptimisticCache, Is.Null);
+            Assert.That(dns.Timeout, Is.EqualTo("5s"));
+        });
+    }
+
     [TestCase(TargetPlatform.Android)]
     [TestCase(TargetPlatform.Linux)]
     [TestCase(TargetPlatform.Windows)]
