@@ -41,7 +41,7 @@ internal static class ConversionApi
         if (!context.Request.HasJsonContentType())
         {
             return ApiProblems.BadRequest(
-                "Content-Type 必须是 application/json。");
+                "Content-Type 必须是 application/json 或 application/*+json。");
         }
 
         byte[]? body;
@@ -121,17 +121,13 @@ internal static class ConversionApi
                             artifact.Content))
                 ]));
         }
-        catch (ArgumentException)
-        {
-            return ApiProblems.BadRequest("请求参数无效。");
-        }
         catch (BoxForgeConversionException)
         {
             return ApiProblems.ConversionFailed();
         }
-        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
         {
-            return ApiProblems.UnexpectedError();
+            return ApiProblems.UnexpectedError(context, exception);
         }
     }
 }

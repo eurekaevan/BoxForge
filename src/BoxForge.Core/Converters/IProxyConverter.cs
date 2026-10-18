@@ -7,8 +7,6 @@ namespace BoxForge.Converters;
 
 public interface IProxyConverter
 {
-    SourceFieldSchema SourceSchema { get; }
-
     bool CanHandle(string proxyType);
 
     NodeConversionResult Convert(ClashProxyNode proxy);
@@ -21,8 +19,6 @@ public abstract class ProxyConverterBase(
     private readonly HashSet<string> types = new(
         supportedTypes,
         StringComparer.OrdinalIgnoreCase);
-
-    public SourceFieldSchema SourceSchema => Schema;
 
     protected abstract SourceFieldSchema Schema { get; }
 

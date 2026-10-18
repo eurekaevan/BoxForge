@@ -51,7 +51,6 @@ public sealed partial class GenerateCommandRunner(
         catch (Exception ex)
         {
             LogUnhandledFailure(logger, ex);
-            LogFailureSummary(logger);
             return FailureExitCode;
         }
     }
@@ -70,7 +69,4 @@ public sealed partial class GenerateCommandRunner(
 
     [LoggerMessage(5, LogLevel.Error, "本地批量生成失败。")]
     private static partial void LogUnhandledFailure(ILogger logger, Exception exception);
-
-    [LoggerMessage(6, LogLevel.Information, "■ 本地批量生成完成：✓ 0 成功，↷ 0 跳过，✗ 1 失败，共 1 个。")]
-    private static partial void LogFailureSummary(ILogger logger);
 }

@@ -106,9 +106,6 @@ public sealed class DnsProfileBuilder(IOptions<TailscaleOptions> tailscaleOption
             case DnsResolverSelectionMode.SequentialFallback:
                 CompileSequentialFallback(rules, pool);
                 break;
-            case DnsResolverSelectionMode.ParallelPrimaryPreferred:
-                CompileParallelPrimaryPreferred(rules, pool);
-                break;
             case DnsResolverSelectionMode.ParallelFastest:
                 CompileParallelFastest(rules, pool);
                 break;
@@ -139,16 +136,6 @@ public sealed class DnsProfileBuilder(IOptions<TailscaleOptions> tailscaleOption
         AddAcceptedResponses(rules, pool, pool.SecondaryResponse);
     }
 
-    private static void CompileParallelPrimaryPreferred(
-        List<DnsRule> rules,
-        ResolverPoolDefinition pool)
-    {
-        AddEvaluate(rules, pool, primary: true);
-        AddEvaluate(rules, pool, primary: false);
-        AddAcceptedResponses(rules, pool, pool.PrimaryResponse);
-        AddAcceptedResponses(rules, pool, pool.SecondaryResponse);
-    }
-
     private static void CompileParallelFastest(
         List<DnsRule> rules,
         ResolverPoolDefinition pool)
@@ -156,8 +143,8 @@ public sealed class DnsProfileBuilder(IOptions<TailscaleOptions> tailscaleOption
         var addressPool = pool with
         {
             QueryType = "A",
-            PrimaryResponse = pool.PrimaryResponse + "-a",
-            SecondaryResponse = pool.SecondaryResponse + "-a"
+            PrimaryResponse = DnsResponseTags.ForAddressQuery(pool.PrimaryResponse),
+            SecondaryResponse = DnsResponseTags.ForAddressQuery(pool.SecondaryResponse)
         };
         AddEvaluate(rules, addressPool, primary: true);
         AddEvaluate(rules, addressPool, primary: false);

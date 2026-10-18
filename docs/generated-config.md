@@ -105,10 +105,11 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
 
 ## DNS 与持久化缓存
 
-- 生成配置包含官方 `$schema`。
 - DNS 查询默认超时为 `5s`。Android 正常只查询首选 resolver，首选查询使用
-  `2s` 超时，失败后才查询备用；Linux/Windows 同时查询两家，并让最快的
-  `NOERROR` 胜出。NXDOMAIN 不参与竞速，双方没有 `NOERROR` 时仍首选 primary
+  `2s` 超时，失败后才查询备用；Linux/Windows 同时查询两家。A 查询优先让
+  含 IPv4 地址的 `NOERROR` 响应竞速，双方均无地址时才依次接受 primary、secondary
+  的空答或仅 CNAME 等 `NOERROR` 后备；非 A 查询让最快的 `NOERROR` 胜出。
+  NXDOMAIN 不参与竞速，双方没有 `NOERROR` 时依次接受 primary、secondary 的
   NXDOMAIN。两家都失败时明确返回 `SERVFAIL`；详见
   [DNS 分类与回退](routing-and-dns.md)。
 - DNS 默认使用 `ipv4_only`，缓存容量为 `4096`，并启用超时为 `6h` 的
@@ -189,13 +190,17 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
 
   | 来源 | 内部 tag → 文件名 | URL 基础路径 |
   | --- | --- | --- |
-  | DustinWin release | `ads→ads.srs`、`ai→ai.srs`、`spotify→spotify.srs`、`games→games.srs`、`cn→cn.srs`、`cnip→cnip.srs` | `https://github.com/DustinWin/ruleset_geodata/releases/download/sing-box-ruleset/` |
-  | MetaCubeX `sing` 分支 | `google→google.srs`、`microsoft→microsoft.srs` | `https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/` |
+  | DustinWin release | `ai→ai.srs`、`spotify→spotify.srs`、`games→games.srs`、`cn→cn.srs`、`cnip→cnip.srs` | `https://github.com/DustinWin/ruleset_geodata/releases/download/sing-box-ruleset/` |
+  | MetaCubeX `sing` 分支 | `ads→category-ads-and-telemetry.srs`、`google→google.srs`、`microsoft→microsoft.srs` | `https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/` |
 
   DustinWin 同名文件共用 `{tag}.srs` 模板；MetaCubeX 的文件逐项声明。
-  广告过滤使用 `ads`；Games 使用 `games`，覆盖范围由上游规则维护，
-  不限于单一游戏平台。DustinWin 的 `ads` 来源于 anti-AD，`games` 明确排除
-  `games-cn`；不能把上游分类名称当作具体域名覆盖范围的保证。
+  广告与遥测过滤的内部 tag 仍为 `ads`，使用 MetaCubeX 的
+  `category-ads-and-telemetry`，替代 DustinWin 的 anti-AD 来源。该集合合并
+  `category-ads` 与 `category-telemetry`，拦截广告、追踪及上游收录的软件遥测、
+  错误报告和诊断域名；不代表覆盖所有软件遥测。不使用还包含服务商自身域名的
+  `category-ads-all`。域名过滤仍可能误伤共享服务，不能保证零误拦。
+  Games 使用 DustinWin 的 `games`，不限于单一游戏平台，并明确排除
+  `games-cn`；具体覆盖范围由上游规则维护。
 - 全部 IPv6 使用原生 `ip_version: 6` 匹配，并在 DIRECT、Tailscale 和所有
   代理业务路由之前被拒绝。不生成仅供 mixed 域名目标使用的 `resolve` 和复检规则。
 - TCP HTTP/TLS 嗅探排除 `21/22/3306/5900`，避免这些端口上客户端等待服务器

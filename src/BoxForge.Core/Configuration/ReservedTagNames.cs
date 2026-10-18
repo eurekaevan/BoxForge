@@ -25,18 +25,14 @@ public static class ReservedTagNames
             SingboxTags.ApiService,
             HttpClientTags.RuleSetProxy,
             HttpClientTags.DashboardDirect,
-            DnsResponseTags.PriorityPrimary,
-            DnsResponseTags.PrioritySecondary,
-            DnsResponseTags.DomesticPrimary,
-            DnsResponseTags.DomesticSecondary,
-            DnsResponseTags.GlobalPrimary,
-            DnsResponseTags.GlobalSecondary,
             RuleSetTags.Ads,
             RuleSetTags.Cn,
             RuleSetTags.CnIp
         ];
 
         var tags = new HashSet<string>(fixedTags, StringComparer.Ordinal);
+        tags.UnionWith(DnsResponseTags.BaseTags);
+        tags.UnionWith(DnsResponseTags.BaseTags.Select(DnsResponseTags.ForAddressQuery));
         foreach (RegionDefinition region in ProfileDefinitions.Regions)
         {
             tags.Add(region.DisplayName);

@@ -14,16 +14,6 @@ public sealed class RouteProfileBuilder(
 
     public RouteConfig Build(TargetPlatform platform, AddressFamilyPolicy addressFamily)
     {
-        var directForwardingModes = new Dictionary<RouteRule, DirectForwardingMode>(
-            ReferenceEqualityComparer.Instance);
-        RouteRule MarkDirectForwarding(
-            RouteRule rule,
-            DirectForwardingMode mode)
-        {
-            directForwardingModes.Add(rule, mode);
-            return rule;
-        }
-
         var route = new RouteConfig
         {
             Final = SingboxTags.MainProxyGroup,
@@ -34,13 +24,13 @@ public sealed class RouteProfileBuilder(
         route.RuleSet.AddRange([
             CreateDustinWinRuleSetGroup(
                 [
-                    RuleSetTags.Ads,
                     RuleSetTags.Ai,
                     RuleSetTags.Spotify,
                     RuleSetTags.Games,
                     RuleSetTags.Cn,
                     RuleSetTags.CnIp
                 ]),
+            CreateMetaCubeXRuleSet(RuleSetTags.Ads, "category-ads-and-telemetry"),
             CreateMetaCubeXRuleSet(RuleSetTags.Google, "google"),
             CreateMetaCubeXRuleSet(RuleSetTags.Microsoft, "microsoft")
         ]);
@@ -63,6 +53,17 @@ public sealed class RouteProfileBuilder(
                 Action = RouteRuleAction.HijackDns
             }
         };
+        void AddDirectRule(RouteRule rule, DirectForwardingMode mode)
+        {
+            if (PlatformProfile.For(platform).UseDirectForwarding)
+            {
+                rules.Add(CreateForwardingRule(rule, mode, RouteRuleAction.Bypass, outbound: null, useBridgeGate: false));
+                rules.Add(CreateForwardingRule(rule, mode, RouteRuleAction.Route, SingboxTags.BridgeOutbound, useBridgeGate: true));
+            }
+
+            rules.Add(rule);
+        }
+
         if (addressFamily == AddressFamilyPolicy.Ipv4Only)
         {
             rules.Add(CreateIpv6RejectRule());
@@ -80,13 +81,13 @@ public sealed class RouteProfileBuilder(
             });
         }
 
+        AddDirectRule(
+            new RouteRule { IpIsPrivate = true, Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound },
+            DirectForwardingMode.PreSniff);
+        AddDirectRule(
+            new RouteRule { IpCidr = ["223.5.5.5/32"], Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound },
+            DirectForwardingMode.PreSniff);
         rules.AddRange([
-            MarkDirectForwarding(
-                new RouteRule { IpIsPrivate = true, Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound },
-                DirectForwardingMode.PreSniff),
-            MarkDirectForwarding(
-                new RouteRule { IpCidr = ["223.5.5.5/32"], Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound },
-                DirectForwardingMode.PreSniff),
             new()
             {
                 Type = RouteRuleType.Logical,
@@ -142,15 +143,13 @@ public sealed class RouteProfileBuilder(
             rules.Add(CreateServiceRouteRule(service));
         }
 
-        rules.AddRange([
-            MarkDirectForwarding(
-                CreateDomesticUdp443DirectRule([RuleSetTags.Cn], SingboxTags.DirectOutbound),
-                DirectForwardingMode.PostUdpSniff),
-            MarkDirectForwarding(
-                CreateDomesticUdp443DirectRule([RuleSetTags.CnIp], SingboxTags.DirectOutbound),
-                DirectForwardingMode.PostUdpSniff),
-            CreateUdp443RejectRule()
-        ]);
+        AddDirectRule(
+            CreateDomesticUdp443DirectRule([RuleSetTags.Cn], SingboxTags.DirectOutbound),
+            DirectForwardingMode.PostUdpSniff);
+        AddDirectRule(
+            CreateDomesticUdp443DirectRule([RuleSetTags.CnIp], SingboxTags.DirectOutbound),
+            DirectForwardingMode.PostUdpSniff);
+        rules.Add(CreateUdp443RejectRule());
 
         foreach (var service in ProfileDefinitions.Services.Where(
             service => !service.PrecedesDomesticRoutes
@@ -159,71 +158,16 @@ public sealed class RouteProfileBuilder(
             rules.Add(CreateServiceRouteRule(service));
         }
 
-        rules.AddRange([
-            MarkDirectForwarding(
-                new RouteRule { RuleSet = [RuleSetTags.Cn], Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound },
-                DirectForwardingMode.PostUdpSniff),
-            MarkDirectForwarding(
-                new RouteRule { RuleSet = [RuleSetTags.CnIp], Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound },
-                DirectForwardingMode.PostUdpSniff)
-        ]);
+        AddDirectRule(
+            new RouteRule { RuleSet = [RuleSetTags.Cn], Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound },
+            DirectForwardingMode.PostUdpSniff);
+        AddDirectRule(
+            new RouteRule { RuleSet = [RuleSetTags.CnIp], Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound },
+            DirectForwardingMode.PostUdpSniff);
 
-        route.Rules.AddRange(AddDirectForwardingLayers(
-            rules,
-            PlatformProfile.For(platform).UseDirectForwarding,
-            directForwardingModes));
+        route.Rules.AddRange(rules);
         return route;
     }
-
-    private static IEnumerable<RouteRule> AddDirectForwardingLayers(
-        IEnumerable<RouteRule> rules,
-        bool useDirectForwarding,
-        IReadOnlyDictionary<RouteRule, DirectForwardingMode> forwardingModes)
-    {
-        foreach (RouteRule rule in rules)
-        {
-            if (useDirectForwarding
-                && forwardingModes.TryGetValue(
-                    rule,
-                    out DirectForwardingMode forwardingMode))
-            {
-                EnsureDirectForwardingRule(rule);
-                yield return CreateBypassRule(rule, forwardingMode);
-                yield return CreateBridgeRouteRule(rule, forwardingMode);
-            }
-
-            yield return rule;
-        }
-    }
-
-    private static void EnsureDirectForwardingRule(RouteRule rule)
-    {
-        if (rule.Type == RouteRuleType.Logical
-            || rule.Action != RouteRuleAction.Route
-            || rule.Outbound != SingboxTags.DirectOutbound)
-        {
-            throw new InvalidOperationException(
-                "Only non-logical DIRECT route rules can opt in to direct forwarding.");
-        }
-    }
-
-    private static RouteRule CreateBridgeRouteRule(
-        RouteRule directRule,
-        DirectForwardingMode forwardingMode) => CreateForwardingRule(
-            directRule,
-            forwardingMode,
-            RouteRuleAction.Route,
-            SingboxTags.BridgeOutbound,
-            useBridgeGate: true);
-
-    private static RouteRule CreateBypassRule(
-        RouteRule directRule,
-        DirectForwardingMode forwardingMode) => CreateForwardingRule(
-            directRule,
-            forwardingMode,
-            RouteRuleAction.Bypass,
-            outbound: null,
-            useBridgeGate: false);
 
     private static RouteRule CreateForwardingRule(
         RouteRule directRule,

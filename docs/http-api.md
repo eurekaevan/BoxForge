@@ -33,7 +33,7 @@ curl http://127.0.0.1:5080/healthz
 
 ## JSON 转换
 
-`POST /api/v1/convert` 要求 `Content-Type: application/json`，且不接受
+`POST /api/v1/convert` 接受 `Content-Type: application/json` 或 `application/*+json`，且不接受
 契约外字段。
 
 ```json
@@ -132,6 +132,8 @@ Windows。每个 `config.json` 与引擎产物的 UTF-8 字节完全一致。
 | `500` | 未预期的服务器错误 |
 
 错误响应不包含 YAML、节点凭据、完整生成配置或异常堆栈。
+未预期的程序错误返回 `500`，响应中的 `traceId` 可关联服务端诊断；日志仅记录
+请求标识、端点、异常类型和调用栈，不记录异常消息或输入内容。
 截断的 multipart（例如缺少结束边界）按无效请求返回 `400`，不作为内部错误；
 请求取消不转成输入错误，真正的服务器 I/O 故障仍返回 `500`。
 

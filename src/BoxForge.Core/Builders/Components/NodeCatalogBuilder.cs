@@ -23,12 +23,13 @@ public sealed partial class NodeCatalogBuilder(
         {
             if (proxy.Type == null)
             {
+                string message = $"节点 '{proxy.Name}' 缺少 type 字段";
                 if (strictNodeValidation)
                 {
-                    throw new NodeParseException(
-                        $"节点 '{proxy.Name}' 缺少 type 字段");
+                    throw new NodeParseException(message);
                 }
 
+                LogInvalidNode(logger, message);
                 continue;
             }
 
@@ -36,12 +37,13 @@ public sealed partial class NodeCatalogBuilder(
                 candidate => candidate.CanHandle(proxy.Type));
             if (converter == null)
             {
+                string message = $"节点 '{proxy.Name}' 使用了不支持的类型: {proxy.Type}";
                 if (strictNodeValidation)
                 {
-                    throw new NodeParseException(
-                        $"节点 '{proxy.Name}' 使用了不支持的类型: {proxy.Type}");
+                    throw new NodeParseException(message);
                 }
 
+                LogInvalidNode(logger, message);
                 continue;
             }
 

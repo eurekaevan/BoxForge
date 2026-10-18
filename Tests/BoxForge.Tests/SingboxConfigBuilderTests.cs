@@ -193,15 +193,19 @@ public sealed class SingboxConfigBuilderTests
             Assert.That(json, Does.Not.Contain("anti-ad"));
             Assert.That(json, Does.Not.Contain("anti-ad.net"));
             Assert.That(json, Does.Not.Contain("adguard-dns"));
-            Assert.That(serializedRuleSets.GetArrayLength(), Is.EqualTo(3));
+            Assert.That(serializedRuleSets.GetArrayLength(), Is.EqualTo(4));
             Assert.That(serializedDustinWinTags.ValueKind, Is.EqualTo(JsonValueKind.Array));
-            Assert.That(serializedDustinWinTags.GetArrayLength(), Is.EqualTo(6));
+            Assert.That(serializedDustinWinTags.GetArrayLength(), Is.EqualTo(5));
             Assert.That(
                 serializedRuleSets[0].GetProperty("url").GetString(),
                 Is.EqualTo("https://github.com/DustinWin/ruleset_geodata/releases/download/sing-box-ruleset/{tag}.srs"));
             Assert.That(
                 serializedRuleSets[1].GetProperty("tag").ValueKind,
                 Is.EqualTo(JsonValueKind.String));
+            Assert.That(serializedRuleSets[1].GetProperty("tag").GetString(),
+                Is.EqualTo(RuleSetTags.Ads));
+            Assert.That(serializedRuleSets[1].GetProperty("url").GetString(),
+                Is.EqualTo("https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/category-ads-and-telemetry.srs"));
             Assert.That(json, Does.Not.Contain("SagerNet"));
             Assert.That(json, Does.Not.Contain("geosite-"));
             Assert.That(json, Does.Not.Contain("geoip-"));

@@ -354,10 +354,12 @@ public sealed partial class LocalGenerationWorkflow(
         ? StringComparer.OrdinalIgnoreCase
         : StringComparer.Ordinal;
 
-    private void ReplaceOutputDirectory(
+    internal void ReplaceOutputDirectory(
         string stagingDirectory,
-        string outputDirectory)
+        string outputDirectory,
+        Action<string, string>? moveDirectory = null)
     {
+        moveDirectory ??= Directory.Move;
         string parentDirectory = Directory.GetParent(outputDirectory)!.FullName;
         string backupDirectory = Path.Combine(
             parentDirectory,
@@ -368,19 +370,29 @@ public sealed partial class LocalGenerationWorkflow(
         {
             if (Directory.Exists(outputDirectory))
             {
-                Directory.Move(outputDirectory, backupDirectory);
+                moveDirectory(outputDirectory, backupDirectory);
                 oldOutputMoved = true;
             }
 
-            Directory.Move(stagingDirectory, outputDirectory);
+            moveDirectory(stagingDirectory, outputDirectory);
         }
-        catch
+        catch (Exception publishFailure)
         {
             if (oldOutputMoved
                 && !Directory.Exists(outputDirectory)
                 && Directory.Exists(backupDirectory))
             {
-                Directory.Move(backupDirectory, outputDirectory);
+                try
+                {
+                    moveDirectory(backupDirectory, outputDirectory);
+                }
+                catch (Exception restoreFailure)
+                {
+                    throw new AggregateException(
+                        $"发布输出和恢复旧输出均失败。旧输出保留在：{backupDirectory}",
+                        publishFailure,
+                        restoreFailure);
+                }
             }
 
             throw;

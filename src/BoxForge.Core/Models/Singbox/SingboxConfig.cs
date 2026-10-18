@@ -4,10 +4,6 @@ namespace BoxForge.Models.Singbox;
 
 public record SingboxConfig
 {
-    [JsonPropertyOrder(int.MinValue)]
-    [JsonPropertyName("$schema")]
-    public string Schema { get; init; } = "https://sing-box.sagernet.org/schema.json";
-
     [JsonPropertyName("log")] public LogConfig Log { get; init; } = new();
     [JsonPropertyName("dns")] public DnsConfig Dns { get; init; } = new();
     [JsonPropertyName("http_clients")] public List<HttpClientConfig> HttpClients { get; init; } = [];

@@ -5,8 +5,7 @@ namespace BoxForge.Configuration;
 public enum DnsResolverSelectionMode
 {
     SequentialFallback,
-    ParallelPrimaryPreferred,
-    ParallelFastest
+    ParallelFastest = 2
 }
 
 public static class DnsResolverSelectionPolicies

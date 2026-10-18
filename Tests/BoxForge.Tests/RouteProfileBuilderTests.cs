@@ -15,7 +15,6 @@ public sealed class RouteProfileBuilderTests
         "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/";
     private static readonly string[] DustinWinRuleSetTags =
     [
-        RuleSetTags.Ads,
         RuleSetTags.Ai,
         RuleSetTags.Spotify,
         RuleSetTags.Games,
@@ -158,12 +157,14 @@ public sealed class RouteProfileBuilderTests
         });
     }
 
-    [Test]
-    public void RemoteRuleSetsMapSemanticTagsToDustinWinAndMetaCubeX()
+    [TestCase(TargetPlatform.Android)]
+    [TestCase(TargetPlatform.Linux)]
+    [TestCase(TargetPlatform.Windows)]
+    public void RemoteRuleSetsMapSemanticTagsToDustinWinAndMetaCubeX(TargetPlatform platform)
     {
-        RouteConfig route = CreateBuilder().Build(TargetPlatform.Linux);
+        RouteConfig route = CreateBuilder().Build(platform);
         SingboxRuleSet dustinWinRuleSet = route.RuleSet.Single(ruleSet =>
-            ruleSet.Tag?.Contains(RuleSetTags.Ads) == true);
+            ruleSet.Tag?.Contains(RuleSetTags.Ai) == true);
         Dictionary<string, string?> metaCubeXUrls = route.RuleSet
             .Where(ruleSet => ruleSet != dustinWinRuleSet)
             .ToDictionary(ruleSet => ruleSet.Tag!.Single(), ruleSet => ruleSet.Url);
@@ -174,7 +175,7 @@ public sealed class RouteProfileBuilderTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(route.RuleSet, Has.Count.EqualTo(3));
+            Assert.That(route.RuleSet, Has.Count.EqualTo(4));
             Assert.That(dustinWinRuleSet.Tag, Is.EqualTo(DustinWinRuleSetTags));
             Assert.That(dustinWinRuleSet.Type, Is.EqualTo(RuleSetType.Remote));
             Assert.That(dustinWinRuleSet.Format, Is.EqualTo(RuleSetFormat.Binary));
@@ -182,6 +183,7 @@ public sealed class RouteProfileBuilderTests
             Assert.That(dustinWinRuleSet.UpdateInterval, Is.EqualTo("1d"));
             Assert.That(metaCubeXUrls, Is.EquivalentTo(new Dictionary<string, string?>
             {
+                [RuleSetTags.Ads] = MetaCubeXRuleSetUrlBase + "category-ads-and-telemetry.srs",
                 [RuleSetTags.Google] = MetaCubeXRuleSetUrlBase + "google.srs",
                 [RuleSetTags.Microsoft] = MetaCubeXRuleSetUrlBase + "microsoft.srs"
             }));

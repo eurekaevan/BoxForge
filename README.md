@@ -134,6 +134,8 @@ singboxConfigs/
 
 生成过程先写入输出目录同级的临时目录。全部转换、内置校验和写入
 成功后，才用完整的新目录替换旧输出；已不再生成的旧文件也会被移除。
+替换通过先移走旧目录、再移入新目录完成，两步之间输出路径可能短暂不存在，
+不保证并发读取者看到无间断的原子切换。
 任意一项失败时，旧输出保持不变，已写入临时目录的变更在摘要中计为
 “已回滚”。
 
@@ -176,7 +178,7 @@ dotnet run --project src/BoxForge.Cli -- generate
 ## 文档
 
 - [版本与发布契约](docs/releases.md)：日期版本、兼容性与策略基线、发布和升级步骤
-- [架构与扩展](docs/architecture.md)：处理流程、目录职责、原子替换和校验边界
+- [架构与扩展](docs/architecture.md)：处理流程、目录职责、整批替换与失败回滚和校验边界
 - [HTTP API](docs/http-api.md)：JSON 转换、YAML/ZIP 导出、错误契约和安全边界
 - [配置参考](docs/configuration.md)：所有环境变量、默认值与 Tailscale 行为
 - [生成配置约定](docs/generated-config.md)：平台差异、缓存、节点和 rule-set 行为
@@ -189,6 +191,7 @@ dotnet run --project src/BoxForge.Cli -- generate
 dotnet format BoxForge.slnx --verify-no-changes
 dotnet build BoxForge.slnx --no-incremental --warnaserror
 dotnet test BoxForge.slnx --no-build
+node --test scripts/verification-process.test.mjs
 ```
 
 内置校验器负责 BoxForge 自身的生成约束，例如标签唯一性、引用完整性和

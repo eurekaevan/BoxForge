@@ -130,14 +130,17 @@ internal static class ExportApi
             return ApiProblems.ConversionFailed();
         }
 
+        if (string.IsNullOrWhiteSpace(yaml))
+        {
+            return ApiProblems.BadRequest("yaml 不能为空。");
+        }
+
         try
         {
             ConversionBundle bundle = await engine.ConvertAsync(
                 new ConversionRequest(name, yaml, platforms),
                 cancellationToken);
             byte[] archive = await ConversionZipBuilder.BuildAsync(
-                name,
-                platforms,
                 bundle,
                 cancellationToken);
 
@@ -145,17 +148,13 @@ internal static class ExportApi
                 "attachment; filename=\"boxforge-output.zip\"";
             return Results.File(archive, "application/zip");
         }
-        catch (ArgumentException)
-        {
-            return ApiProblems.BadRequest("请求参数无效。");
-        }
         catch (BoxForgeConversionException)
         {
             return ApiProblems.ConversionFailed();
         }
-        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
         {
-            return ApiProblems.UnexpectedError();
+            return ApiProblems.UnexpectedError(context, exception);
         }
     }
 

@@ -4,6 +4,7 @@ using BoxForge.Models;
 using BoxForge.Parsers;
 using BoxForge.Models.Clash;
 using BoxForge.Models.Singbox;
+using BoxForge.Exceptions;
 
 namespace BoxForge.Services;
 
@@ -20,7 +21,7 @@ public sealed class ConversionService(
         bool strictNodeValidation = false)
     {
         ClashConfig clashConfig = clashParser.Parse(yamlContent)
-            ?? throw new InvalidOperationException("YAML 解析失败，请检查文件内容。");
+            ?? throw new NodeParseException("YAML 解析失败，请检查文件内容。");
         NodeCatalog nodes = nodeCatalogBuilder.Build(
             clashConfig,
             strictNodeValidation);

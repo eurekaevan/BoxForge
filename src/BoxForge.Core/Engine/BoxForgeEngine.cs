@@ -1,6 +1,7 @@
 using BoxForge.Exceptions;
 using BoxForge.Models;
 using BoxForge.Services;
+using YamlDotNet.Core;
 
 namespace BoxForge.Engine;
 
@@ -29,7 +30,7 @@ public sealed class BoxForgeEngine(
                 request.ClashYaml,
                 strictNodeValidation: true);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (ex is NodeParseException or YamlException)
         {
             throw new BoxForgeConversionException(
                 "Clash YAML 转换失败。",
@@ -54,7 +55,7 @@ public sealed class BoxForgeEngine(
                     content,
                     configSerializer.GetContentHash(content)));
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (ConfigValidationException ex)
             {
                 throw new BoxForgePlatformConversionException(platform, ex);
             }

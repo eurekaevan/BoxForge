@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
+using System.Text.RegularExpressions;
 using BoxForge.Engine;
 using BoxForge.Models;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -134,6 +135,17 @@ public sealed class ServerExportApiTests
                     Is.EqualTo(Encoding.UTF8.GetBytes(artifact.Content)));
             });
         }
+    }
+
+    [TestCase(" \r\n\t")]
+    [TestCase("\uFEFF")]
+    [TestCase("\uFEFF \n")]
+    public async Task RejectsBlankDecodedYaml(string yaml)
+    {
+        using HttpClient client = factory.CreateClient();
+        using HttpResponseMessage response = await PostExportAsync(
+            client, Encoding.UTF8.GetBytes(yaml), "empty.yaml", null, ["Android"]);
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
     }
 
     [Test]
@@ -475,7 +487,7 @@ public sealed class ServerExportApiTests
     }
 
     [Test]
-    public async Task RootPageAndLocalAssetsLoadWithoutExternalResources()
+    public async Task RootPageUsesLocalResourcesAndRestrictsConnectionsToSameOrigin()
     {
         using HttpClient client = factory.CreateClient();
 
@@ -486,7 +498,29 @@ public sealed class ServerExportApiTests
         using HttpResponseMessage scriptResponse = await client.GetAsync(
             "/app.js");
         string styles = await stylesResponse.Content.ReadAsStringAsync();
-        string script = await scriptResponse.Content.ReadAsStringAsync();
+
+        // Inspect resource declarations, allowing ordinary links and explanatory text.
+        string resourceMarkup = Regex.Replace(
+            page,
+            @"<!--.*?-->",
+            "",
+            RegexOptions.Singleline);
+        string styleDeclarations = Regex.Replace(
+            styles,
+            @"/\*.*?\*/",
+            "",
+            RegexOptions.Singleline);
+        const string externalHtmlResource = """
+            (?is)<(?:script|link|img|iframe|source|video|audio|object|embed)\b[^>]*\s(?:src|href|poster|data)\s*=\s*["']?(?:https?:|//)
+            """;
+        const string externalCssResource = """
+            (?i)(?:url\(\s*["']?|@import\s+["'])(?:https?:|//)
+            """;
+        string[] contentSecurityPolicy = pageResponse.Headers
+            .GetValues("Content-Security-Policy").Single()
+            .Split(
+                ';',
+                StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
 
         Assert.Multiple(() =>
         {
@@ -498,17 +532,22 @@ public sealed class ServerExportApiTests
             Assert.That(scriptResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK));
             Assert.That(page, Does.Contain("id=\"export-form\""));
             Assert.That(page, Does.Contain("不会被持久保存"));
-            Assert.That(page, Does.Not.Contain("http://"));
-            Assert.That(page, Does.Not.Contain("https://"));
+            Assert.That(resourceMarkup, Does.Not.Match(externalHtmlResource));
             Assert.That(page, Does.Not.Contain("type=\"url\""));
-            Assert.That(styles, Does.Not.Contain("http://"));
-            Assert.That(styles, Does.Not.Contain("https://"));
-            Assert.That(script, Does.Not.Contain("http://"));
-            Assert.That(script, Does.Not.Contain("https://"));
-            Assert.That(
-                pageResponse.Headers.GetValues("Content-Security-Policy")
-                    .Single(),
-                Does.Contain("default-src 'none'"));
+            Assert.That(styleDeclarations, Does.Not.Match(externalCssResource));
+            // CSP also restricts dynamic resources and JavaScript network requests.
+            Assert.That(contentSecurityPolicy, Is.EquivalentTo(new[]
+            {
+                "default-src 'none'",
+                "script-src 'self'",
+                "style-src 'self'",
+                "connect-src 'self'",
+                "img-src 'self' data:",
+                "base-uri 'none'",
+                "form-action 'self'",
+                "frame-ancestors 'none'",
+                "object-src 'none'"
+            }));
             Assert.That(
                 pageResponse.Headers.GetValues("X-Content-Type-Options")
                     .Single(),

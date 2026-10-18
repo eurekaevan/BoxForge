@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../BoxForge.Core/BoxForge.Core.csproj" />
+    <InternalsVisibleTo Include="BoxForge.Tests" />
   </ItemGroup>
 
 </Project>

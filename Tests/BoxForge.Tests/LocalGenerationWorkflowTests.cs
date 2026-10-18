@@ -2,6 +2,7 @@ using BoxForge.Engine;
 using BoxForge.Exceptions;
 using BoxForge.Models;
 using BoxForge.Workflows;
+using BoxForge.App;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -93,7 +94,7 @@ public sealed class LocalGenerationWorkflowTests
     }
 
     [Test]
-    public async Task EngineFailurePreservesExistingOutputAndRollsBackBatch()
+    public async Task EngineFailureDiscardsStagingWithoutPublishingBatch()
     {
         string inputDirectory = CreateDirectory("input");
         string outputDirectory = CreateDirectory("output");
@@ -184,6 +185,76 @@ public sealed class LocalGenerationWorkflowTests
             Assert.That(
                 logger.Entries.Single(entry => entry.EventId.Id == 13).Message,
                 Does.Contain("[Linux]"));
+        });
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void PublicationFailureRestoresOldOutputOrPreservesBackupAndBothErrors(bool restorationFails)
+    {
+        string staging = CreateDirectory("staging");
+        string output = CreateDirectory("output");
+        File.WriteAllText(System.IO.Path.Combine(staging, "new.txt"), "new");
+        File.WriteAllText(System.IO.Path.Combine(output, "old.txt"), "old");
+        var workflow = CreateWorkflow(new RecordingEngine(_ => throw new AssertionException("No conversion expected")));
+        var publishError = new IOException("publish failed");
+        var restoreError = new UnauthorizedAccessException("restore failed");
+        int moves = 0;
+        string? backup = null;
+        void Move(string source, string destination)
+        {
+            moves++;
+            if (moves == 1) backup = destination;
+            if (moves == 2) throw publishError;
+            if (moves == 3 && restorationFails) throw restoreError;
+            Directory.Move(source, destination);
+        }
+
+        if (restorationFails)
+        {
+            var error = Assert.Throws<AggregateException>(() => workflow.ReplaceOutputDirectory(staging, output, Move));
+            Assert.Multiple(() =>
+            {
+                Assert.That(error!.InnerExceptions, Is.EqualTo(new Exception[] { publishError, restoreError }));
+                Assert.That(error.Message, Does.Contain(backup!));
+                Assert.That(File.ReadAllText(System.IO.Path.Combine(backup!, "old.txt")), Is.EqualTo("old"));
+                Assert.That(Directory.Exists(output), Is.False);
+            });
+        }
+        else
+        {
+            Assert.That(Assert.Throws<IOException>(() => workflow.ReplaceOutputDirectory(staging, output, Move)),
+                Is.SameAs(publishError));
+            Assert.That(File.ReadAllText(System.IO.Path.Combine(output, "old.txt")), Is.EqualTo("old"));
+            Assert.That(Directory.Exists(backup), Is.False);
+        }
+        Assert.That(File.ReadAllText(System.IO.Path.Combine(staging, "new.txt")), Is.EqualTo("new"));
+    }
+
+    [Test]
+    public void RealDirectoryMoveFailureRestoresExistingOutput()
+    {
+        string output = CreateDirectory("output");
+        File.WriteAllText(System.IO.Path.Combine(output, "old.txt"), "old");
+        var workflow = CreateWorkflow(new RecordingEngine(_ => throw new AssertionException("No conversion expected")));
+        Assert.Throws<DirectoryNotFoundException>(() => workflow.ReplaceOutputDirectory(
+            System.IO.Path.Combine(temporaryDirectory, "missing-staging"), output));
+        Assert.That(File.ReadAllText(System.IO.Path.Combine(output, "old.txt")), Is.EqualTo("old"));
+        Assert.That(Directory.GetDirectories(temporaryDirectory), Is.EqualTo(new[] { output }));
+    }
+
+    [Test]
+    public async Task UnexpectedWorkflowFailureDoesNotInventBatchStatistics()
+    {
+        var logger = new RecordingLogger<GenerateCommandRunner>();
+        var runner = new GenerateCommandRunner(CreateWorkflow(
+            new RecordingEngine(_ => throw new AssertionException("No conversion expected"))), logger);
+        int exitCode = await runner.RunAsync(["generate", "--input-dir", "invalid\0path"]);
+        Assert.Multiple(() =>
+        {
+            Assert.That(exitCode, Is.EqualTo(GenerateCommandRunner.FailureExitCode));
+            Assert.That(logger.Entries.Any(entry => entry.Message.Contains("本地批量生成失败", StringComparison.Ordinal)), Is.True);
+            Assert.That(logger.Entries.All(entry => !entry.Message.Contains("共 ", StringComparison.Ordinal)), Is.True);
         });
     }
 

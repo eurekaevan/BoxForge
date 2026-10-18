@@ -6,6 +6,10 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using BoxForge.Engine;
+using BoxForge.Builders;
+using BoxForge.Models.Singbox;
+using Microsoft.Extensions.Logging;
+using System.Collections.Concurrent;
 using BoxForge.Models;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -87,6 +91,45 @@ public sealed class ServerApiTests
             Assert.That(artifact.Sha256, Is.EqualTo(expectedHash));
             Assert.That(artifact.Content, Does.Contain("\"outbounds\""));
         });
+    }
+
+    [TestCase("application/json", HttpStatusCode.OK)]
+    [TestCase("application/vnd.boxforge+json", HttpStatusCode.OK)]
+    [TestCase("text/json", HttpStatusCode.BadRequest)]
+    public async Task ValidatesJsonContentTypes(string contentType, HttpStatusCode expectedStatus)
+    {
+        using HttpClient client = factory.CreateClient();
+        using var content = new StringContent(
+            JsonSerializer.Serialize(new { name = "json-type", yaml = ValidYaml, platforms = new[] { "Android" } }),
+            Encoding.UTF8,
+            contentType);
+
+        using HttpResponseMessage response = await client.PostAsync("/api/v1/convert", content);
+
+        if (expectedStatus == HttpStatusCode.OK)
+        {
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            var result = (await response.Content.ReadFromJsonAsync<ApiConvertResponse>())!;
+            Assert.That(result.Artifacts.Single().Platform, Is.EqualTo("Android"));
+        }
+        else
+        {
+            await AssertProblemAsync(response, expectedStatus);
+            Assert.That(await response.Content.ReadAsStringAsync(),
+                Does.Contain("application/json 或 application/*+json"));
+        }
+    }
+
+    [Test]
+    public async Task ReservedAddressResponseTagFailsTheWholeConversion()
+    {
+        using HttpClient client = factory.CreateClient();
+        using HttpResponseMessage response = await PostConversionAsync(
+            client, "reserved-node", ValidYaml.Replace("name: test", "name: response-global-primary-a", StringComparison.Ordinal),
+            ["Android", "Linux", "Windows"]);
+
+        await AssertProblemAsync(response, HttpStatusCode.UnprocessableEntity);
+        Assert.That(await response.Content.ReadAsStringAsync(), Does.Not.Contain("\"artifacts\""));
     }
 
     [Test]
@@ -391,6 +434,8 @@ public sealed class ServerApiTests
     }
 
     [TestCase("proxies:\n  - name: [")]
+    [TestCase("proxies: null")]
+    [TestCase("proxies: [null]")]
     [TestCase("proxies:\n  - name: unsupported\n    type: unsupported")]
     public async Task ReturnsUnprocessableEntityForConversionFailures(
         string yaml)
@@ -476,32 +521,45 @@ public sealed class ServerApiTests
         });
     }
 
-    [Test]
-    public async Task UnexpectedEngineFailureReturnsInternalServerError()
+    [TestCase(false, false)]
+    [TestCase(false, true)]
+    [TestCase(true, false)]
+    [TestCase(true, true)]
+    public async Task UnexpectedEngineFailureReturnsInternalServerError(bool export, bool argumentError)
     {
+        var logs = new RecordingLogProvider();
         using WebApplicationFactory<ServerProgram> failingFactory =
             factory.WithWebHostBuilder(builder =>
                 builder.ConfigureServices(services =>
                 {
-                    services.RemoveAll<IBoxForgeEngine>();
-                    services.AddSingleton<IBoxForgeEngine>(new ThrowingEngine());
+                    services.AddSingleton<ILoggerProvider>(logs);
+                    services.RemoveAll<ISingboxConfigBuilder>();
+                    services.AddSingleton<ISingboxConfigBuilder>(new ThrowingConfigBuilder(argumentError));
                 }));
         using HttpClient client = failingFactory.CreateClient();
-
-        using HttpResponseMessage response = await PostConversionAsync(
-            client,
-            "unexpected",
-            ValidYaml,
-            ["Android"]);
+        using var multipart = new MultipartFormDataContent();
+        multipart.Add(new StringContent(ValidYaml), "file", "unexpected.yaml");
+        multipart.Add(new StringContent("Android"), "platforms");
+        using HttpResponseMessage response = export
+            ? await client.PostAsync("/api/v1/export", multipart)
+            : await PostConversionAsync(client, "unexpected", ValidYaml, ["Android"]);
         string problem = await response.Content.ReadAsStringAsync();
+        using var document = JsonDocument.Parse(problem);
+        string traceId = document.RootElement.GetProperty("traceId").GetString()!;
+        string expectedType = argumentError ? nameof(ArgumentException) : nameof(InvalidOperationException);
 
         Assert.Multiple(() =>
         {
             Assert.That(
                 response.StatusCode,
                 Is.EqualTo(HttpStatusCode.InternalServerError));
-            Assert.That(problem, Does.Not.Contain(nameof(InvalidOperationException)));
+            Assert.That(problem, Does.Not.Contain(expectedType));
             Assert.That(problem, Does.Not.Contain("unexpected test failure"));
+            Assert.That(traceId, Is.Not.Empty);
+            Assert.That(logs.Errors.Any(message => message.Contains(traceId, StringComparison.Ordinal)
+                && message.Contains(expectedType, StringComparison.Ordinal)), Is.True,
+                $"Response trace: {traceId}; captured errors: {string.Join(Environment.NewLine, logs.Errors)}");
+            Assert.That(logs.Errors.All(message => !message.Contains("unexpected test failure", StringComparison.Ordinal)), Is.True);
         });
     }
 
@@ -559,11 +617,25 @@ public sealed class ServerApiTests
         string Sha256,
         string Content);
 
-    private sealed class ThrowingEngine : IBoxForgeEngine
+    private sealed class ThrowingConfigBuilder(bool argumentError) : ISingboxConfigBuilder
     {
-        public Task<ConversionBundle> ConvertAsync(
-            ConversionRequest request,
-            CancellationToken cancellationToken = default) =>
-            throw new InvalidOperationException("unexpected test failure");
+        public SingboxConfig Build(SingboxBuildRequest request) => throw (argumentError
+            ? new ArgumentException("unexpected test failure")
+            : new InvalidOperationException("unexpected test failure"));
+    }
+
+    private sealed class RecordingLogProvider : ILoggerProvider, ILogger
+    {
+        public ConcurrentQueue<string> Errors { get; } = new();
+        public ILogger CreateLogger(string categoryName) => this;
+        public void Dispose() { }
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => logLevel == LogLevel.Error;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
+            Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel == LogLevel.Error)
+                Errors.Enqueue(formatter(state, exception) + exception?.ToString());
+        }
     }
 }

@@ -26,7 +26,7 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
 7. 按服务定义顺序拒绝 AI、Google 的 UDP/443，促使 QUIC 回退 TCP；这两条及
    后续 UDP/443 兜底拒绝均设置 `no_drop: true`，不因触发频率切换为静默丢弃。
 8. 再次通过后置 `ip_version: 6` 拒绝 IPv6，保留服务路由前的兜底防护。
-9. 将 AI 路由到 `AI`，再将 Google 路由到 `Google`。它们位于后置 IPv6
+9. 将 AI 路由到 `🤖 AI`，再将 Google 路由到 `🔎 Google`。它们位于后置 IPv6
    拒绝规则之后，因此 IPv6 地址不会进入代理出站。
 10. 放行国内域名和 `cnip` 的 UDP/443，其他 UDP/443 全部拒绝。
 11. 生成其他服务分流，当前为 Spotify、Games 和 Microsoft。
@@ -81,7 +81,7 @@ client DNS 依次分类：
 DOMESTIC 的首选为直连 AliDNS、备用为直连 Tencent；GLOBAL 的首选为经主代理
 Cloudflare、备用为经主代理 Google。`DnsResolverSelectionPolicies` 按平台选择
 pool compiler：Android 使用 `SequentialFallback`，Linux/Windows 使用
-`ParallelFastest`；`ParallelPrimaryPreferred` 保留为明确的非默认策略。
+`ParallelFastest`。
 
 Android 先 `evaluate` primary（`timeout: 2s`），随后按顺序判断 primary 的
 `NOERROR` 和 `NXDOMAIN`。只有这两个规则都不接受 primary 结果时，才会执行

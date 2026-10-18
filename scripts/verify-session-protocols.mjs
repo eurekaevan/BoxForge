@@ -1,14 +1,15 @@
 // Real generated leaves, local HTTP target, owned temporary processes and certificate.
 import assert from 'node:assert/strict';
-import { spawn, execFile } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
-import { createServer as createTcpServer, connect } from 'node:net';
 import { createSocket } from 'node:dgram';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
+
+import { freePort, launch, waitListening, stop } from './verification-process.mjs';
 
 const run = promisify(execFile);
 const [coreArgument, configArgument, selection = 'all'] = process.argv.slice(2);
@@ -26,49 +27,6 @@ const key = join(directory, 'key.pem');
 const body = 'BoxForge session protocol verified\n';
 const httpServer = createServer((_request, response) => response.end(body));
 const delay = milliseconds => new Promise(done => setTimeout(done, milliseconds));
-
-async function freePort() {
-    const listener = createTcpServer();
-    listener.listen(0, '127.0.0.1');
-    await once(listener, 'listening');
-    const port = listener.address().port;
-    await new Promise((done, reject) => listener.close(error => error ? reject(error) : done()));
-    return port;
-}
-
-function launch(path) {
-    const child = spawn(core, ['run', '-c', path], { stdio: ['ignore', 'pipe', 'pipe'] });
-    const state = { child, log: '', error: null };
-    child.stdout.on('data', data => { state.log += data; });
-    child.stderr.on('data', data => { state.log += data; });
-    child.on('error', error => { state.error = error; });
-    return state;
-}
-
-async function waitListening(state, port) {
-    const deadline = Date.now() + 5000;
-    while (Date.now() < deadline) {
-        if (state.error) throw state.error;
-        if (state.child.exitCode !== null) throw new Error(state.log);
-        const ready = await new Promise(done => {
-            const socket = connect({ host: '127.0.0.1', port });
-            socket.once('connect', () => { socket.destroy(); done(true); });
-            socket.once('error', () => done(false));
-            socket.setTimeout(500, () => { socket.destroy(); done(false); });
-        });
-        if (ready) return;
-        await delay(50);
-    }
-    throw new Error(`Listener ${port} did not start:\n${state.log}`);
-}
-
-async function stop(state) {
-    if (!state || state.error || state.child.exitCode !== null || state.child.signalCode !== null) return;
-    const exited = once(state.child, 'exit');
-    state.child.kill('SIGTERM');
-    const timer = setTimeout(() => state.child.kill('SIGKILL'), 2000);
-    try { await exited; } finally { clearTimeout(timer); }
-}
 
 // Both hopping ports forward to one server, preserving its QUIC connection state.
 async function hopRelay(backendPort) {
@@ -130,7 +88,7 @@ try {
             assert.equal(outbound.min_idle_session, 1);
             assert.equal(outbound.client_metadata, 'test-only');
         }
-        const serverPort = await freePort();
+        const serverPort = await freePort(outbound.type === 'hysteria2' ? 'udp' : 'tcp');
         const clientPort = await freePort();
         const readinessPort = await freePort();
         let relay;
@@ -163,9 +121,9 @@ try {
             await writeFile(clientPath, JSON.stringify(clientConfig));
             await run(core, ['check', '-c', serverPath]);
             await run(core, ['check', '-c', clientPath]);
-            server = launch(serverPath);
+            server = launch(core, ['run', '-c', serverPath]);
             await waitListening(server, readinessPort);
-            client = launch(clientPath);
+            client = launch(core, ['run', '-c', clientPath]);
             await waitListening(client, clientPort);
             const request = async () => {
                 const { stdout } = await run('curl', ['--fail', '--silent', '--show-error', '--max-time', '10',

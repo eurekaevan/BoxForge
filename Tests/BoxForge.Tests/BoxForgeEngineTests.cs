@@ -388,7 +388,7 @@ public sealed class BoxForgeEngineTests
                 Is.EqualTo(TargetPlatform.Linux));
             Assert.That(
                 exception.InnerException,
-                Is.TypeOf<InvalidOperationException>());
+                Is.TypeOf<ConfigValidationException>());
             Assert.That(
                 recordingBuilder!.Calls,
                 Is.EqualTo(new[]
@@ -397,6 +397,19 @@ public sealed class BoxForgeEngineTests
                     TargetPlatform.Linux
                 }));
         });
+    }
+
+    [TestCase("proxies: null", "proxies")]
+    [TestCase("proxies: [null]", "proxies[0]")]
+    public void RejectsNullProxyStructuresWithNodeDiagnostics(string yaml, string location)
+    {
+        var error = Assert.Throws<NodeParseException>(() => new ClashParser().Parse(yaml));
+        Assert.That(error!.Message, Does.Contain(location).And.Contain("null"));
+        using ServiceProvider provider = CreateProvider();
+        var engine = provider.GetRequiredService<IBoxForgeEngine>();
+        var wrapped = Assert.ThrowsAsync<BoxForgeConversionException>(() => engine.ConvertAsync(
+            new ConversionRequest("invalid", yaml, [TargetPlatform.Android])));
+        Assert.That(wrapped!.InnerException, Is.TypeOf<NodeParseException>());
     }
 
     private static ServiceProvider CreateProvider(
@@ -435,8 +448,8 @@ public sealed class BoxForgeEngineTests
             Calls.Add(request.Platform);
             if (request.Platform == failingPlatform)
             {
-                throw new InvalidOperationException(
-                    $"模拟 {request.Platform} 转换失败。");
+                throw new ConfigValidationException([
+                    new ConfigDiagnostic("TEST", "outbounds", $"模拟 {request.Platform} 校验失败。")]);
             }
 
             return inner.Build(request);

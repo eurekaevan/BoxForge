@@ -70,7 +70,7 @@ Server 不访问订阅 URL、不保存输入或结果；上传缓冲和 ZIP 构�
 
 1. 在 `src/BoxForge.Core/Converters/` 实现 `IProxyConverter`，使
    `CanHandle` 只识别目标类型。
-2. 声明 `SourceSchema`：列出已映射字段、输入别名、有明确理由忽略的字段，
+2. 在 converter 内部声明 `Schema`：列出已映射字段、输入别名、有明确理由忽略的字段，
    以及尚不能安全映射的连接语义。公共字段和 TLS/Reality 字段复用
    `SourceFieldSchemas`，协议不支持的能力单独标为 unsupported。
 3. 将 Clash 字段校验和 sing-box outbound 创建放在该转换器内。
@@ -96,7 +96,8 @@ converter 拥有自己的字段声明；`NodeCatalogBuilder` 只负责选择 con
 不会用通配规则吞掉未知字段。
 
 引擎使用 strict conversion：任一不安全节点使整次转换失败，不返回部分配置。
-non-strict 调用则跳过整个节点并记录警告；不会删掉无法映射的字段后输出降级
+non-strict 调用则跳过整个节点并记录警告，包括缺少 `type`、未知协议、字段映射
+失败和保留 tag 冲突；不会删掉无法映射的字段后输出降级
 节点。后续协议工作应把字段从 `UnsupportedSemantic` 改为 `Mapped`，同时提供
 映射与反例测试，并重新核对锁定来源与目标核心的实际行为。
 
@@ -145,6 +146,7 @@ AAAA 阻断及 IPv6 reject guards；本地静态验证不等于真机防逃逸�
 - 同名 `.yaml`/`.yml` 会导致对应配置失败，避免不确定的输出覆盖。
 - 内容比较使用完整文本；仅当内容与文件集同时相同时，整批才视为无变更。
 - 替换时先将旧输出移到同级备份目录，再移入新输出；第二步失败时恢复备份。
+  若恢复也失败，保留备份目录，并同时报告两次失败和旧输出的备份位置。
 - 临时目录与备份目录的清理失败会记录警告，不会将已生效的新输出误报为失败。
 
 ## 校验边界

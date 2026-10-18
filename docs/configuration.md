@@ -67,12 +67,18 @@ DNS evaluate/respond 的响应 tag 使用 `response-范围-优先级`：
 `response-priority-primary`、`response-priority-secondary`、
 `response-domestic-primary`、`response-domestic-secondary`、
 `response-global-primary`、`response-global-secondary`。
+Linux/Windows 的 A 查询另用独立响应 tag，在上述六个名称后追加 `-a`：
+`response-priority-primary-a`、`response-priority-secondary-a`、
+`response-domestic-primary-a`、`response-domestic-secondary-a`、
+`response-global-primary-a`、`response-global-secondary-a`。
+这十二个响应 tag 均为全平台保留名称。
 规则集使用 BoxForge 语义 tag：`ads`、`ai`、`google`、`microsoft`、
 `spotify`、`games`、`cn`、`cnip`。外部文件名由来源映射决定，
 不作为内部命名约定。
 
 订阅中的真实节点保留来源名称。若节点名与任一 BoxForge 固定 tag、DNS 响应 tag
-或 rule-set tag 冲突，转换会直接报告明确错误，不会静默追加后缀。这样可以避免
+或 rule-set tag 冲突，strict 转换会直接报错；non-strict 调用记录警告并跳过整个
+节点，不会静默追加后缀。这样可以避免
 订阅更新后 selector 引用或已保存选择发生漂移。
 
 这些 selector tag 同时是 Clash API 使用的标识。更改 tag 会改变 Dashboard
