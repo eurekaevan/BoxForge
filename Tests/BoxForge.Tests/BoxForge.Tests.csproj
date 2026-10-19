@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <None Update="Fixtures/*.yaml" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Fixtures/default-profile-sha256.json" CopyToOutputDirectory="PreserveNewest" />
     <ProjectReference Include="../../src/BoxForge.Core/BoxForge.Core.csproj" />
     <ProjectReference Include="../../src/BoxForge.Cli/BoxForge.Cli.csproj" />
     <ProjectReference Include="../../src/BoxForge.Server/BoxForge.Server.csproj" />

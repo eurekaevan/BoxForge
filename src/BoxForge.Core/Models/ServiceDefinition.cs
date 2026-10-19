@@ -4,13 +4,14 @@ using System.Text.RegularExpressions;
 using System.Collections.Immutable;
 
 public record ServiceDefinition(
+    string Id,
     string Name,
-    RegionId? DefaultRegion,
+    string? DefaultRegion,
     ImmutableArray<string> RuleSets,
     bool PrecedesDomesticRoutes = false
 );
 
 public record RegionDefinition(
-    RegionId Id,
+    string Id,
     string DisplayName,
     Regex Pattern);

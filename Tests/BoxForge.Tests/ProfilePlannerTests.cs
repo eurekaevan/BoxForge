@@ -3,12 +3,99 @@ using BoxForge.Builders.Components;
 using BoxForge.Configuration;
 using BoxForge.Models;
 using BoxForge.Models.Singbox;
+using System.Globalization;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace BoxForge.Tests;
 
 [TestFixture]
 public sealed class ProfilePlannerTests
 {
+    [TestCase("", "SINGAPORE", true)]
+    [TestCase("tr-TR", "SINGAPORE", true)]
+    [TestCase("tr-TR", "sİngapore", false)]
+    [TestCase("tr-TR", "sıngapore", false)]
+    public void RegionPatternsPreserveGeneratedRegexCultureIndependence(string culture, string name, bool matches)
+    {
+        CultureInfo previous = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo(culture);
+            using var source = new MemoryStream(Encoding.UTF8.GetBytes(ReadDefaultProfile()));
+            var profile = BuiltInProfile.Load(source);
+            var definition = profile.Regions.Single(region => region.Id == "sg");
+            // Recreate the production pattern under this culture, regardless of static initialization order.
+            var pattern = new System.Text.RegularExpressions.Regex(definition.Pattern,
+                ProfileDefinitions.Regions.Single(region => region.Id == "sg").Pattern.Options);
+            Assert.That(pattern.IsMatch(name), Is.EqualTo(matches));
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = previous;
+        }
+    }
+
+    [TestCase("root")]
+    [TestCase("region")]
+    [TestCase("service")]
+    [TestCase("platform")]
+    [TestCase("rule_set")]
+    [TestCase("resolver")]
+    public void BuiltInProfileRejectsUnknownKeysAtEveryLevel(string level)
+    {
+        var root = JsonNode.Parse(ReadDefaultProfile())!;
+        JsonNode target = level switch
+        {
+            "region" => root["regions"]![0]!,
+            "service" => root["services"]![0]!,
+            "platform" => root["platforms"]!["Android"]!,
+            "rule_set" => root["rule_sets"]![0]!,
+            "resolver" => root["resolvers"]![0]!,
+            _ => root
+        };
+        target["typo"] = true;
+        using var source = new MemoryStream(Encoding.UTF8.GetBytes(root.ToJsonString()));
+        Assert.Throws<JsonException>(() => BuiltInProfile.Load(source));
+    }
+
+    [TestCase("duplicate")]
+    [TestCase("version")]
+    [TestCase("missing_platform")]
+    [TestCase("missing_platform_field")]
+    [TestCase("unknown_enum")]
+    [TestCase("numeric_enum")]
+    [TestCase("null")]
+    public void BuiltInProfileRejectsMalformedData(string fault)
+    {
+        var root = JsonNode.Parse(ReadDefaultProfile())!;
+        switch (fault)
+        {
+            case "version": root["version"] = 2; break;
+            case "missing_platform": root["platforms"]!.AsObject().Remove("Android"); break;
+            case "missing_platform_field": root["platforms"]!["Android"]!.AsObject().Remove("dns_selection_mode"); break;
+            case "unknown_enum": root["platforms"]!["Android"]!["dns_selection_mode"] = "Unknown"; break;
+            case "numeric_enum": root["platforms"]!["Android"]!["dns_selection_mode"] = 123; break;
+        }
+        string json = fault switch
+        {
+            "duplicate" => ReadDefaultProfile().Replace("\"version\": 1", "\"version\": 1, \"version\": 1", StringComparison.Ordinal),
+            "null" => "null",
+            _ => root.ToJsonString()
+        };
+        using var source = new MemoryStream(Encoding.UTF8.GetBytes(json));
+        Assert.Throws<JsonException>(() => BuiltInProfile.Load(source));
+    }
+
+    private static string ReadDefaultProfile()
+    {
+        using Stream source = typeof(ProfileDefinitions).Assembly.GetManifestResourceStream(
+            "BoxForge.Configuration.default-profile.json")!;
+        using var reader = new StreamReader(source);
+        return reader.ReadToEnd();
+    }
+
     [Test]
     public void MultipleNodesCreateLeafOnlyRegionalAutoGroups()
     {
@@ -27,7 +114,7 @@ public sealed class ProfilePlannerTests
         HashSet<string> leafTags = nodes.Outbounds
             .Select(outbound => outbound.Tag)
             .ToHashSet(StringComparer.Ordinal);
-        string unitedStates = RegionName(RegionId.UnitedStates);
+        string unitedStates = RegionName("us");
 
         Assert.Multiple(() =>
         {
@@ -73,11 +160,11 @@ public sealed class ProfilePlannerTests
         {
             ServiceDefinition definition = ProfileDefinitions.Services.Single(
                 candidate => candidate.Name == service.Tag);
-            if (definition.DefaultRegion.HasValue)
+            if (definition.DefaultRegion is not null)
             {
                 Assert.That(
                     service.Default,
-                    Is.EqualTo(RegionName(definition.DefaultRegion.Value)));
+                    Is.EqualTo(RegionName(definition.DefaultRegion)));
                 Assert.That(service.Default, Does.Not.EndWith(" AUTO"));
             }
         }
@@ -105,7 +192,7 @@ public sealed class ProfilePlannerTests
     public void MultipleNodesWithoutUnitedStatesPreferTheFirstRegionGroup()
     {
         ProfilePlan plan = ProfilePlanner.Plan(CreateCatalog("日本 01", "日本 02"));
-        string japan = RegionName(RegionId.Japan);
+        string japan = RegionName("jp");
 
         Assert.Multiple(() =>
         {
@@ -147,8 +234,8 @@ public sealed class ProfilePlannerTests
             ServiceDefinition definition = ProfileDefinitions.Services.Single(candidate => candidate.Name == service.Tag);
             string expected = definition.DefaultRegion switch
             {
-                RegionId.UnitedStates => "美国 01",
-                RegionId.HongKong => "香港 01",
+                "us" => "美国 01",
+                "hk" => "香港 01",
                 _ => SingboxTags.MainProxyGroup
             };
             Assert.That(service.Default, Is.EqualTo(expected));
@@ -189,7 +276,7 @@ public sealed class ProfilePlannerTests
         return new NodeCatalog(outbounds, names);
     }
 
-    private static string RegionName(RegionId regionId) =>
+    private static string RegionName(string regionId) =>
         ProfileDefinitions.Regions.Single(definition =>
             definition.Id == regionId).DisplayName;
 }

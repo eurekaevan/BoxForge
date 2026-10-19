@@ -166,6 +166,16 @@ public sealed class ServerApiTests
     [TestCase(true)]
     public async Task KestrelHonorsPrefixedEnvironmentAndRejectsTruncatedMultipart(bool tailscaleEnabled)
     {
+        string directory = Directory.CreateTempSubdirectory("boxforge-server-profile-").FullName;
+        string profile = Path.Combine(directory, "profile.json");
+        await File.WriteAllTextAsync(profile,
+            """
+            {"version":1,"regions":[{"id":"tw","display_name":"🇹🇼 TW","pattern":"TW[0-9]+"}],
+             "services":[{"id":"ai","name":"AI Taiwan","default_region":"tw"},
+                         {"id":"custom","name":"Custom Games","rule_sets":["games"],"precedes_domestic_routes":true}],
+             "rule_sets":[{"tag":"ai","url":"https://rules.example.net/{tag}.srs","update_interval":"12h"}],
+             "resolvers":[{"id":"alidns","server":"203.0.113.53","server_name":"dns.example.net"}]}
+            """);
         // Keep environment changes in a child process; they must not race the in-process API fixtures.
         var startInfo = new ProcessStartInfo("dotnet")
         {
@@ -192,6 +202,14 @@ public sealed class ServerApiTests
         startInfo.Environment["BOXFORGE_Tailscale__Enabled"] = tailscaleEnabled.ToString();
         startInfo.Environment["BOXFORGE_Tailscale__AndroidEnabled"] = tailscaleEnabled.ToString();
         startInfo.Environment["BOXFORGE_SingboxApi__Enabled"] = (!tailscaleEnabled).ToString();
+        startInfo.Environment["BOXFORGE_Profile"] = profile;
+        if (tailscaleEnabled)
+        {
+            // An explicit CLI path must override the environment path for Server too.
+            startInfo.Environment["BOXFORGE_Profile"] = Path.Combine(directory, "missing.json");
+            startInfo.ArgumentList.Add("--profile");
+            startInfo.ArgumentList.Add(profile);
+        }
         startInfo.Environment["Logging__LogLevel__Default"] = "Information";
         startInfo.Environment["Logging__LogLevel__Microsoft.Hosting.Lifetime"] = "Information";
         using var process = Process.Start(startInfo)!;
@@ -217,13 +235,30 @@ public sealed class ServerApiTests
             outputTask = process.StandardOutput.ReadToEndAsync();
             using var client = new HttpClient { BaseAddress = address, Timeout = TimeSpan.FromSeconds(10) };
             using HttpResponseMessage converted = await PostConversionAsync(
-                client, "environment", ValidYaml, ["Android", "Linux", "Windows"]);
+                client, "environment", ProfileConfigurationTests.Yaml("TW01", "TW02"), ["Android", "Linux", "Windows"]);
             Assert.That(converted.StatusCode, Is.EqualTo(HttpStatusCode.OK));
             ApiConvertResponse result = (await converted.Content.ReadFromJsonAsync<ApiConvertResponse>())!;
             Assert.That(result.Artifacts, Has.Count.EqualTo(3));
             foreach (ApiArtifact artifact in result.Artifacts)
             {
                 using JsonDocument config = JsonDocument.Parse(artifact.Content);
+                Assert.That(config.RootElement.GetProperty("outbounds").EnumerateArray()
+                    .Select(outbound => outbound.GetProperty("tag").GetString()), Does.Contain("🇹🇼 TW AUTO"));
+                Assert.That(config.RootElement.GetProperty("outbounds").EnumerateArray()
+                    .Single(outbound => outbound.GetProperty("tag").GetString() == "AI Taiwan")
+                    .GetProperty("default").GetString(), Is.EqualTo("🇹🇼 TW"));
+                Assert.That(config.RootElement.GetProperty("route").GetProperty("rules").EnumerateArray()
+                    .Any(rule => rule.TryGetProperty("outbound", out var outbound) && outbound.GetString() == "Custom Games"), Is.True);
+                var aiSource = config.RootElement.GetProperty("route").GetProperty("rule_set").EnumerateArray()
+                    .Single(source => source.GetProperty("tag").ValueKind == JsonValueKind.String && source.GetProperty("tag").GetString() == "ai");
+                Assert.That(aiSource.GetProperty("url").GetString(), Is.EqualTo("https://rules.example.net/ai.srs"));
+                Assert.That(aiSource.GetProperty("update_interval").GetString(), Is.EqualTo("12h"));
+                var bootstrap = config.RootElement.GetProperty("dns").GetProperty("servers").EnumerateArray()
+                    .Single(server => server.GetProperty("tag").GetString() == "dns-direct-alidns");
+                Assert.That(bootstrap.GetProperty("server").GetString(), Is.EqualTo("203.0.113.53"));
+                Assert.That(bootstrap.GetProperty("tls").GetProperty("server_name").GetString(), Is.EqualTo("dns.example.net"));
+                Assert.That(config.RootElement.GetProperty("route").GetProperty("rules").EnumerateArray()
+                    .Any(rule => rule.TryGetProperty("ip_cidr", out var cidrs) && cidrs[0].GetString() == "203.0.113.53/32"), Is.True);
                 bool hasTailscale = config.RootElement.TryGetProperty("endpoints", out JsonElement endpoints)
                     && endpoints.EnumerateArray().Any(endpoint => endpoint.GetProperty("type").GetString() == "tailscale");
                 bool hasApi = config.RootElement.TryGetProperty("services", out JsonElement services)
@@ -260,6 +295,7 @@ public sealed class ServerApiTests
             {
                 await outputTask;
             }
+            Directory.Delete(directory, recursive: true);
         }
     }
 

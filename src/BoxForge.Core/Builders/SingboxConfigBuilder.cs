@@ -13,12 +13,13 @@ public sealed class SingboxConfigBuilder(
     TailscaleEndpointBuilder tailscaleEndpointBuilder,
     DnsProfileBuilder dnsProfileBuilder,
     RouteProfileBuilder routeProfileBuilder,
-    SingboxApiServiceBuilder singboxApiServiceBuilder) : ISingboxConfigBuilder
+    SingboxApiServiceBuilder singboxApiServiceBuilder,
+    BoxForgeProfile? profile = null) : ISingboxConfigBuilder
 {
     public SingboxConfig Build(SingboxBuildRequest request)
     {
         PlatformProfile platform = PlatformProfile.For(request.Platform);
-        var profiles = ProfilePlanner.Plan(request.Nodes);
+        var profiles = ProfilePlanner.Plan(request.Nodes, profile);
         var endpoints = tailscaleEndpointBuilder.Build(request.Platform);
         var services = singboxApiServiceBuilder.Build();
         string ruleSetDetour = profiles.RegionAutoOutbounds.Count > 0

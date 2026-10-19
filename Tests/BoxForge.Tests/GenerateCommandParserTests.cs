@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using BoxForge.App;
 using BoxForge.Cli;
 using BoxForge.Models;
@@ -103,6 +104,109 @@ public sealed class GenerateCommandParserTests
     public async Task InvalidEnvironmentConfigurationReturnsSafeFailure(string key)
     {
         const string invalidValue = "invalid-sensitive-value";
+        var result = await RunCliAsync(["generate"], new() { [key] = invalidValue });
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.ExitCode, Is.EqualTo(GenerateCommandRunner.FailureExitCode));
+            Assert.That(result.Error, Does.Contain("配置值格式无效"));
+            Assert.That(result.Error, Does.Contain("BOXFORGE_"));
+            Assert.That(result.Error + result.Output, Does.Not.Contain(invalidValue));
+            Assert.That(result.Error, Does.Not.Contain("Unhandled exception"));
+            Assert.That(result.Error.Trim().Split('\n'), Has.Length.EqualTo(1));
+        });
+    }
+
+    [Test]
+    public async Task ProfileCommandsGenerateTaiwanAndReportResolvedJsonWithCliPrecedence()
+    {
+        string directory = Directory.CreateTempSubdirectory("boxforge-cli-profile-").FullName;
+        try
+        {
+            string path = Path.Combine(directory, "profile.json");
+            await File.WriteAllTextAsync(path,
+                """
+                {"version":1,"regions":[{"id":"tw","display_name":"🇹🇼 TW","pattern":"TW[0-9]+"}],
+                 "services":[{"id":"ai","name":"AI Taiwan","default_region":"tw"},
+                             {"id":"custom","name":"Custom Games","rule_sets":["games"],"precedes_domestic_routes":true}],
+                 "rule_sets":[{"tag":"ai","url":"https://rules.example.net/{tag}.srs","update_interval":"12h"}],
+                 "resolvers":[{"id":"alidns","server":"203.0.113.53","server_name":"dns.example.net"}]}
+                """);
+            var environment = new Dictionary<string, string>
+            {
+                ["BOXFORGE_Profile"] = Path.Combine(directory, "missing.json"),
+                ["BOXFORGE_SingboxApi__Enabled"] = "true"
+            };
+            var shown = await RunCliAsync(["profile", "show", "--resolved", "--profile=" + path], environment);
+            Assert.That(shown.ExitCode, Is.Zero, shown.Error);
+            using var resolved = JsonDocument.Parse(shown.Output);
+            Assert.That(resolved.RootElement.GetProperty("regions")[4].GetProperty("id").GetString(), Is.EqualTo("tw"));
+            Assert.That(resolved.RootElement.GetProperty("services")[0].GetProperty("default_region").GetString(), Is.EqualTo("tw"));
+            Assert.That(resolved.RootElement.GetProperty("services")[5].GetProperty("id").GetString(), Is.EqualTo("custom"));
+            Assert.That(resolved.RootElement.GetProperty("rule_sets").EnumerateArray()
+                .Single(source => source.GetProperty("tags")[0].GetString() == "ai").GetProperty("url").GetString(),
+                Is.EqualTo("https://rules.example.net/ai.srs"));
+            Assert.That(resolved.RootElement.GetProperty("runtime").GetProperty("singbox_api").GetProperty("enabled").GetBoolean(), Is.True);
+            Assert.That(resolved.RootElement.GetProperty("resolvers")[0].GetProperty("server").GetString(), Is.EqualTo("203.0.113.53"));
+            string input = Directory.CreateDirectory(Path.Combine(directory, "input")).FullName;
+            string output = Path.Combine(directory, "output");
+            await File.WriteAllTextAsync(Path.Combine(input, "tw.yaml"), ProfileConfigurationTests.Yaml("TW01", "TW02"));
+            string[] arguments = ["generate", "--profile", path, "--input-dir", input, "--output-dir", output];
+            var generated = await RunCliAsync(arguments, environment);
+            Assert.That(generated.ExitCode, Is.Zero, generated.Output + generated.Error);
+            var files = Directory.GetFiles(output, "config.json", SearchOption.AllDirectories);
+            Assert.That(files, Has.Length.EqualTo(3));
+            var before = files.ToDictionary(file => file, File.ReadAllBytes);
+            foreach (string file in files)
+            {
+                using var document = JsonDocument.Parse(await File.ReadAllTextAsync(file));
+                Assert.That(document.RootElement.GetProperty("outbounds").EnumerateArray()
+                    .Select(outbound => outbound.GetProperty("tag").GetString()), Does.Contain("🇹🇼 TW AUTO"));
+                Assert.That(document.RootElement.GetProperty("outbounds").EnumerateArray()
+                    .Single(outbound => outbound.GetProperty("tag").GetString() == "AI Taiwan")
+                    .GetProperty("default").GetString(), Is.EqualTo("🇹🇼 TW"));
+                Assert.That(document.RootElement.GetProperty("route").GetProperty("rules").EnumerateArray()
+                    .Any(rule => rule.TryGetProperty("outbound", out var outbound) && outbound.GetString() == "Custom Games"), Is.True);
+                var aiSource = document.RootElement.GetProperty("route").GetProperty("rule_set").EnumerateArray()
+                    .Single(source => source.GetProperty("tag").ValueKind == JsonValueKind.String && source.GetProperty("tag").GetString() == "ai");
+                Assert.That(aiSource.GetProperty("url").GetString(), Is.EqualTo("https://rules.example.net/ai.srs"));
+                Assert.That(aiSource.GetProperty("update_interval").GetString(), Is.EqualTo("12h"));
+                var bootstrap = document.RootElement.GetProperty("dns").GetProperty("servers").EnumerateArray()
+                    .Single(server => server.GetProperty("tag").GetString() == "dns-direct-alidns");
+                Assert.That(bootstrap.GetProperty("server").GetString(), Is.EqualTo("203.0.113.53"));
+                Assert.That(bootstrap.GetProperty("tls").GetProperty("server_name").GetString(), Is.EqualTo("dns.example.net"));
+                Assert.That(document.RootElement.GetProperty("route").GetProperty("rules").EnumerateArray()
+                    .Any(rule => rule.TryGetProperty("ip_cidr", out var cidrs) && cidrs[0].GetString() == "203.0.113.53/32"), Is.True);
+            }
+            await File.WriteAllTextAsync(path, """{"version":1,"unknown":true}""");
+            var rejected = await RunCliAsync(arguments, environment);
+            Assert.That(rejected.ExitCode, Is.EqualTo(GenerateCommandRunner.FailureExitCode));
+            Assert.That(rejected.Error, Does.Contain("未知或重复"));
+            foreach (string file in files) Assert.That(await File.ReadAllBytesAsync(file), Is.EqualTo(before[file]));
+            await File.WriteAllTextAsync(path, """{"version":1,"resolvers":[{"id":"alidns","server":"dns.example.net"}]}""");
+            rejected = await RunCliAsync(arguments, environment);
+            Assert.That(rejected.ExitCode, Is.EqualTo(GenerateCommandRunner.FailureExitCode));
+            Assert.That(rejected.Error, Does.Contain("resolvers.server"));
+            foreach (string file in files) Assert.That(await File.ReadAllBytesAsync(file), Is.EqualTo(before[file]));
+            await File.WriteAllTextAsync(path, """{"version":1,"rule_sets":[{"tag":"missing","update_interval":"12h"}]}""");
+            rejected = await RunCliAsync(arguments, environment);
+            Assert.That(rejected.ExitCode, Is.EqualTo(GenerateCommandRunner.FailureExitCode));
+            Assert.That(rejected.Error, Does.Contain("rule_sets.tag"));
+            foreach (string file in files) Assert.That(await File.ReadAllBytesAsync(file), Is.EqualTo(before[file]));
+            await File.WriteAllTextAsync(path, """{"version":1,"services":[{"id":"ai","default_region":"missing"}]}""");
+            rejected = await RunCliAsync(arguments, environment);
+            Assert.That(rejected.ExitCode, Is.EqualTo(GenerateCommandRunner.FailureExitCode));
+            Assert.That(rejected.Error, Does.Contain("default_region"));
+            foreach (string file in files) Assert.That(await File.ReadAllBytesAsync(file), Is.EqualTo(before[file]));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private static async Task<(int ExitCode, string Output, string Error)> RunCliAsync(
+        string[] arguments, Dictionary<string, string> environment)
+    {
         var startInfo = new ProcessStartInfo("dotnet")
         {
             UseShellExecute = false,
@@ -120,7 +224,7 @@ public sealed class GenerateCommandParserTests
             TestContext.CurrentContext.TestDirectory,
             "BoxForge.Tests.deps.json"));
         startInfo.ArgumentList.Add(typeof(GenerateCommandRunner).Assembly.Location);
-        startInfo.ArgumentList.Add("generate");
+        foreach (string argument in arguments) startInfo.ArgumentList.Add(argument);
         foreach (string environmentKey in startInfo.Environment.Keys.ToArray())
         {
             if (environmentKey.StartsWith("BOXFORGE_", StringComparison.OrdinalIgnoreCase))
@@ -129,25 +233,16 @@ public sealed class GenerateCommandParserTests
             }
         }
 
-        startInfo.Environment[key] = invalidValue;
+
+        foreach (var (key, value) in environment) startInfo.Environment[key] = value;
         using var process = Process.Start(startInfo)!;
-        Task<string> outputTask = process.StandardOutput.ReadToEndAsync();
-        Task<string> errorTask = process.StandardError.ReadToEndAsync();
+        Task<string> output = process.StandardOutput.ReadToEndAsync();
+        Task<string> error = process.StandardError.ReadToEndAsync();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         try
         {
             await process.WaitForExitAsync(timeout.Token);
-            string output = await outputTask;
-            string error = await errorTask;
-            Assert.Multiple(() =>
-            {
-                Assert.That(process.ExitCode, Is.EqualTo(GenerateCommandRunner.FailureExitCode));
-                Assert.That(error, Does.Contain("配置值格式无效"));
-                Assert.That(error, Does.Contain("BOXFORGE_"));
-                Assert.That(error + output, Does.Not.Contain(invalidValue));
-                Assert.That(error, Does.Not.Contain("Unhandled exception"));
-                Assert.That(error.Trim().Split('\n'), Has.Length.EqualTo(1));
-            });
+            return (process.ExitCode, await output, await error);
         }
         finally
         {
@@ -161,6 +256,13 @@ public sealed class GenerateCommandParserTests
 
     private static IEnumerable<TestCaseData> InvalidCommands()
     {
+        yield return new TestCaseData(new[] { "generate", "--profile" }, "参数缺少值: --profile");
+        yield return new TestCaseData(new[] { "generate", "--profile=" }, "参数值不能为空: --profile");
+        yield return new TestCaseData(new[] { "generate", "--profile=a", "--profile=b" }, "参数不能重复: --profile");
+        yield return new TestCaseData(new[] { "profile", "show" }, "profile show 需要 --resolved。");
+        yield return new TestCaseData(new[] { "profile", "show", "--resolved=true" }, "参数不接受值: --resolved");
+        yield return new TestCaseData(new[] { "profile", "show", "--resolved", "--platform=all" }, "未知参数: --platform=all");
+        yield return new TestCaseData(new[] { "profile", "show", "--resolved", "--resolved" }, "参数不能重复: --resolved");
         yield return new TestCaseData(
             Array.Empty<string>(),
             "缺少 generate 子命令。");

@@ -5,13 +5,27 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Console;
 using BoxForge.App;
 using BoxForge.Configuration;
+using BoxForge.Cli;
+using BoxForge.Workflows;
+using Microsoft.Extensions.Options;
 
 try
 {
+    var parsed = GenerateCommandParser.Parse(args);
+    if (!parsed.IsSuccess)
+    {
+        Console.Error.WriteLine(parsed.Error);
+        Console.Error.WriteLine(GenerateCommandParser.Usage);
+        Environment.ExitCode = GenerateCommandRunner.InvalidArgumentsExitCode;
+        return;
+    }
+
     using var host = Host.CreateDefaultBuilder([])
         .ConfigureAppConfiguration((context, config) =>
         {
             config.AddEnvironmentVariables(prefix: "BOXFORGE_");
+            if (parsed.Options!.ProfilePath is { } path)
+                config.AddInMemoryCollection(new Dictionary<string, string?> { ["Profile"] = path });
         })
         .ConfigureLogging(logging =>
         {
@@ -31,6 +45,14 @@ try
         })
         .Build();
 
+    if (parsed.Options!.ShowResolved)
+    {
+        Console.WriteLine(host.Services.GetRequiredService<BoxForgeProfile>().ToResolvedJson(
+            host.Services.GetRequiredService<IOptions<TailscaleOptions>>().Value,
+            host.Services.GetRequiredService<IOptions<SingboxApiOptions>>().Value));
+        return;
+    }
+
     using var cancellationSource = new CancellationTokenSource();
     ConsoleCancelEventHandler cancelHandler = (_, eventArgs) =>
     {
@@ -42,7 +64,10 @@ try
     {
         var command = host.Services.GetRequiredService<GenerateCommandRunner>();
         Environment.ExitCode = await command.RunAsync(
-            args,
+            new LocalGenerationRequest(
+                parsed.Options.InputDirectory,
+                parsed.Options.OutputDirectory,
+                parsed.Options.Platforms),
             cancellationSource.Token);
     }
     finally
@@ -54,9 +79,9 @@ catch (OperationCanceledException)
 {
     Environment.ExitCode = GenerateCommandRunner.CancelledExitCode;
 }
-catch (FormatException)
+catch (FormatException exception)
 {
-    Console.Error.WriteLine("BoxForge 启动失败：配置值格式无效，请检查 BOXFORGE_ 环境变量。");
+    Console.Error.WriteLine($"BoxForge 启动失败：配置值格式无效，请检查 profile 文件或 BOXFORGE_ 环境变量。{exception.Message}");
     Environment.ExitCode = GenerateCommandRunner.FailureExitCode;
 }
 catch (Exception exception)

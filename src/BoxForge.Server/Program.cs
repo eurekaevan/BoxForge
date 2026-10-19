@@ -16,6 +16,9 @@ public sealed class Program
     {
         WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
         builder.Configuration.AddEnvironmentVariables(prefix: "BOXFORGE_");
+        string? profilePath = new ConfigurationBuilder().AddCommandLine(args).Build()["Profile"];
+        if (profilePath != null)
+            builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> { ["Profile"] = profilePath });
         builder.WebHost.ConfigureKestrel(options =>
         {
             options.Limits.MaxRequestBodySize = ApiLimits.MaxRequestBodyBytes;

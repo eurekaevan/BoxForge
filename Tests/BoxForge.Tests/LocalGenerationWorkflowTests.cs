@@ -419,7 +419,8 @@ public sealed class LocalGenerationWorkflowTests
         var logger = new RecordingLogger<GenerateCommandRunner>();
         var runner = new GenerateCommandRunner(CreateWorkflow(
             new RecordingEngine(_ => throw new AssertionException("No conversion expected"))), logger);
-        int exitCode = await runner.RunAsync(["generate", "--input-dir", "invalid\0path"]);
+        int exitCode = await runner.RunAsync(new LocalGenerationRequest(
+            "invalid\0path", temporaryDirectory, [TargetPlatform.Android]));
         Assert.Multiple(() =>
         {
             Assert.That(exitCode, Is.EqualTo(GenerateCommandRunner.FailureExitCode));

@@ -16,6 +16,7 @@ public static class CoreServiceRegistration
         IConfiguration configuration)
     {
         services.AddBoxForgeOptions(configuration);
+        services.AddSingleton(BoxForgeProfile.Load(configuration["Profile"]));
 
         services.AddSingleton<IClashParser, ClashParser>();
         services.AddSingleton<IConfigSerializer, ConfigSerializer>();

@@ -8,8 +8,17 @@ namespace BoxForge.Helpers;
 internal static class GoDurationHelper
 {
     private static readonly Regex Components = new(
-        @"\G([0-9]+(?:\.[0-9]*)?|\.[0-9]+)(ns|us|µs|μs|ms|s|m|h)",
+        @"\G([0-9]+(?:\.[0-9]*)?|\.[0-9]+)(ns|us|µs|μs|ms|s|m|h|d)",
         RegexOptions.CultureInvariant);
+
+    internal static bool TryNormalizePositiveExtendedDuration(string value, out string normalized)
+    {
+        normalized = value;
+        if (!TryParseDuration(value, out long duration, allowDays: true) || duration <= 0) return false;
+        // Integer nanoseconds avoid the target core's floating-point rounding for fractions.
+        if (value.Contains('.')) normalized = duration.ToString(CultureInfo.InvariantCulture) + "ns";
+        return true;
+    }
 
     public static string ParsePositiveSecondsOrDuration(string value, string field)
     {
@@ -25,7 +34,7 @@ internal static class GoDurationHelper
         return value;
     }
 
-    private static bool TryParseDuration(string value, out long result)
+    private static bool TryParseDuration(string value, out long result, bool allowDays = false)
     {
         result = 0;
         // Bound untrusted input before arbitrary-precision fractional parsing.
@@ -38,6 +47,7 @@ internal static class GoDurationHelper
         foreach (Match component in Components.Matches(unsigned))
         {
             if (component.Index != consumed) return false;
+            if (!allowDays && component.Groups[2].Value == "d") return false;
             string amount = component.Groups[1].Value;
             string[] parts = amount.Split('.');
             long unit = component.Groups[2].Value switch
@@ -48,6 +58,7 @@ internal static class GoDurationHelper
                 "s" => 1_000_000_000,
                 "m" => 60_000_000_000,
                 "h" => 3_600_000_000_000,
+                "d" => 86_400_000_000_000,
                 _ => throw new InvalidOperationException("Unrecognized duration unit")
             };
             nanoseconds += BigInteger.Parse(parts[0].Length == 0 ? "0" : parts[0], CultureInfo.InvariantCulture) * unit;

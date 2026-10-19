@@ -39,6 +39,35 @@ BoxForge.Tests  ──→ BoxForge.Cli, BoxForge.Server, BoxForge.Core
 7. `OutputTransaction` 暂存本地产物并比较完整文本和文件集；所有输入和平台
    成功后，工作流才提交事务。提交失败时恢复旧输出；未提交的暂存在退出时清理。
 
+## 内置策略数据
+
+`BoxForge.Core/Configuration/default-profile.json` 作为程序集资源内嵌，保存现有地区
+匹配表达式、服务定义、各平台参数及远端 rule-set URL 和更新间隔。
+`ProfileDefinitions`、`PlatformProfile.For` 和路由构建器共用这份默认数据；加载器拒绝
+未知字段、重复字段、不支持的版本及缺失的目标平台，不依赖运行目录中的文件。
+地区匹配保持原有生成式正则的文化无关大小写行为。
+
+地区、服务、rule-set 来源及 resolver 支持外部 JSON 覆盖（[地区](configuration.md#地区-profile)、
+[服务](configuration.md#服务-profile)、[来源](configuration.md#rule-set-来源-profile)、
+[resolver](configuration.md#resolver-profile)），ID 使用字符串。
+每个 Core 容器加载一个不可变 `BoxForgeProfile`；节点名称校验、selector、DNS 服务
+域名池、路由服务规则、rule-set 下载定义及 DoH 端点使用同一实例，避免不同容器的覆盖互相影响。
+四类覆盖共用数组、对象键和标识唯一性检查，各类字段的合并规则分别保留。
+保留 tag 由有效 profile 直接维护，与服务引用校验使用的规则集 tag 集合相互独立。
+地区正则有 250ms 单次匹配上限，超时导致转换
+失败，不返回部分结果。
+现有环境变量开关及其默认值仍由原代码处理；路由阶段顺序、固定保留 tag 和
+IPv6 守卫继续由代码约束。Android 顺序回退与桌面并行竞速的差异保持不变。
+服务只能选择两个既有阶段；来源只允许按现有 tag 覆盖 HTTPS URL 和正更新间隔，
+单 tag 从批量来源中拆出时不影响其他成员。resolver 只开放现有四个角色的规范 IPv4
+地址及 TLS DNS 名称，引导 CIDR 同步更新，主备和 detour 固定。本阶段没有开放平台参数或
+隐私档位覆盖，也没有 Schema。
+
+`Tests/BoxForge.Tests/Fixtures/default-profile-sha256.json` 记录迁移前实际 CLI 输出的
+SHA-256：5 份 YAML × 3 个平台 × 8 种桌面 Tailscale、Android Tailscale、API 开关
+组合，共 120 份。回归测试对生成 JSON 的 UTF-8 字节计算哈希，包含格式与字段顺序；
+维护策略时不能仅为通过测试而重写这些基线。
+
 ## 不可信 YAML 的资源边界
 
 正常、无循环的 YAML anchor/alias 可以复用。解析与规范化最多支持 64 层递归，

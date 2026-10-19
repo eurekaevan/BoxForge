@@ -1,56 +1,27 @@
+using System.Text.Json.Serialization;
 using BoxForge.Models;
 
 namespace BoxForge.Configuration;
 
 public sealed record PlatformProfile
 {
+    [JsonConstructor]
     private PlatformProfile() { }
 
-    public bool IsMobile { get; init; }
-    public AddressFamilyPolicy AddressFamily { get; init; } = AddressFamilyPolicy.Ipv4Only;
-    public bool? StrictRoute { get; init; }
-    public bool? AutoRedirect { get; init; }
-    public bool? MultiQueue { get; init; }
-    public bool UseDirectForwarding { get; init; }
-    public string? TcpKeepAlive { get; init; }
-    public string? TcpKeepAliveInterval { get; init; }
-    public string UrlTestInterval { get; init; } = "3m";
-    public DnsResolverSelectionMode DnsSelectionMode { get; init; }
-    public string TaildropDirectory { get; init; } = "Taildrop";
+    public required bool IsMobile { get; init; }
+    public required AddressFamilyPolicy AddressFamily { get; init; }
+    public required bool? StrictRoute { get; init; }
+    public required bool? AutoRedirect { get; init; }
+    public required bool? MultiQueue { get; init; }
+    public required bool UseDirectForwarding { get; init; }
+    public required string? TcpKeepAlive { get; init; }
+    public required string? TcpKeepAliveInterval { get; init; }
+    public required string UrlTestInterval { get; init; }
+    public required DnsResolverSelectionMode DnsSelectionMode { get; init; }
+    public required string TaildropDirectory { get; init; }
 
-    private static readonly PlatformProfile Mobile = new()
-    {
-        IsMobile = true,
-        DnsSelectionMode = DnsResolverSelectionMode.SequentialFallback
-    };
-
-    private static readonly PlatformProfile Desktop = new()
-    {
-        StrictRoute = true,
-        TcpKeepAlive = "1m",
-        TcpKeepAliveInterval = "30s",
-        UrlTestInterval = "1m",
-        DnsSelectionMode = DnsResolverSelectionMode.ParallelFastest
-    };
-
-    private static readonly PlatformProfile Linux = Desktop with
-    {
-        AutoRedirect = true,
-        MultiQueue = true,
-        UseDirectForwarding = true,
-        TaildropDirectory = "$HOME/Downloads/Taildrop"
-    };
-
-    private static readonly PlatformProfile Windows = Desktop with
-    {
-        TaildropDirectory = "$USERPROFILE\\Downloads\\Taildrop"
-    };
-
-    public static PlatformProfile For(TargetPlatform platform) => platform switch
-    {
-        TargetPlatform.Android => Mobile,
-        TargetPlatform.Linux => Linux,
-        TargetPlatform.Windows => Windows,
-        _ => throw new ArgumentOutOfRangeException(nameof(platform), platform, null)
-    };
+    public static PlatformProfile For(TargetPlatform platform) =>
+        BuiltInProfile.Default.Platforms.TryGetValue(platform, out var profile)
+            ? profile
+            : throw new ArgumentOutOfRangeException(nameof(platform), platform, null);
 }

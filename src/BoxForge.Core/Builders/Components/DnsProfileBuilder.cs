@@ -5,10 +5,11 @@ using Microsoft.Extensions.Options;
 
 namespace BoxForge.Builders.Components;
 
-public sealed class DnsProfileBuilder(IOptions<TailscaleOptions> tailscaleOptions)
+public sealed class DnsProfileBuilder(IOptions<TailscaleOptions> tailscaleOptions, BoxForgeProfile? profile = null)
 {
     private const string SequentialPrimaryTimeout = "2s";
     private readonly TailscaleOptions tailscale = tailscaleOptions.Value;
+    private readonly BoxForgeProfile effectiveProfile = profile ?? BoxForgeProfile.Default;
 
     public DnsConfig Build(TargetPlatform platform) => Build(platform, AddressFamilyPolicies.For(platform));
 
@@ -19,10 +20,10 @@ public sealed class DnsProfileBuilder(IOptions<TailscaleOptions> tailscaleOption
         var dns = new DnsConfig { Strategy = addressFamily.ToDnsStrategy() };
 
         dns.Servers.AddRange([
-            CreateHttpsServer(SingboxTags.DirectAliDns, "223.5.5.5", "dns.alidns.com"),
-            CreateHttpsServer(SingboxTags.DirectTencentDns, "119.29.29.29", "doh.pub"),
-            CreateHttpsServer(SingboxTags.ProxyCloudflareDns, "1.1.1.1", "cloudflare-dns.com", SingboxTags.MainProxyGroup),
-            CreateHttpsServer(SingboxTags.ProxyGoogleDns, "8.8.8.8", "dns.google", SingboxTags.MainProxyGroup)
+            CreateHttpsServer(SingboxTags.DirectAliDns, effectiveProfile.GetResolver("alidns")),
+            CreateHttpsServer(SingboxTags.DirectTencentDns, effectiveProfile.GetResolver("tencent")),
+            CreateHttpsServer(SingboxTags.ProxyCloudflareDns, effectiveProfile.GetResolver("cloudflare"), SingboxTags.MainProxyGroup),
+            CreateHttpsServer(SingboxTags.ProxyGoogleDns, effectiveProfile.GetResolver("google"), SingboxTags.MainProxyGroup)
         ]);
 
         if (addressFamily == AddressFamilyPolicy.Ipv4Only)
@@ -61,7 +62,7 @@ public sealed class DnsProfileBuilder(IOptions<TailscaleOptions> tailscaleOption
 
         List<string> priorityRuleSets =
         [
-            .. ProfileDefinitions.Services
+            .. effectiveProfile.Services
                 .SelectMany(service => service.RuleSets)
                 .Distinct(StringComparer.Ordinal)
         ];
@@ -86,14 +87,13 @@ public sealed class DnsProfileBuilder(IOptions<TailscaleOptions> tailscaleOption
 
     private static HttpsDnsServer CreateHttpsServer(
         string tag,
-        string server,
-        string serverName,
+        BuiltInProfile.Resolver resolver,
         string? detour = null) => new()
         {
             Tag = tag,
-            ServerAddress = server,
+            ServerAddress = resolver.Server,
             DetourTag = detour,
-            TlsConfig = new DnsTlsConfig { ServerName = serverName }
+            TlsConfig = new DnsTlsConfig { ServerName = resolver.ServerName }
         };
 
     private static void CompilePool(

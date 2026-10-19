@@ -6,16 +6,17 @@ namespace BoxForge.Builders.Components;
 
 public static class ProfilePlanner
 {
-    public static ProfilePlan Plan(NodeCatalog nodes)
+    public static ProfilePlan Plan(NodeCatalog nodes, BoxForgeProfile? profile = null)
     {
-        var inventory = ProfileDefinitions.Regions.Select(definition => new RegionInventory(
+        profile ??= BoxForgeProfile.Default;
+        var inventory = profile.Regions.Select(definition => new RegionInventory(
             definition, nodes.Names.Where(name => definition.Pattern.IsMatch(name)).ToArray())).ToArray();
         var regionAutoOutbounds = new List<UrlTestOutbound>();
         var regionOutbounds = BuildRegionOutbounds(
             inventory,
             regionAutoOutbounds);
-        var mainOutbound = BuildMainOutbound(nodes, regionOutbounds);
-        var serviceOutbounds = BuildServiceOutbounds(nodes, inventory, regionOutbounds);
+        var mainOutbound = BuildMainOutbound(nodes, regionOutbounds, profile);
+        var serviceOutbounds = BuildServiceOutbounds(nodes, inventory, regionOutbounds, profile);
         var directOutbound = new DirectOutbound { Tag = SingboxTags.DirectOutbound };
 
         return new ProfilePlan(
@@ -63,7 +64,8 @@ public static class ProfilePlanner
 
     private static SelectorOutbound BuildMainOutbound(
         NodeCatalog nodes,
-        List<SelectorOutbound> regionOutbounds)
+        List<SelectorOutbound> regionOutbounds,
+        BoxForgeProfile profile)
     {
         List<string> groupOptions =
         [
@@ -78,7 +80,7 @@ public static class ProfilePlanner
                 ? nodes.Names[0]
                 : SingboxTags.DirectOutbound;
         string defaultSelection = regionOutbounds.FirstOrDefault(outbound =>
-                outbound.Tag == GetRegionName(RegionId.UnitedStates))?.Tag
+                outbound.Tag == profile.Regions.Single(region => region.Id == "us").DisplayName)?.Tag
             ?? fallbackSelection;
 
         return new SelectorOutbound
@@ -90,14 +92,11 @@ public static class ProfilePlanner
         };
     }
 
-    private static string GetRegionName(RegionId regionId) =>
-        ProfileDefinitions.Regions.Single(definition =>
-            definition.Id == regionId).DisplayName;
-
     private static List<SelectorOutbound> BuildServiceOutbounds(
         NodeCatalog nodes,
         IReadOnlyList<RegionInventory> inventory,
-        IReadOnlyList<SelectorOutbound> regionOutbounds)
+        IReadOnlyList<SelectorOutbound> regionOutbounds,
+        BoxForgeProfile profile)
     {
         List<string> groupOptions =
         [
@@ -108,7 +107,7 @@ public static class ProfilePlanner
         ];
 
         var outbounds = new List<SelectorOutbound>();
-        foreach (var service in ProfileDefinitions.Services)
+        foreach (var service in profile.Services)
         {
             string defaultSelection = inventory.FirstOrDefault(region =>
                 region.Definition.Id == service.DefaultRegion)?.Target ?? SingboxTags.MainProxyGroup;

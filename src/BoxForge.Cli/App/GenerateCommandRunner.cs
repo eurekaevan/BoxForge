@@ -1,5 +1,4 @@
 using Microsoft.Extensions.Logging;
-using BoxForge.Cli;
 using BoxForge.Workflows;
 
 namespace BoxForge.App;
@@ -14,24 +13,13 @@ public sealed partial class GenerateCommandRunner(
     public const int CancelledExitCode = 130;
 
     public async Task<int> RunAsync(
-        IReadOnlyList<string> arguments,
+        LocalGenerationRequest request,
         CancellationToken cancellationToken = default)
     {
-        var parseResult = GenerateCommandParser.Parse(arguments);
-        if (!parseResult.IsSuccess)
-        {
-            LogArgumentError(logger, parseResult.Error);
-            LogUsage(logger, GenerateCommandParser.Usage);
-            return InvalidArgumentsExitCode;
-        }
-
         try
         {
             var summary = await workflow.GenerateAsync(
-                new LocalGenerationRequest(
-                    parseResult.Options!.InputDirectory,
-                    parseResult.Options.OutputDirectory,
-                    parseResult.Options.Platforms),
+                request,
                 cancellationToken);
             LogSummary(
                 logger,
@@ -54,12 +42,6 @@ public sealed partial class GenerateCommandRunner(
             return FailureExitCode;
         }
     }
-
-    [LoggerMessage(1, LogLevel.Error, "{Error}")]
-    private static partial void LogArgumentError(ILogger logger, string? error);
-
-    [LoggerMessage(2, LogLevel.Error, "{Usage}")]
-    private static partial void LogUsage(ILogger logger, string usage);
 
     [LoggerMessage(3, LogLevel.Information, "■ 本地批量生成完成：✓ {Succeeded} 成功，↷ {Skipped} 跳过，✗ {Failed} 失败，⊘ {Discarded} 已回滚，共 {Total} 个。")]
     private static partial void LogSummary(ILogger logger, int succeeded, int skipped, int failed, int discarded, int total);

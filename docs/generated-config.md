@@ -44,7 +44,7 @@ Windows/Android 省略该字段。实际吞吐收益尚未验证，可按
 仅 Linux 额外生成 sing-box 1.15 `bridge` outbound，并按规则可判定的
 阶段生成两类 L3 forwarding 层：
 
-- 私网地址和 `223.5.5.5` 在首个 `sniff` 之前预匹配；原 `DIRECT` 前增加带
+- 私网地址和主 DoH bootstrap 地址（默认 `223.5.5.5`，随 resolver profile 更新）在首个 `sniff` 之前预匹配；原 `DIRECT` 前增加带
   `preferred_by: bridge-out` 门控的 L3 route。
 - 国内 UDP/443、`cn` 和 `cnip`
   在 UDP sniff 之后、各自原始规则所在位置增加仅匹配 `tun-in` + UDP 的 L3
@@ -84,10 +84,10 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
 - DNS 默认使用 `ipv4_only`，缓存容量为 `4096`，并启用超时为 `6h` 的
   optimistic 缓存和 reverse mapping。
 - 代理节点、Tailscale endpoint 和直连出站继承
-  `route.default_domain_resolver`：直连 AliDNS、`ipv4_only`、禁用 optimistic
+  `route.default_domain_resolver`：直连固定 tag `dns-direct-alidns`（默认 AliDNS，可覆盖端点）、`ipv4_only`、禁用 optimistic
   过期缓存。它们的域名解析不进入 client DNS 分类规则。IPv6 字面量代理节点
   会在生成时被校验器拒绝。
-- rule-set 和 Dashboard HTTP client 显式使用同一 AliDNS 解析设置；
+- rule-set 和 Dashboard HTTP client 显式使用同一引导解析设置；
   Tailscale split DNS 也禁用 optimistic 过期缓存。
 - 所有 AAAA 查询在规则链首部返回空 `NOERROR`，国内 DNS 也只提供 IPv4。
 - `experimental.cache_file` 使用 `cache.db`，并通过 `store_dns` 持久化 DNS 缓存。
@@ -148,13 +148,14 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
 - 未支持的 TCP/TLS 选项（见下节）、AnyTLS disable-reuse
   以及不能精确传递的 Shadowsocks 插件配置
   当前均 fail-fast；详见[来源语义与调优优先级](architecture.md#来源语义与调优优先级)。
-- 远程 rule-set 每天更新，通过默认 HTTP client `http-ruleset-proxy` 走代理下载。
+- 远程 rule-set 默认每天更新，通过默认 HTTP client `http-ruleset-proxy` 走代理下载。
   有地区 AUTO 时选择首个地区 AUTO，否则选择首个真实节点；即使主组被手动切到
   `DIRECT`，rule-set 下载也不会随之改走直连。下载域名仍由
   `dns-direct-alidns` 以
   `ipv4_only` 解析，以免代理 DNS 成为冷启动依赖。
 - 规则集来源与内部 tag 的映射如下；代码中的 DNS/route 引用只使用内部 tag，
-  不依赖上游文件名。八个 tag 均唯一声明并按 `1d` 更新。
+  不依赖上游文件名。八个 tag 均唯一声明，默认按 `1d` 更新；可通过
+  [profile 按 tag 修改来源和间隔](configuration.md#rule-set-来源-profile)，批量来源的单成员覆盖会拆组。
 
   | 来源 | 内部 tag → 文件名 | URL 基础路径 |
   | --- | --- | --- |

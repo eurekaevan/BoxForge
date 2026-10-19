@@ -137,6 +137,12 @@ Windows。每个 `config.json` 与引擎产物的 UTF-8 字节完全一致。
 截断的 multipart（例如缺少结束边界）按无效请求返回 `400`，不作为内部错误；
 请求取消不转成输入错误，真正的服务器 I/O 故障仍返回 `500`。
 
+Server 支持通过 `--profile profile.json` 或 `BOXFORGE_Profile` 在启动时加载
+[地区覆盖](configuration.md#地区-profile)和[服务覆盖](configuration.md#服务-profile)。
+同一文件还支持[rule-set 来源覆盖](configuration.md#rule-set-来源-profile)和
+[resolver 地址和 TLS 名称覆盖](configuration.md#resolver-profile)，不改变既有 tag、主备关系或 detour。
+HTTP 请求不能改变 profile 或指定本地文件。
+
 Server 读取与 CLI 相同的 `BOXFORGE_` 环境配置，包括 Tailscale 和可选 sing-box API
 开关；这是生成配置的开关，不改变 BoxForge HTTP Server 的监听地址。
 变量和默认值见[配置参考](configuration.md#配置表)。

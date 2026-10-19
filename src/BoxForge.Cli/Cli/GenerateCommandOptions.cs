@@ -7,6 +7,9 @@ public sealed record GenerateCommandOptions(
     string OutputDirectory,
     IReadOnlyList<TargetPlatform> Platforms)
 {
+    public string? ProfilePath { get; init; }
+    public bool ShowResolved { get; init; }
+
     public const string DefaultInputDirectory = "clashConfigs";
     public const string DefaultOutputDirectory = "singboxConfigs";
 }

@@ -6,6 +6,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="BoxForge.Tests" />
+    <EmbeddedResource Include="Configuration/default-profile.json" />
   </ItemGroup>
 
   <ItemGroup>

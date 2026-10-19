@@ -10,6 +10,44 @@ namespace BoxForge.Tests;
 [TestFixture]
 public sealed class ProtocolSourceMappingTests
 {
+    [TestCase(false, false, false)]
+    [TestCase(false, false, true)]
+    [TestCase(false, true, false)]
+    [TestCase(false, true, true)]
+    [TestCase(true, false, false)]
+    [TestCase(true, false, true)]
+    [TestCase(true, true, false)]
+    [TestCase(true, true, true)]
+    public async Task BuiltInProfilePreservesPreMigrationOutputBytes(bool desktop, bool android, bool api)
+    {
+        string fixtureDirectory = Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures");
+        var expected = JsonSerializer.Deserialize<Dictionary<string, string>>(
+            await File.ReadAllTextAsync(Path.Combine(fixtureDirectory, "default-profile-sha256.json")))!;
+        Assert.That(expected, Has.Count.EqualTo(120));
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Tailscale:Enabled"] = desktop.ToString(),
+            ["Tailscale:AndroidEnabled"] = android.ToString(),
+            ["SingboxApi:Enabled"] = api.ToString()
+        }).Build();
+        using ServiceProvider provider = new ServiceCollection().AddLogging()
+            .AddBoxForge(configuration).BuildServiceProvider();
+        var engine = provider.GetRequiredService<IBoxForgeEngine>();
+        string switches = $"desktop-{desktop}_android-{android}_api-{api}".ToLowerInvariant();
+        foreach (string fixture in new[] { "shadowsocks", "hysteria2", "anytls", "profiles", "tls" })
+        {
+            string yaml = await File.ReadAllTextAsync(Path.Combine(fixtureDirectory, fixture + ".yaml"));
+            var bundle = await engine.ConvertAsync(new ConversionRequest(fixture, yaml, Enum.GetValues<TargetPlatform>()));
+            foreach (var artifact in bundle.Artifacts)
+            {
+                string key = $"{switches}/{fixture}/{artifact.Platform}";
+                string hash = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(
+                    System.Text.Encoding.UTF8.GetBytes(artifact.Content)));
+                Assert.That(hash, Is.EqualTo(expected[key]), key);
+            }
+        }
+    }
+
     private static IEnumerable<TestCaseData> Fixtures()
     {
         foreach (string fixture in new[] { "shadowsocks", "hysteria2", "anytls", "profiles", "tls" })
@@ -85,9 +123,9 @@ public sealed class ProtocolSourceMappingTests
                     Assert.That(outbounds[service.Name].GetProperty("default").GetString(),
                         Is.EqualTo(service.DefaultRegion switch
                         {
-                            RegionId.UnitedStates => "US01",
-                            RegionId.HongKong => "HK01",
-                            RegionId.Japan => "🇯🇵 JP",
+                            "us" => "US01",
+                            "hk" => "HK01",
+                            "jp" => "🇯🇵 JP",
                             _ => SingboxTags.MainProxyGroup
                         }));
                 Assert.That(outbounds.ContainsKey("🇺🇸 US AUTO"), Is.False);

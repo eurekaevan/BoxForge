@@ -9,7 +9,7 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
 需同步维护本节说明。IPv6 守卫仅在 `Ipv4Only` 下生成，Tailscale 阶段仅在
 对应平台启用 Tailscale 时生成规则；最终出口由 `route.final` 指定。
 
-仅 Linux 使用显式阶段扩展 `DIRECT` 规则。私网地址和 `223.5.5.5` 在
+仅 Linux 使用显式阶段扩展 `DIRECT` 规则。私网地址和主 DoH bootstrap 地址（默认 `223.5.5.5`）在
 首个 `sniff` 前加入 `bridge-out` L3 forwarding；Linux 还先尝试
 `auto_redirect` kernel-level `bypass`。需要嗅探或后续优先级才能判定的国内
 直连规则保持原位，只在 UDP sniff 后加入 `tun-in` + UDP 限定的 bridge/bypass
@@ -18,7 +18,7 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
 1. **`DnsHijack`**：劫持 TUN inbound 的 DNS 流量。
 2. **`EarlyIpv6Guard`**（在 `DnsHijack` 之后）：Ipv4Only 时，以全局 ip_version: 6 拒绝全部 IPv6，先于 sniff、DIRECT、bridge 和 bypass。
 3. **`Tailscale`**（在 `EarlyIpv6Guard` 之后）：启用 Tailscale 时，路由 endpoint 声明为首选的目标，优先于私网直连。
-4. **`PreSniffDirect`**（在 `Tailscale` 之后）：直连私网地址和 DoH bootstrap 地址 223.5.5.5；Linux 在每条 DIRECT 前依次展开 bypass、bridge。
+4. **`PreSniffDirect`**（在 `Tailscale` 之后）：直连私网地址和有效 profile 的 `alidns.server`（默认 223.5.5.5）；Linux 在每条 DIRECT 前依次展开 bypass、bridge。
 5. **`Sniff`**（在 `PreSniffDirect` 之后）：依次嗅探 TCP HTTP/TLS 与 UDP QUIC/STUN；TCP 跳过 FTP、SSH、MySQL、VNC 常用端口 21/22/3306/5900，继续后续路由，8080/8443 仍嗅探。
 6. **`BlockStunAndAds`**（在 `Sniff` 之后）：依次拒绝识别出的 UDP STUN 和 ads。
 7. **`PriorityUdp443Reject`**（在 `BlockStunAndAds` 之后）：按服务定义顺序拒绝 🤖 AI、🔎 Google 的 UDP/443，设置 no_drop: true，促使 QUIC 回退 TCP。
@@ -56,6 +56,8 @@ IPv6 早期拒绝 → 广告拒绝 → IPv6 兜底拒绝 → 代理服务 → �
 `dns-direct-alidns`、`ipv4_only`、`disable_optimistic_cache = true`。
 代理节点、直连出站和 Tailscale endpoint 继承该设置；rule-set 和 Dashboard
 HTTP client 显式使用相同 resolver。节点域名不加入 client DNS 规则。
+该固定 tag 的 IP 和 TLS 名称可通过 [resolver profile](configuration.md#resolver-profile)
+覆盖；连接仍使用 IPv4 字面量直连，引导不依赖系统 DNS 或代理 DNS。
 
 client DNS 依次分类：
 
@@ -63,7 +65,7 @@ client DNS 依次分类：
 2. 启用 Tailscale 时，`preferred_by` 命中的 MagicDNS 和 split DNS 交给
    `dns-tailscale`，禁用 optimistic 缓存。
 3. `ads` 返回 `NXDOMAIN`。
-4. 从 `ProfileDefinitions.Services` 中所有服务导出 rule-set；AI、Google、
+4. 从有效 `BoxForgeProfile.Services` 中所有服务导出 rule-set；默认 AI、Google、
    Spotify、Games 和 Microsoft 进入 GLOBAL pool，优先于 `cn`。
    与服务同时命中 `cn` 的域名也使用代理 DNS，保持与普通业务路由的服务优先级一致。
 5. `cn` 进入 DOMESTIC pool。

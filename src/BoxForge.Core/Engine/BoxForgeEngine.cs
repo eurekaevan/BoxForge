@@ -2,6 +2,7 @@ using BoxForge.Exceptions;
 using BoxForge.Models;
 using BoxForge.Services;
 using YamlDotNet.Core;
+using System.Text.RegularExpressions;
 
 namespace BoxForge.Engine;
 
@@ -55,7 +56,7 @@ public sealed class BoxForgeEngine(
                     content,
                     configSerializer.GetContentHash(content)));
             }
-            catch (ConfigValidationException ex)
+            catch (Exception ex) when (ex is ConfigValidationException or RegexMatchTimeoutException)
             {
                 throw new BoxForgePlatformConversionException(platform, ex);
             }

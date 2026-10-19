@@ -10,8 +10,10 @@ namespace BoxForge.Builders.Components;
 
 public sealed partial class NodeCatalogBuilder(
     IEnumerable<IProxyConverter> converters,
-    ILogger<NodeCatalogBuilder> logger)
+    ILogger<NodeCatalogBuilder> logger,
+    BoxForgeProfile? profile = null)
 {
+    private readonly BoxForgeProfile effectiveProfile = profile ?? BoxForgeProfile.Default;
     public NodeCatalog Build(
         ClashConfig clashConfig,
         bool strictNodeValidation = false)
@@ -45,7 +47,7 @@ public sealed partial class NodeCatalogBuilder(
             }
 
             var outbound = ((ConvertedNode)result).Outbound;
-            if (ReservedTagNames.Contains(outbound.Tag))
+            if (effectiveProfile.IsReservedTag(outbound.Tag))
             {
                 string message =
                     $"节点名称 '{outbound.Tag}' 与 BoxForge 保留 tag 冲突";

@@ -149,6 +149,12 @@ singboxConfigs/
 
 ## 运行时配置
 
+地区和服务可通过 `generate --profile profile.json` 覆盖或追加，既有 rule-set 的来源 URL
+及更新间隔、现有 DoH resolver 的 IP 和 TLS 名称也可覆盖，无需修改程序；使用
+`profile show --resolved --profile profile.json` 查看实际数据。格式及 Server 用法见
+[地区 profile](docs/configuration.md#地区-profile)、[服务 profile](docs/configuration.md#服务-profile)、
+[rule-set 来源](docs/configuration.md#rule-set-来源-profile)和[resolver](docs/configuration.md#resolver-profile)。
+
 以下 `BOXFORGE_` 环境开关同时适用于 CLI 和 HTTP Server；它们控制生成的
 sing-box 配置，不改变 BoxForge Server 自身的监听地址。
 

@@ -408,7 +408,7 @@ public sealed class SingboxConfigBuilderTests
         SelectorOutbound google = plan.ServiceOutbounds.Single(outbound =>
             outbound.Tag == ServiceGroupNames.Google);
         string unitedStates = ProfileDefinitions.Regions.Single(region =>
-            region.Id == RegionId.UnitedStates).DisplayName;
+            region.Id == "us").DisplayName;
 
         Assert.Multiple(() =>
         {
@@ -434,7 +434,7 @@ public sealed class SingboxConfigBuilderTests
         SelectorOutbound games = plan.ServiceOutbounds.Single(outbound =>
             outbound.Tag == ServiceGroupNames.Games);
         string hongKong = ProfileDefinitions.Regions.Single(region =>
-            region.Id == RegionId.HongKong).DisplayName;
+            region.Id == "hk").DisplayName;
         RouteRule gamesRoute = config.Route.Rules.Single(rule =>
             rule.Outbound == ServiceGroupNames.Games);
         SingboxRuleSet dustinWin = config.Route.RuleSet.Single(ruleSet =>

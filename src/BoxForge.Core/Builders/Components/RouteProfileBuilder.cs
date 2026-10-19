@@ -6,9 +6,11 @@ using Microsoft.Extensions.Options;
 namespace BoxForge.Builders.Components;
 
 public sealed class RouteProfileBuilder(
-    IOptions<TailscaleOptions> tailscaleOptions)
+    IOptions<TailscaleOptions> tailscaleOptions,
+    BoxForgeProfile? profile = null)
 {
     private readonly TailscaleOptions tailscale = tailscaleOptions.Value;
+    private readonly BoxForgeProfile effectiveProfile = profile ?? BoxForgeProfile.Default;
 
     public RouteConfig Build(TargetPlatform platform) => Build(platform, AddressFamilyPolicies.For(platform));
 
@@ -21,22 +23,16 @@ public sealed class RouteProfileBuilder(
             DefaultDomainResolver = ControlPlaneDnsPolicy.CreateResolver(addressFamily)
         };
 
-        route.RuleSet.AddRange([
-            CreateRemoteBinaryRuleSet(
-                [
-                    RuleSetTags.Ai,
-                    RuleSetTags.Spotify,
-                    RuleSetTags.Games,
-                    RuleSetTags.Cn,
-                    RuleSetTags.CnIp
-                ],
-                "https://github.com/DustinWin/ruleset_geodata/releases/download/sing-box-ruleset/{tag}.srs"),
-            CreateMetaCubeXRuleSet(RuleSetTags.Ads, "category-ads-and-telemetry"),
-            CreateMetaCubeXRuleSet(RuleSetTags.Google, "google"),
-            CreateMetaCubeXRuleSet(RuleSetTags.Microsoft, "microsoft")
-        ]);
+        route.RuleSet.AddRange(effectiveProfile.RuleSets.Select(source => new SingboxRuleSet
+        {
+            Tag = [.. source.Tags],
+            Type = RuleSetType.Remote,
+            Format = RuleSetFormat.Binary,
+            Url = source.Url,
+            UpdateInterval = source.UpdateInterval
+        }));
 
-        IReadOnlyList<RuleStage> stages = CreateRulePlan(addressFamily, tailscale.IsEnabled(platform));
+        IReadOnlyList<RuleStage> stages = CreateRulePlan(addressFamily, tailscale.IsEnabled(platform), effectiveProfile);
         ValidateRulePlan(stages);
         route.Rules.AddRange(ExpandDirectForwarding(stages, PlatformProfile.For(platform).UseDirectForwarding));
         return route;
@@ -44,12 +40,14 @@ public sealed class RouteProfileBuilder(
 
     internal static IReadOnlyList<RuleStage> CreateRulePlan(
         AddressFamilyPolicy addressFamily,
-        bool tailscaleEnabled)
+        bool tailscaleEnabled,
+        BoxForgeProfile? profile = null)
     {
-        var prioritizedServices = ProfileDefinitions.Services
-            .Where(service => service.PrecedesDomesticRoutes && service.RuleSets.Length > 0).ToArray();
-        var otherServices = ProfileDefinitions.Services
-            .Where(service => !service.PrecedesDomesticRoutes && service.RuleSets.Length > 0).ToArray();
+        profile ??= BoxForgeProfile.Default;
+        var prioritizedServices = profile.Services
+            .Where(service => service.PrecedesDomesticRoutes).ToArray();
+        var otherServices = profile.Services
+            .Where(service => !service.PrecedesDomesticRoutes).ToArray();
         return
         [
             new(RoutePhase.DnsHijack, null,
@@ -87,7 +85,7 @@ public sealed class RouteProfileBuilder(
             new(RoutePhase.PreSniffDirect, RoutePhase.Tailscale,
             [
                 new RouteRule { IpIsPrivate = true, Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound },
-                new RouteRule { IpCidr = ["223.5.5.5/32"], Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound }
+                new RouteRule { IpCidr = [$"{profile.GetResolver("alidns").Server}/32"], Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound }
             ], DirectForwardingMode.PreSniff),
             new(RoutePhase.Sniff, RoutePhase.PreSniffDirect,
             [
@@ -255,22 +253,5 @@ public sealed class RouteProfileBuilder(
             RuleSet = [.. service.RuleSets],
             Action = RouteRuleAction.Route,
             Outbound = service.Name
-        };
-
-    private static SingboxRuleSet CreateMetaCubeXRuleSet(
-        string tag,
-        string fileName) => CreateRemoteBinaryRuleSet(
-            [tag],
-            $"https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/{fileName}.srs");
-
-    private static SingboxRuleSet CreateRemoteBinaryRuleSet(
-        List<string> tags,
-        string url) => new()
-        {
-            Tag = tags,
-            Type = RuleSetType.Remote,
-            Format = RuleSetFormat.Binary,
-            Url = url,
-            UpdateInterval = "1d"
         };
 }
