@@ -125,7 +125,7 @@ try {
     await once(httpServer, 'listening');
     echo.bind(0, '127.0.0.1');
     await once(echo, 'listening');
-    for (const tag of ['ss-plain', 'ss-uot-v1', 'ss-uot-v2', 'ss-obfs-http', 'ss-obfs-tls', 'ss-v2ray-ws', 'ss-v2ray-ws-tls']) {
+    for (const tag of ['ss-plain', 'ss-uot-v1', 'ss-uot-v2', 'ss-obfs-http', 'ss-obfs-tls']) {
         const outbound = structuredClone(generated.outbounds.find(item => item.tag === tag));
         assert.equal(outbound?.type, 'shadowsocks', `Missing generated Shadowsocks leaf: ${tag}`);
         const serverPort = await freePort();
@@ -145,7 +145,7 @@ try {
         const expectedVersion = tag === 'ss-uot-v1' ? 1 : tag === 'ss-uot-v2' ? 2 : null;
         if (expectedVersion !== null) {
             assert.equal(outbound.udp_over_tcp?.enabled, true);
-            assert.equal(outbound.udp_over_tcp.version ?? 2, expectedVersion);
+            assert.equal(outbound.udp_over_tcp.version, expectedVersion);
         }
         const serverConfig = { log: { level: 'error' },
             inbounds: [{ type: 'shadowsocks', tag: 'server', listen: '127.0.0.1', listen_port: serverPort,

@@ -490,29 +490,21 @@ public sealed class SingboxConfigBuilderTests
         {
             Assert.That(urlTests, Has.Count.EqualTo(2));
             Assert.That(urlTests.Select(outbound => outbound.Interval),
-                Is.All.EqualTo(platform == TargetPlatform.Android ? null : "1m"));
+                Is.All.EqualTo(platform == TargetPlatform.Android ? "3m" : "1m"));
             foreach (JsonElement outbound in serializedUrlTests)
             {
-                if (platform == TargetPlatform.Android)
-                {
-                    Assert.That(outbound.TryGetProperty("interval", out _), Is.False);
-                }
-                else
-                {
-                    Assert.That(outbound.GetProperty("interval").GetString(), Is.EqualTo("1m"));
-                }
+                Assert.That(outbound.GetProperty("interval").GetString(),
+                    Is.EqualTo(platform == TargetPlatform.Android ? "3m" : "1m"));
             }
             Assert.That(
                 urlTests.SelectMany(urlTest => urlTest.Outbounds),
                 Is.All.Matches<string>(leafTags.Contains));
             Assert.That(
                 serializedUrlTests.All(outbound =>
-                    !outbound.TryGetProperty("url", out _)
-                    && !outbound.TryGetProperty("tolerance", out _)
-                    && !outbound.TryGetProperty("idle_timeout", out _)
-                    && !outbound.TryGetProperty(
-                        "interrupt_exist_connections",
-                        out _)),
+                    outbound.GetProperty("url").GetString() == "https://www.gstatic.com/generate_204"
+                    && outbound.GetProperty("tolerance").GetInt32() == 50
+                    && outbound.GetProperty("idle_timeout").GetString() == "30m"
+                    && !outbound.GetProperty("interrupt_exist_connections").GetBoolean()),
                 Is.True);
             Assert.That(
                 config.Outbounds.OfType<SelectorOutbound>()

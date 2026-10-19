@@ -1,0 +1,34 @@
+# Synthetic credentials only. Used by engine tests and official-core checks.
+proxies:
+  - name: vless-tls
+    type: vless
+    server: node.example.com
+    port: 443
+    uuid: 00000000-0000-4000-8000-000000000001
+    tls: true
+    servername: tls.example.com
+    network: tcp
+  - name: trojan-alpn
+    type: trojan
+    server: node.example.com
+    port: 443
+    password: test-only
+    alpn: [h2, http/1.1]
+  - name: vless-reality
+    type: vless
+    server: node.example.com
+    port: 443
+    uuid: 00000000-0000-4000-8000-000000000001
+    tls: true
+    alpn: [h2]
+    client-fingerprint: chrome
+    reality-opts:
+      public-key: jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0
+      short-id: "00"
+  - name: vless-alpn
+    type: vless
+    server: node.example.com
+    port: 443
+    uuid: 00000000-0000-4000-8000-000000000001
+    tls: true
+    alpn: [h2, http/1.1, h2]

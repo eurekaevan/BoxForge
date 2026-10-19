@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Collections;
 using System.Text;
 using BoxForge.Exceptions;
@@ -85,7 +86,7 @@ public class ClashObject
             : throw new NodeParseException($"缺失必填字段或为空: {key}");
 
     public int? GetInt(string key) =>
-        int.TryParse(GetRawString(key), out var value) ? value : null;
+        int.TryParse(GetRawString(key), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) ? value : null;
 
     public int GetRequiredInt(string key)
     {

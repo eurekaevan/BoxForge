@@ -12,7 +12,7 @@ public sealed class ProtocolSourceMappingTests
 {
     private static IEnumerable<TestCaseData> Fixtures()
     {
-        foreach (string fixture in new[] { "shadowsocks", "hysteria2", "anytls", "profiles" })
+        foreach (string fixture in new[] { "shadowsocks", "hysteria2", "anytls", "profiles", "tls" })
             foreach (TargetPlatform platform in Enum.GetValues<TargetPlatform>())
                 yield return new TestCaseData(fixture, platform);
     }
@@ -50,10 +50,9 @@ public sealed class ProtocolSourceMappingTests
         {
             case "shadowsocks":
                 Assert.That(outbounds["ss-uot-v1"].GetProperty("udp_over_tcp").GetProperty("version").GetInt32(), Is.EqualTo(1));
-                Assert.That(outbounds["ss-uot-v2"].GetProperty("udp_over_tcp").TryGetProperty("version", out _), Is.False);
+                Assert.That(outbounds["ss-uot-v2"].GetProperty("udp_over_tcp").GetProperty("version").GetInt32(), Is.EqualTo(2));
                 Assert.That(outbounds["ss-uot-v2"].GetProperty("udp_over_tcp").GetProperty("enabled").GetBoolean(), Is.True);
                 Assert.That(outbounds["ss-obfs-http"].GetProperty("plugin").GetString(), Is.EqualTo("obfs-local"));
-                Assert.That(outbounds["ss-v2ray-ws-tls"].GetProperty("plugin_opts").GetString(), Does.EndWith(";tls"));
                 break;
             case "hysteria2":
                 Assert.That(outbounds["hy2-bandwidth"].GetProperty("up_mbps").GetInt32(), Is.EqualTo(100));
@@ -61,18 +60,29 @@ public sealed class ProtocolSourceMappingTests
                 Assert.That(outbounds["hy2-bandwidth"].TryGetProperty("bbr_profile", out _), Is.False);
                 Assert.That(outbounds["hy2-hop"].TryGetProperty("hop_interval_max", out _), Is.False);
                 Assert.That(outbounds["hy2-gecko"].GetProperty("obfs").GetProperty("min_packet_size").GetInt32(), Is.EqualTo(600));
-                Assert.That(outbounds["hy2-gecko"].GetProperty("obfs").TryGetProperty("max_packet_size", out _), Is.False);
+                Assert.That(outbounds["hy2-gecko"].GetProperty("obfs").GetProperty("max_packet_size").GetInt32(), Is.EqualTo(1200));
                 break;
             case "anytls":
-                Assert.That(outbounds["anytls-session"].TryGetProperty("idle_session_check_interval", out _), Is.False);
+                Assert.That(outbounds["anytls-session"].GetProperty("idle_session_check_interval").GetString(), Is.EqualTo("30s"));
                 Assert.That(outbounds["anytls-session"].GetProperty("min_idle_session").GetInt32(), Is.EqualTo(1));
                 Assert.That(outbounds["anytls-session"].GetProperty("client_metadata").GetString(), Is.EqualTo("test-only"));
                 break;
+            case "tls":
+                Assert.That(outbounds["vless-tls"].GetProperty("tls").GetProperty("server_name").GetString(), Is.EqualTo("tls.example.com"));
+                Assert.That(outbounds["trojan-alpn"].GetProperty("tls").GetProperty("alpn").EnumerateArray().Select(item => item.GetString()),
+                    Is.EqualTo(new[] { "h2", "http/1.1" }));
+                Assert.That(outbounds["vless-alpn"].GetProperty("tls").GetProperty("alpn").EnumerateArray().Select(item => item.GetString()),
+                    Is.EqualTo(new[] { "h2", "http/1.1", "h2" }));
+                Assert.That(outbounds["vless-reality"].GetProperty("tls").GetProperty("reality").GetProperty("public_key").GetString(),
+                    Is.EqualTo("jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0"));
+                Assert.That(outbounds.Values.Where(outbound => outbound.GetProperty("type").GetString() is "vless" or "trojan"),
+                    Is.All.Matches<JsonElement>(outbound => !outbound.TryGetProperty("transport", out _)));
+                break;
             case "profiles":
-                Assert.That(EffectiveDefault(outbounds[SingboxTags.MainProxyGroup]), Is.EqualTo("🇯🇵 JP"));
-                Assert.That(EffectiveDefault(outbounds["🇯🇵 JP"]), Is.EqualTo("🇯🇵 JP AUTO"));
+                Assert.That(outbounds[SingboxTags.MainProxyGroup].GetProperty("default").GetString(), Is.EqualTo("🇯🇵 JP"));
+                Assert.That(outbounds["🇯🇵 JP"].GetProperty("default").GetString(), Is.EqualTo("🇯🇵 JP AUTO"));
                 foreach (ServiceDefinition service in ProfileDefinitions.Services)
-                    Assert.That(EffectiveDefault(outbounds[service.Name]),
+                    Assert.That(outbounds[service.Name].GetProperty("default").GetString(),
                         Is.EqualTo(service.DefaultRegion switch
                         {
                             RegionId.UnitedStates => "US01",
@@ -85,8 +95,4 @@ public sealed class ProtocolSourceMappingTests
                 break;
         }
     }
-
-    private static string? EffectiveDefault(JsonElement group) =>
-        group.TryGetProperty("default", out JsonElement selected)
-            ? selected.GetString() : group.GetProperty("outbounds")[0].GetString();
 }

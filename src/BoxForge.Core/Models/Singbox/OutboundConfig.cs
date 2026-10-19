@@ -57,14 +57,12 @@ public record VlessOutbound : ProxyOutbound
     [JsonPropertyName("flow")] public string? Flow { get; init; }
     [JsonPropertyName("packet_encoding")] public string? PacketEncoding { get; init; }
     [JsonPropertyName("tls")] public OutboundTls? Tls { get; init; }
-    [JsonPropertyName("transport")] public V2RayTransport? Transport { get; init; }
 }
 
 public record TrojanOutbound : ProxyOutbound
 {
     [JsonPropertyName("password")] public required string Password { get; init; }
     [JsonPropertyName("tls")] public OutboundTls? Tls { get; init; }
-    [JsonPropertyName("transport")] public V2RayTransport? Transport { get; init; }
 }
 
 public record Hysteria2Outbound : ProxyOutbound

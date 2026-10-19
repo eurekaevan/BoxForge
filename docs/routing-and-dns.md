@@ -5,7 +5,9 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
 
 ## 路由规则顺序
 
-`RouteProfileBuilder` 按以下顺序生成顶层规则：
+以下按 `RouteProfileBuilder` 的阶段列出实际执行顺序。修改路由规则时，
+需同步维护本节说明。IPv6 守卫仅在 `Ipv4Only` 下生成，Tailscale 阶段仅在
+对应平台启用 Tailscale 时生成规则；最终出口由 `route.final` 指定。
 
 仅 Linux 使用显式阶段扩展 `DIRECT` 规则。私网地址和 `223.5.5.5` 在
 首个 `sniff` 前加入 `bridge-out` L3 forwarding；Linux 还先尝试
@@ -13,27 +15,21 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
 直连规则保持原位，只在 UDP sniff 后加入 `tun-in` + UDP 限定的 bridge/bypass
 伴随规则。每条原 `DIRECT` 都保留为回退。
 
-1. 劫持 TUN inbound 的 DNS 流量。
-2. 以 `ip_version: 6` 在 Pre-match 阶段拒绝全部 IPv6，包括私网、Tailscale
-   和国内 IPv6；这条规则位于任何 DIRECT、bridge 或 bypass 之前。
-3. 启用 Tailscale 时，路由 Tailscale endpoint 声明为首选的 IPv4 目标。
-4. 直连私网地址和 DoH bootstrap 的 IPv4 地址。
-5. 对未被上述 IPv6 总闸门处理的流量，分别嗅探 TCP HTTP/TLS 与 UDP QUIC/STUN。
-   TCP 跳过常见 FTP、SSH、MySQL、VNC 端口 `21/22/3306/5900`，这些连接继续
-   执行后续路由规则，不提前直连或放行。其余端口（含 `8080/8443`）保留嗅探；
-   UDP 嗅探范围不变。
-6. 拒绝识别出的 STUN 协议，然后拒绝 `ads`。
-7. 按服务定义顺序拒绝 AI、Google 的 UDP/443，促使 QUIC 回退 TCP；这两条及
-   后续 UDP/443 兜底拒绝均设置 `no_drop: true`，不因触发频率切换为静默丢弃。
-8. 再次通过后置 `ip_version: 6` 拒绝 IPv6，保留服务路由前的兜底防护。
-9. 将 AI 路由到 `🤖 AI`，再将 Google 路由到 `🔎 Google`。它们位于后置 IPv6
-   拒绝规则之后，因此 IPv6 地址不会进入代理出站。
-10. 放行国内域名和 `cnip` 的 UDP/443，其他 UDP/443 全部拒绝。
-11. 生成其他服务分流，当前为 Spotify、Games 和 Microsoft。
-12. 按 `cn`、`cnip` 顺序直连国内目标。
-13. 未命中规则的流量使用主代理组。
+1. **`DnsHijack`**：劫持 TUN inbound 的 DNS 流量。
+2. **`EarlyIpv6Guard`**（在 `DnsHijack` 之后）：Ipv4Only 时，以全局 ip_version: 6 拒绝全部 IPv6，先于 sniff、DIRECT、bridge 和 bypass。
+3. **`Tailscale`**（在 `EarlyIpv6Guard` 之后）：启用 Tailscale 时，路由 endpoint 声明为首选的目标，优先于私网直连。
+4. **`PreSniffDirect`**（在 `Tailscale` 之后）：直连私网地址和 DoH bootstrap 地址 223.5.5.5；Linux 在每条 DIRECT 前依次展开 bypass、bridge。
+5. **`Sniff`**（在 `PreSniffDirect` 之后）：依次嗅探 TCP HTTP/TLS 与 UDP QUIC/STUN；TCP 跳过 FTP、SSH、MySQL、VNC 常用端口 21/22/3306/5900，继续后续路由，8080/8443 仍嗅探。
+6. **`BlockStunAndAds`**（在 `Sniff` 之后）：依次拒绝识别出的 UDP STUN 和 ads。
+7. **`PriorityUdp443Reject`**（在 `BlockStunAndAds` 之后）：按服务定义顺序拒绝 🤖 AI、🔎 Google 的 UDP/443，设置 no_drop: true，促使 QUIC 回退 TCP。
+8. **`LateIpv6Guard`**（在 `PriorityUdp443Reject` 之后）：Ipv4Only 时，保留独立的全局 ip_version: 6 后置拒绝，先于所有代理服务路由。
+9. **`PriorityServices`**（在 `LateIpv6Guard` 之后）：按服务定义顺序路由 🤖 AI、🔎 Google，优先于国内 UDP/443 例外。
+10. **`DomesticUdp443`**（在 `PriorityServices` 之后）：依次放行 cn、cnip 的 UDP/443，再以 no_drop: true 拒绝其他 UDP/443；Linux 的 DIRECT 伴随规则仅匹配 TUN UDP。
+11. **`OtherServices`**（在 `DomesticUdp443` 之后）：按服务定义顺序生成其他服务分流：🎵 Spotify、🎮 GAMES、🪟 Microsoft。
+12. **`DomesticDirect`**（在 `OtherServices` 之后）：依次按 cn、cnip 直连国内目标；Linux 的 DIRECT 伴随规则仅匹配 TUN UDP，TCP 仍由原 DIRECT 处理。
+13. **`FinalOutbound`**（在 `DomesticDirect` 之后）：未命中规则的流量使用 route.final 的 🚀 PROXIES；不额外生成 catch-all 规则。
 
-第 10、12 步中的国内 `DIRECT` 在 Linux 会紧邻原规则之前生成 L3
+`DomesticUdp443`、`DomesticDirect` 阶段中的国内 `DIRECT` 在 Linux 会紧邻原规则之前生成 L3
 伴随规则：bypass 后接 bridge。伴随规则仅匹配
 `tun-in` UDP，原规则的 rule-set、端口与服务顺序条件不变；TCP 在 sniff
 后不会尝试这些 L3 层，仍由原 `DIRECT` 处理。Windows 和 Android 不生成伴随规则，使用原有 `DIRECT`。

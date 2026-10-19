@@ -24,12 +24,7 @@ public sealed partial class NodeCatalogBuilder(
             if (proxy.Type == null)
             {
                 string message = $"节点 '{proxy.Name}' 缺少 type 字段";
-                if (strictNodeValidation)
-                {
-                    throw new NodeParseException(message);
-                }
-
-                LogInvalidNode(logger, message);
+                ReportInvalidNode(message);
                 continue;
             }
 
@@ -38,24 +33,14 @@ public sealed partial class NodeCatalogBuilder(
             if (converter == null)
             {
                 string message = $"节点 '{proxy.Name}' 使用了不支持的类型: {proxy.Type}";
-                if (strictNodeValidation)
-                {
-                    throw new NodeParseException(message);
-                }
-
-                LogInvalidNode(logger, message);
+                ReportInvalidNode(message);
                 continue;
             }
 
             var result = converter.Convert(proxy);
             if (result is InvalidNode invalidNode)
             {
-                if (strictNodeValidation)
-                {
-                    throw new NodeParseException(invalidNode.ErrorMessage);
-                }
-
-                LogInvalidNode(logger, invalidNode.ErrorMessage);
+                ReportInvalidNode(invalidNode.ErrorMessage);
                 continue;
             }
 
@@ -64,12 +49,7 @@ public sealed partial class NodeCatalogBuilder(
             {
                 string message =
                     $"节点名称 '{outbound.Tag}' 与 BoxForge 保留 tag 冲突";
-                if (strictNodeValidation)
-                {
-                    throw new NodeParseException(message);
-                }
-
-                LogInvalidNode(logger, message);
+                ReportInvalidNode(message);
                 continue;
             }
 
@@ -87,6 +67,16 @@ public sealed partial class NodeCatalogBuilder(
         }
 
         return new NodeCatalog(outbounds, names);
+
+        void ReportInvalidNode(string message)
+        {
+            if (strictNodeValidation)
+            {
+                throw new NodeParseException(message);
+            }
+
+            LogInvalidNode(logger, message);
+        }
     }
 
     [LoggerMessage(1, LogLevel.Warning, "跳过无效节点 -> {ErrorMessage}")]

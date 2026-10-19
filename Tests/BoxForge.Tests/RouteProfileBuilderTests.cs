@@ -455,6 +455,35 @@ public sealed class RouteProfileBuilderTests
         });
     }
 
+    [TestCase("reordered")]
+    [TestCase("missing")]
+    [TestCase("duplicate")]
+    [TestCase("unknown")]
+    public void RulePlanRejectsBrokenStageConstraints(string mutation)
+    {
+        List<RouteProfileBuilder.RuleStage> stages = RouteProfileBuilder
+            .CreateRulePlan(AddressFamilyPolicy.Ipv4Only, tailscaleEnabled: true).ToList();
+        switch (mutation)
+        {
+            case "reordered":
+                int early = stages.FindIndex(stage => stage.Phase == RouteProfileBuilder.RoutePhase.EarlyIpv6Guard);
+                int direct = stages.FindIndex(stage => stage.Phase == RouteProfileBuilder.RoutePhase.PreSniffDirect);
+                (stages[early], stages[direct]) = (stages[direct], stages[early]);
+                break;
+            case "missing":
+                stages.RemoveAt(stages.Count - 1);
+                break;
+            case "duplicate":
+                stages.Add(stages[^1]);
+                break;
+            case "unknown":
+                stages[^1] = stages[^1] with { Phase = (RouteProfileBuilder.RoutePhase)(-1) };
+                break;
+        }
+
+        Assert.Throws<InvalidOperationException>(() => RouteProfileBuilder.ValidateRulePlan(stages));
+    }
+
     private static void AssertSniffRule(
         RouteRule rule,
         string network,

@@ -11,7 +11,7 @@ public sealed class VlessConverter()
 {
     private static readonly SourceFieldSchema SourceFields = SourceFieldSchemas.Common()
         .Include(SourceFieldSchemas.Tls(supportsReality: true, supportsUtls: true, forceTls: false))
-        .Include(SourceFieldSchemas.V2RayTransport(supportsGrpc: true))
+        .Include(SourceFieldSchemas.NativeTcp())
         .Mapped("uuid", "flow", "packet-encoding")
         .Alias("packet-encoding", "packet_encoding")
         .Conditional("encryption", SourceFieldDisposition.IgnoredByDesign,
@@ -26,7 +26,7 @@ public sealed class VlessConverter()
         string name)
     {
         string server = node.GetRequiredString("server");
-        OutboundTls? tls = TlsConfigHelper.Extract(node, TransportConfigHelper.TlsServerName(node, server));
+        OutboundTls? tls = TlsConfigHelper.Extract(node, server);
 
         return new VlessOutbound
         {
@@ -36,7 +36,6 @@ public sealed class VlessConverter()
             Uuid = node.GetRequiredString("uuid"),
             Flow = ExtractFlow(node),
             Tls = tls,
-            Transport = TransportConfigHelper.Extract(node, server, tls),
             PacketEncoding = ExtractPacketEncoding(node)
         };
     }

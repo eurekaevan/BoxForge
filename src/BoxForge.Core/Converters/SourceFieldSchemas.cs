@@ -44,8 +44,7 @@ internal static class SourceFieldSchemas
                     : null)
             .Conditional("sni", SourceFieldDisposition.Mapped,
                 (node, _) => RequireTlsActivation(node, forceTls))
-            .ConditionalAlias("sni", "servername",
-                (node, _) => RequireTlsActivation(node, forceTls))
+            .Alias("sni", "servername")
             .Conditional("skip-cert-verify", SourceFieldDisposition.Mapped,
                 (node, _) => RequireTlsActivation(node, forceTls))
             .Conditional("alpn", SourceFieldDisposition.Mapped,
@@ -62,8 +61,7 @@ internal static class SourceFieldSchemas
         {
             schema.Conditional("client-fingerprint", SourceFieldDisposition.Mapped,
                     (node, _) => RequireTlsActivation(node, forceTls))
-                .ConditionalAlias("client-fingerprint", "client_fingerprint",
-                    (node, _) => RequireTlsActivation(node, forceTls));
+                .Alias("client-fingerprint", "client_fingerprint");
         }
         else
         {
@@ -100,49 +98,15 @@ internal static class SourceFieldSchemas
                 ? null
                 : "需要启用 TLS 或 Reality，否则该值不会参与连接";
 
-    public static SourceFieldSchema V2RayTransport(bool supportsGrpc)
-    {
-        var ws = new SourceFieldSchema()
-            .Mapped("path", "max-early-data", "early-data-header-name")
-            .Alias("max-early-data", "max_early_data")
-            .Alias("early-data-header-name", "early_data_header_name")
-            .Conditional("headers", SourceFieldDisposition.Mapped,
-                (_, value) => TransportConfigHelper.ValidateHeaders(value),
-                SourceFieldValueKind.Mapping)
-            .Mapped("v2ray-http-upgrade")
-            .Alias("v2ray-http-upgrade", "v2ray_http_upgrade")
-            .Conditional("v2ray-http-upgrade-fast-open", SourceFieldDisposition.IgnoredByDesign,
-                (_, value) => bool.TryParse(value?.ToString(), out bool enabled)
-                    ? enabled ? "fast-open 没有等价的 sing-box HTTPUpgrade 字段" : null
-                    : "必须是 true 或 false")
-            .Alias("v2ray-http-upgrade-fast-open", "v2ray_http_upgrade_fast_open");
-        var grpc = new SourceFieldSchema()
-            .Mapped("grpc-service-name")
-            .Alias("grpc-service-name", "grpc_service_name")
-            .Unsupported("高级 gRPC 连接池/探测语义尚未映射",
-                "grpc-user-agent", "grpc_user_agent", "ping-interval", "ping_interval",
-                "max-connections", "max_connections", "min-streams", "min_streams",
-                "max-streams", "max_streams");
-
-        var schema = new SourceFieldSchema()
-            .Conditional("network", SourceFieldDisposition.Mapped,
-                (_, value) => value?.ToString()?.Trim().ToLowerInvariant() is null or "" or "tcp"
-                    || value is "ws" || (supportsGrpc && value is "grpc") ? null
-                    : value is "grpc"
-                        ? "Trojan gRPC 的 HTTP authority 与目标 grpc-lite 不等价，暂不支持"
-                        : "此 transport 没有经过验证的精确映射")
-            .Nested("ws-opts", ws, (node, _) => RequireNetwork(node, "ws"))
-            .Alias("ws-opts", "ws_opts")
-            .Unsupported("transport 选项尚未映射",
+    public static SourceFieldSchema NativeTcp() => new SourceFieldSchema()
+        .Conditional("network", SourceFieldDisposition.IgnoredByDesign,
+            (_, value) => value?.ToString()?.Trim().ToLowerInvariant() is null or "" or "tcp"
+                ? null
+                : "仅支持原生 TCP；V2Ray Transport 已移除")
+        .Unsupported("V2Ray Transport 已移除，不接受其连接选项",
+            "ws-opts", "ws_opts", "grpc-opts", "grpc_opts",
             "http-opts", "http_opts", "h2-opts", "h2_opts",
-            "http-upgrade-opts", "http_upgrade_opts",
-                "xhttp-opts", "xhttp_opts", "smux-opts", "smux_opts");
-        return supportsGrpc
-            ? schema.Nested("grpc-opts", grpc, (node, _) => RequireNetwork(node, "grpc"))
-                .Alias("grpc-opts", "grpc_opts")
-            : schema.Unsupported("Trojan gRPC 的 HTTP authority 无法精确保留", "grpc-opts", "grpc_opts");
-    }
-
-    private static string? RequireNetwork(ClashProxyNode node, string network) =>
-        node.GetString("network") == network ? null : $"需要 network={network}，否则选项不会参与连接";
+            "http-upgrade-opts", "http_upgrade_opts", "httpupgrade-opts", "httpupgrade_opts",
+            "xhttp-opts", "xhttp_opts")
+        .Unsupported("多路复用配置尚未映射", "smux-opts", "smux_opts");
 }

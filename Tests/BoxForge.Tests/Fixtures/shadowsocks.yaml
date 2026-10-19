@@ -42,28 +42,3 @@ proxies:
     plugin-opts:
       mode: tls
       host: obfs.example.com
-  - name: ss-v2ray-ws
-    type: ss
-    server: node.example.com
-    port: 8388
-    cipher: aes-128-gcm
-    password: test-only
-    plugin: v2ray-plugin
-    plugin-opts:
-      mode: websocket
-      host: ws.example.com
-      path: /ws
-      mux: false
-  - name: ss-v2ray-ws-tls
-    type: ss
-    server: node.example.com
-    port: 8388
-    cipher: aes-128-gcm
-    password: test-only
-    plugin: v2ray-plugin
-    plugin-opts:
-      mode: websocket
-      host: ws.example.com
-      path: /ws
-      mux: false
-      tls: true

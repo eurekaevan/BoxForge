@@ -53,23 +53,6 @@ public sealed class SingboxConfigValidatorTests
     }
 
     [Test]
-    public void InvalidVlessFlowCannotReachSerialization()
-    {
-        SingboxConfig valid = CreateValidConfig();
-        var config = valid with
-        {
-            Outbounds = [.. valid.Outbounds, new VlessOutbound
-            {
-                Tag = "invalid-flow", Server = "node.example.com", ServerPort = 443,
-                Uuid = "00000000-0000-4000-8000-000000000001",
-                Flow = "xtls-rprx-vision-udp443"
-            }]
-        };
-        AssertDiagnostics(config, new ConfigDiagnostic("SB083", $"outbounds[{valid.Outbounds.Count}].flow",
-            "VLESS flow 只支持空值或 xtls-rprx-vision。"));
-    }
-
-    [Test]
     public void WhitespacePasswordsAreValidAuthenticationMaterial()
     {
         SingboxConfig valid = CreateValidConfig();
@@ -230,39 +213,6 @@ public sealed class SingboxConfigValidatorTests
             new("SB085", "dns.rules[1].tag", "evaluate 响应标签 'same' 重复。"));
     }
 
-    [TestCase("grpc", "gRPC transport 必须保留已映射的非空服务名。")]
-    [TestCase("httpupgrade", "HTTPUpgrade transport 必须保留源请求 Host。")]
-    public void TransportMustRetainRequiredMappedValues(string kind, string message)
-    {
-        SingboxConfig valid = CreateValidConfig();
-        var config = valid with
-        {
-            Outbounds = [.. valid.Outbounds, new VlessOutbound
-            {
-                Tag = "transport", Server = "node.example.com", ServerPort = 443,
-                Uuid = "00000000-0000-4000-8000-000000000001",
-                Transport = kind == "grpc" ? new GrpcTransport { ServiceName = "" } : new HttpUpgradeTransport { Host = "" }
-            }]
-        };
-        AssertDiagnostics(config, new ConfigDiagnostic("SB079", $"outbounds[{valid.Outbounds.Count}].transport", message));
-    }
-
-    [Test]
-    public void UnregisteredTransportModelCannotReachSerialization()
-    {
-        SingboxConfig valid = CreateValidConfig();
-        var config = valid with
-        {
-            Outbounds = [.. valid.Outbounds, new VlessOutbound
-            {
-                Tag = "transport", Server = "node.example.com", ServerPort = 443,
-                Uuid = "00000000-0000-4000-8000-000000000001", Transport = new UnregisteredTransport()
-            }]
-        };
-        AssertDiagnostics(config, new ConfigDiagnostic("SB079", $"outbounds[{valid.Outbounds.Count}].transport",
-            "transport model 未注册对应的 sing-box type。"));
-    }
-
     [Test]
     public void RuleSetHttpClientMustExist()
     {
@@ -355,33 +305,6 @@ public sealed class SingboxConfigValidatorTests
             new("SB008", "route.rule_set[1].tag[1]", "标签不能为空。"),
             new("SB009", "route.rule_set[1].tag[2]", "标签 'duplicate' 重复。"),
             new("SB009", "route.rule_set[2].tag", "标签 'duplicate' 重复。"));
-    }
-
-    [Test]
-    public void GroupedRemoteRuleSetRequiresTagPlaceholder()
-    {
-        SingboxConfig valid = CreateValidConfig();
-        SingboxConfig config = valid with
-        {
-            Route = valid.Route with
-            {
-                RuleSet =
-                [
-                    valid.Route.RuleSet[0] with
-                    {
-                        Tag = ["rules", "secondary-rules"]
-                    }
-                ],
-                Rules = []
-            }
-        };
-
-        AssertDiagnostics(
-            config,
-            new ConfigDiagnostic(
-                "SB072",
-                "route.rule_set[0].url",
-                "包含多个 tag 的远程 rule-set URL 必须使用 {tag} 占位符。"));
     }
 
     [Test]
@@ -555,34 +478,6 @@ public sealed class SingboxConfigValidatorTests
     }
 
     [Test]
-    public void RouteIpVersionAndNoDropMustUseSupportedSemantics()
-    {
-        SingboxConfig valid = CreateValidConfig();
-        SingboxConfig config = valid with
-        {
-            Route = valid.Route with
-            {
-                Rules =
-                [
-                    .. valid.Route.Rules,
-                    new RouteRule
-                    {
-                        IpVersion = 5,
-                        NoDrop = true,
-                        Action = RouteRuleAction.Route,
-                        Outbound = "direct"
-                    }
-                ]
-            }
-        };
-
-        AssertDiagnostics(
-            config,
-            new("SB073", "route.rules[1].ip_version", "ip_version 只能是 4 或 6。"),
-            new("SB074", "route.rules[1].no_drop", "只有 reject 动作可以指定 no_drop。"));
-    }
-
-    [Test]
     public void ControlPlaneMustUseFreshIpv4OnlyResolutionAndRejectIpv6Literals()
     {
         SingboxConfig valid = CreateValidIpv4Config();
@@ -627,134 +522,76 @@ public sealed class SingboxConfigValidatorTests
     }
 
     [Test]
-    public void ModuleDiagnosticsPreserveCodesPathsMessagesAndOrder()
+    public void CoreDefaultCachePathIsOutsideBoxForgeValidation()
     {
-        SingboxConfig config = CreateValidConfig() with
+        SingboxConfig valid = CreateValidConfig();
+        var config = valid with
         {
-            HttpClients =
-            [
-                new HttpClientConfig
-                {
-                    Tag = "broken-http",
-                    Detour = "missing-target"
-                }
-            ],
+            Experimental = valid.Experimental! with
+            {
+                CacheFile = valid.Experimental!.CacheFile! with { Path = "" }
+            }
+        };
+
+        Assert.DoesNotThrow(() => validator.Validate(config, AddressFamilyPolicy.DualStack));
+    }
+
+    [Test]
+    public void ProjectDiagnosticsPreserveCodesPathsMessagesAndOrder()
+    {
+        SingboxConfig valid = CreateValidConfig();
+        SingboxConfig config = valid with
+        {
+            HttpClients = [valid.HttpClients[0] with { Detour = "missing-target" }],
             Outbounds =
             [
                 new VlessOutbound
                 {
-                    Tag = "proxy",
-                    Server = "",
-                    ServerPort = 0,
-                    Uuid = "",
-                    Tls = new OutboundTls
-                    {
-                        ServerName = ""
-                    }
+                    Tag = "proxy", Server = "node.example.com", ServerPort = 443,
+                    Uuid = "00000000-0000-4000-8000-000000000001",
+                    Tls = new OutboundTls { ServerName = "" }
                 }
             ],
-            Inbounds =
-            [
-                new Inbound
-                {
-                    Type = "mixed",
-                    Tag = "tun",
-                    ListenPort = 70000
-                }
-            ],
-            Dns = CreateValidConfig().Dns with
+            Dns = valid.Dns with
             {
                 Rules =
                 [
-                    new DnsRule
-                    {
-                        Server = "missing-dns"
-                    },
-                    new DnsRule
-                    {
-                        Action = DnsRuleAction.Evaluate,
-                        Server = "dns"
-                    },
-                    new DnsRule
-                    {
-                        Action = DnsRuleAction.Predefined,
-                        Server = "dns"
-                    },
-                    new DnsRule
-                    {
-                        Action = DnsRuleAction.Route,
-                        Server = "dns",
-                        Race = true
-                    }
+                    new DnsRule { Action = DnsRuleAction.Route, Server = "missing-dns" },
+                    new DnsRule { Action = DnsRuleAction.Evaluate, Server = "dns" }
                 ]
             },
-            Route = new RouteConfig
+            Route = valid.Route with
             {
                 Final = "missing-target",
                 DefaultHttpClient = "missing-http",
-                DefaultDomainResolver = new DnsResolverOptions
-                {
-                    Server = "dns",
-                    Strategy = DnsStrategy.Ipv4Only,
-                    DisableOptimisticCache = true
-                },
-                RuleSet =
-                [
-                    new SingboxRuleSet
-                    {
-                        Tag = ["broken-rule-set"],
-                        Type = RuleSetType.Remote,
-                        Url = ""
-                    }
-                ],
                 Rules =
                 [
                     new RouteRule
                     {
+                        Action = RouteRuleAction.Route,
                         Outbound = "missing-route-target",
                         RuleSet = ["missing-rule-set"],
                         Inbound = ["missing-inbound"]
                     }
                 ]
             },
-            Experimental = new ExperimentalConfig
+            Experimental = valid.Experimental! with
             {
-                CacheFile = new CacheFileConfig
-                {
-                    Enabled = true,
-                    Path = "",
-                    CacheId = "short"
-                }
+                CacheFile = valid.Experimental!.CacheFile! with { CacheId = "short" }
             }
         };
 
-        var exception = Assert.Throws<ConfigValidationException>(
-            () => validator.Validate(config, AddressFamilyPolicy.DualStack));
-
-        Assert.That(exception!.Diagnostics, Is.EqualTo(new ConfigDiagnostic[]
-        {
+        AssertDiagnostics(config,
             new("SB001", "route.final", "不存在对应的 outbound 或 endpoint。"),
             new("SB014", "route.default_http_client", "引用了不存在的 HTTP client。"),
             new("SB015", "http_clients[0].detour", "引用了不存在的 outbound 或 endpoint。"),
-            new("SB019", "outbounds[0].server", "代理服务器地址不能为空。"),
-            new("SB020", "outbounds[0].server_port", "代理节点必须配置有效端口。"),
             new("SB044", "outbounds[0].tls.server_name", "TLS server_name 不能为空。"),
-            new("SB045", "outbounds[0].uuid", "VLESS UUID 不能为空。"),
-            new("SB022", "inbounds[0].listen_port", "inbound 监听端口必须在 1-65535 之间。"),
-            new("SB025", "dns.rules[0].action", "DNS 规则动作不能为空。"),
             new("SB007", "dns.rules[0].server", "引用了不存在的 DNS server。"),
             new("SB027", "dns.rules[1].tag", "evaluate 响应标签不能为空。"),
-            new("SB042", "dns.rules[2].rcode", "predefined 动作必须指定 rcode。"),
-            new("SB031", "dns.rules[3].race", "race 只允许用于 respond 动作。"),
-            new("SB056", "route.rule_set[0].format", "rule-set format 不能为空。"),
-            new("SB057", "route.rule_set[0].url", "远程 rule-set URL 不能为空。"),
-            new("SB058", "experimental.cache_file.path", "缓存文件路径不能为空。"),
             new("SB059", "experimental.cache_file.cache_id", "cache_id 必须是完整的 64 位 SHA-256 十六进制字符串。"),
             new("SB010", "route.rules[0].outbound", "引用了不存在的 outbound 或 endpoint。"),
             new("SB011", "route.rules[0].rule_set[0]", "引用了不存在的 rule-set。"),
-            new("SB034", "route.rules[0].inbound[0]", "引用了不存在的 inbound。"),
-            new("SB035", "route.rules[0].action", "顶层路由规则必须指定 action。")
-        }));
+            new("SB034", "route.rules[0].inbound[0]", "引用了不存在的 inbound。"));
     }
 
     [Test]
@@ -936,6 +773,41 @@ public sealed class SingboxConfigValidatorTests
         };
         var error = Assert.Throws<ConfigValidationException>(() => validator.Validate(config, AddressFamilyPolicy.Ipv4Only));
         Assert.That(error!.Diagnostics.Select(diagnostic => diagnostic.Code), Is.EqualTo(new[] { code }));
+    }
+
+    [TestCase("GSG", "")]
+    [TestCase("GSSG", "")]
+    [TestCase("GG", "")]
+    [TestCase("GGU", "")]
+    [TestCase("G", "SB081")]
+    [TestCase("GGS", "SB081")]
+    [TestCase("GSGS", "SB081")]
+    [TestCase("SGG", "SB080")]
+    [TestCase("SG", "SB080")]
+    [TestCase("S", "SB080,SB081")]
+    [TestCase("", "SB080,SB081")]
+    public void Ipv4OnlyGuardsRespectActualOrderAndLastScopedResolve(string order, string expectedCodes)
+    {
+        SingboxConfig valid = CreateValidIpv4Config();
+        List<RouteRule> rules = order.Select(marker => marker switch
+        {
+            'G' => valid.Route.Rules[0],
+            'S' => valid.Route.Rules[1],
+            'U' => valid.Route.Rules[1] with { RuleSet = null },
+            _ => throw new ArgumentOutOfRangeException(nameof(order))
+        }).ToList();
+        var config = valid with { Route = valid.Route with { Rules = rules } };
+
+        if (expectedCodes.Length == 0)
+        {
+            Assert.DoesNotThrow(() => validator.Validate(config, AddressFamilyPolicy.Ipv4Only));
+        }
+        else
+        {
+            var error = Assert.Throws<ConfigValidationException>(
+                () => validator.Validate(config, AddressFamilyPolicy.Ipv4Only));
+            Assert.That(error!.Diagnostics.Select(diagnostic => diagnostic.Code), Is.EqualTo(expectedCodes.Split(',')));
+        }
     }
 
     [Test]
@@ -1140,5 +1012,4 @@ public sealed class SingboxConfigValidatorTests
             Password = "test-only"
         };
 
-    private sealed record UnregisteredTransport : V2RayTransport;
 }

@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Encodings.Web;
@@ -21,12 +22,22 @@ public sealed class ConfigSerializer : IConfigSerializer
         WriteIndented = true,
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-        TypeInfoResolver = new DefaultJsonTypeInfoResolver { Modifiers = { SingboxJsonDefaults.Apply } }
+        TypeInfoResolver = new DefaultJsonTypeInfoResolver { Modifiers = { ConfigureSerialization } }
     };
+
+    private static void ConfigureSerialization(JsonTypeInfo typeInfo)
+    {
+        if (typeInfo.Type.Namespace != typeof(SingboxConfig).Namespace) return;
+        foreach (JsonPropertyInfo property in typeInfo.Properties)
+        {
+            property.ShouldSerialize = static (_, value) => value is not null
+                && value is not ICollection { Count: 0 };
+        }
+    }
 
     public string Serialize(SingboxConfig config)
     {
-        return JsonSerializer.Serialize(SingboxJsonDefaults.NormalizeContext(config), jsonOptions);
+        return JsonSerializer.Serialize(config, jsonOptions);
     }
 
     public string GetContentHash(string content)

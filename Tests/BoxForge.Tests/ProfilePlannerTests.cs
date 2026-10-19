@@ -65,7 +65,7 @@ public sealed class ProfilePlannerTests
                     auto.Outbounds,
                     Is.All.Matches<string>(leafTags.Contains));
                 Assert.That(auto.Outbounds, Has.Count.GreaterThanOrEqualTo(2));
-                Assert.That(auto.InterruptExistConnections, Is.Null);
+                Assert.That(auto.InterruptExistConnections, Is.False);
             });
         }
 

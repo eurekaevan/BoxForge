@@ -60,8 +60,8 @@ public sealed class Hysteria2Converter()
                 Type = obfsType,
                 Password = node.GetRawString("obfs-password") is { Length: > 0 } password
                     ? password : throw new NodeParseException("字段 'obfs-password' 不能为空"),
-                MinPacketSize = minPacketSize is 0 ? null : minPacketSize,
-                MaxPacketSize = maxPacketSize is 0 ? null : maxPacketSize
+                MinPacketSize = minPacketSize,
+                MaxPacketSize = maxPacketSize
             };
         }
 
@@ -95,7 +95,7 @@ public sealed class Hysteria2Converter()
     {
         object? value = node.GetValue(field) ?? node.GetValue(alias);
         if (value is null) return null;
-        if (!int.TryParse(value.ToString(), out int size) || size is < 0 or > 2048)
+        if (!int.TryParse(value.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int size) || size is < 0 or > 2048)
             throw new NodeParseException($"字段 '{field}' 必须是 0..2048 的整数（0 使用核心默认值）");
         return size == 0 ? null : size;
     }
@@ -106,7 +106,7 @@ public sealed class Hysteria2Converter()
         if (value is null) return null;
         if (Regex.IsMatch(value, "\\A\\+?[0-9]+\\z", RegexOptions.CultureInvariant)) value = value.TrimStart('+') + " Mbps";
         Match match = Regex.Match(value, "\\A([0-9]+)[ \\t\\r\\n\\f]*([KMGT]?)([Bb])ps\\z", RegexOptions.CultureInvariant);
-        if (!match.Success || !ulong.TryParse(match.Groups[1].Value, out ulong quantity))
+        if (!match.Success || !ulong.TryParse(match.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out ulong quantity))
             throw new NodeParseException($"字段 '{field}' 带宽格式无效；必须符合 Mihomo 的整数单位语法");
         ulong multiplier = match.Groups[2].Value switch
         {
@@ -132,7 +132,7 @@ public sealed class Hysteria2Converter()
         if (value is null) return (null, null);
         string[] parts = value.Trim().Split('-').Select(part => part.Trim('[', ' ', ']')).ToArray();
         if (value.Trim().Length == 0) return ("30s", null);
-        if (parts.Length is < 1 or > 2 || parts.Any(part =>
+        if (parts.Length > 2 || parts.Any(part =>
                 !ulong.TryParse(part, NumberStyles.None, CultureInfo.InvariantCulture, out _)))
             throw new NodeParseException("字段 'hop-interval' 只支持 Mihomo 的整数秒数或 min-max 范围");
         ulong start = ulong.Parse(parts[0], CultureInfo.InvariantCulture);
@@ -157,7 +157,7 @@ public sealed class Hysteria2Converter()
         string[] entries = portsValue.Split(
             ',',
             StringSplitOptions.TrimEntries);
-        if (entries.Length == 0 || entries.Any(string.IsNullOrWhiteSpace))
+        if (entries.Any(string.IsNullOrWhiteSpace))
         {
             throw new NodeParseException("ports 包含空端口项");
         }
@@ -204,7 +204,7 @@ public sealed class Hysteria2Converter()
 
     private static int ParsePort(string value, string fieldName)
     {
-        if (int.TryParse(value, out int port)
+        if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int port)
             && port is > 0 and <= 65535)
         {
             return port;

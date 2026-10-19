@@ -25,7 +25,7 @@ internal static class GoDurationHelper
         return value;
     }
 
-    internal static bool TryParseDuration(string value, out long result)
+    private static bool TryParseDuration(string value, out long result)
     {
         result = 0;
         // Bound untrusted input before arbitrary-precision fractional parsing.

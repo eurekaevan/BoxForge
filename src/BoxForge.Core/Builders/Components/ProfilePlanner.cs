@@ -43,7 +43,11 @@ public static class ProfilePlanner
             regionAutoOutbounds.Add(new UrlTestOutbound
             {
                 Tag = autoTag,
-                Outbounds = [.. region.Leaves]
+                Outbounds = [.. region.Leaves],
+                Url = "https://www.gstatic.com/generate_204",
+                Tolerance = 50,
+                IdleTimeout = "30m",
+                InterruptExistConnections = false
             });
             outbounds.Add(new SelectorOutbound
             {

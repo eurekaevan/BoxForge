@@ -51,7 +51,7 @@ internal static class ExportApi
             return ApiProblems.BadRequest("multipart 请求体无效。");
         }
 
-        if (form.Keys.Any(key => !IsAllowedFormField(key)))
+        if (form.Keys.Any(key => key is not ("name" or "platforms")))
         {
             return ApiProblems.BadRequest("请求包含不支持的字段。");
         }
@@ -88,12 +88,8 @@ internal static class ExportApi
                 "配置名必须为 1～100 个 Unicode 字符、最多 255 个 UTF-8 字节，且必须是有效的跨平台目录名。");
         }
 
-        string?[] platformValues =
-        [
-            .. form["platforms"].Select(value => (string?)value)
-        ];
         if (!ApiRequestValidation.TryParsePlatforms(
-                platformValues,
+                form["platforms"],
                 out var platforms))
         {
             return ApiProblems.BadRequest(
@@ -163,8 +159,6 @@ internal static class ExportApi
         && parsed.MediaType.Equals(
             "multipart/form-data",
             StringComparison.OrdinalIgnoreCase);
-
-    private static bool IsAllowedFormField(string key) => key is "name" or "platforms";
 
     private static bool TryGetYamlFileStem(
         string fileName,

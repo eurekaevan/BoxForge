@@ -1,0 +1,31 @@
+name: Verify
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build and test
+        run: |
+          dotnet build BoxForge.slnx -c Release --no-incremental --warnaserror
+          dotnet test BoxForge.slnx -c Release --no-build --no-restore
+          node --test scripts/verification-process.test.mjs
+      - name: Check generated configurations with the official core
+        run: python3 scripts/verify-generated-configs.py src/BoxForge.Cli/bin/Release/net10.0/BoxForge.dll

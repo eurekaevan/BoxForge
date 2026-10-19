@@ -15,7 +15,8 @@ public interface ISingboxConfigValidator
 
 /// <summary>
 /// Validates BoxForge generation constraints and reference integrity.
-/// This does not replace the target version's <c>sing-box check</c>.
+/// Target syntax and core defaults belong to the automated official <c>sing-box check</c>.
+/// Source-field validation remains in the parser and converters.
 /// </summary>
 public sealed class SingboxConfigValidator : ISingboxConfigValidator
 {
@@ -27,14 +28,14 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
         ValidateHttpClients(config.HttpClients, context);
         ValidateServices(config.Services ?? [], context);
         ValidateOutbounds(config.Outbounds, context);
-        ValidateInbounds(config.Inbounds, context.Diagnostics);
         ValidateDnsServers(config.Dns.Servers, context);
         ValidateDnsRules(config.Dns, context);
-        ValidateRuleSets(config.Route.RuleSet, context);
+        ValidateRuleSetHttpClients(config.Route.RuleSet, context);
         ValidateCacheFile(config.Experimental?.CacheFile, context.Diagnostics);
         ValidateRouteRules(config.Route.Rules, context);
         ValidateAddressFamilyGuards(config, context);
-        ThrowIfInvalid(context.Diagnostics);
+        if (context.Diagnostics.Count > 0)
+            throw new ConfigValidationException(context.Diagnostics);
     }
 
     private static ValidationContext CreateValidationContext(SingboxConfig config, AddressFamilyPolicy addressFamily)
@@ -302,18 +303,8 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
         int index,
         ValidationContext context)
     {
-        for (var childIndex = 0;
-            childIndex < selector.Outbounds.Count;
-            childIndex++)
-        {
-            ValidateReference(
-                selector.Outbounds[childIndex],
-                context.RouteTargets,
-                "SB003",
-                $"outbounds[{index}].outbounds[{childIndex}]",
-                "selector 引用了不存在的目标。",
-                context.Diagnostics);
-        }
+        ValidateReferences(selector.Outbounds, context.RouteTargets, "SB003", $"outbounds[{index}].outbounds",
+            "selector 引用了不存在的目标。", context.Diagnostics);
 
         if (selector.Outbounds.Count != selector.Outbounds.Distinct(
                 StringComparer.Ordinal).Count())
@@ -341,27 +332,6 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
         int index,
         ValidationContext context)
     {
-        if (string.IsNullOrWhiteSpace(proxy.Server))
-        {
-            context.Diagnostics.Add(new ConfigDiagnostic(
-                "SB019",
-                $"outbounds[{index}].server",
-                "代理服务器地址不能为空。"));
-        }
-
-        bool hasValidSinglePort = proxy.ServerPort is > 0 and <= 65535;
-        bool hasPortSet = proxy is Hysteria2Outbound
-        {
-            ServerPorts.Count: > 0
-        };
-        if (!hasValidSinglePort && !hasPortSet)
-        {
-            context.Diagnostics.Add(new ConfigDiagnostic(
-                "SB020",
-                $"outbounds[{index}].server_port",
-                "代理节点必须配置有效端口。"));
-        }
-
         if (context.AddressFamily == AddressFamilyPolicy.Ipv4Only
             && IPAddress.TryParse(proxy.Server, out IPAddress? serverAddress)
             && serverAddress.AddressFamily == AddressFamily.InterNetworkV6)
@@ -373,30 +343,6 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
         }
 
         ValidateOutboundTls(proxy, index, context.Diagnostics);
-        ValidateOutboundTransport(proxy, index, context.Diagnostics);
-        ValidateProtocolCredentials(proxy, index, context.Diagnostics);
-    }
-
-    private static void ValidateOutboundTransport(
-        ProxyOutbound proxy, int index, List<ConfigDiagnostic> diagnostics)
-    {
-        V2RayTransport? transport = proxy switch
-        {
-            VlessOutbound vless => vless.Transport,
-            TrojanOutbound trojan => trojan.Transport,
-            _ => null
-        };
-        string? error = transport switch
-        {
-            null or WebSocketTransport => null,
-            GrpcTransport grpc => string.IsNullOrWhiteSpace(grpc.ServiceName)
-                ? "gRPC transport 必须保留已映射的非空服务名。" : null,
-            HttpUpgradeTransport upgrade => string.IsNullOrWhiteSpace(upgrade.Host)
-                ? "HTTPUpgrade transport 必须保留源请求 Host。" : null,
-            _ => "transport model 未注册对应的 sing-box type。"
-        };
-        if (error is not null)
-            diagnostics.Add(new ConfigDiagnostic("SB079", $"outbounds[{index}].transport", error));
     }
 
     private static void ValidateOutboundTls(
@@ -433,75 +379,6 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
         }
     }
 
-    private static void ValidateProtocolCredentials(
-        ProxyOutbound proxy,
-        int index,
-        List<ConfigDiagnostic> diagnostics)
-    {
-        switch (proxy)
-        {
-            case VlessOutbound vless:
-                ValidateRequired(
-                    vless.Uuid,
-                    "SB045",
-                    $"outbounds[{index}].uuid",
-                    "VLESS UUID 不能为空。",
-                    diagnostics);
-                if (vless.Flow is not (null or "" or "xtls-rprx-vision"))
-                {
-                    diagnostics.Add(new ConfigDiagnostic(
-                        "SB083",
-                        $"outbounds[{index}].flow",
-                        "VLESS flow 只支持空值或 xtls-rprx-vision。"));
-                }
-                break;
-            case TrojanOutbound trojan:
-                ValidateRequired(
-                    trojan.Password,
-                    "SB046",
-                    $"outbounds[{index}].password",
-                    "Trojan 密码不能为空。",
-                    diagnostics,
-                    allowWhitespace: true);
-                break;
-            case Hysteria2Outbound hysteria2:
-                ValidateRequired(
-                    hysteria2.Password,
-                    "SB047",
-                    $"outbounds[{index}].password",
-                    "Hysteria2 密码不能为空。",
-                    diagnostics,
-                    allowWhitespace: true);
-                break;
-            case AnyTlsOutbound anyTls:
-                ValidateRequired(
-                    anyTls.Password,
-                    "SB050",
-                    $"outbounds[{index}].password",
-                    "AnyTLS 密码不能为空。",
-                    diagnostics,
-                    allowWhitespace: true);
-                break;
-        }
-    }
-
-    private static void ValidateInbounds(
-        List<Inbound> inbounds,
-        List<ConfigDiagnostic> diagnostics)
-    {
-        for (var index = 0; index < inbounds.Count; index++)
-        {
-            if (inbounds[index].ListenPort is int listenPort
-                && listenPort is <= 0 or > 65535)
-            {
-                diagnostics.Add(new ConfigDiagnostic(
-                    "SB022",
-                    $"inbounds[{index}].listen_port",
-                    "inbound 监听端口必须在 1-65535 之间。"));
-            }
-        }
-    }
-
     private static void ValidateDnsServers(
         List<DnsServer> servers,
         ValidationContext context)
@@ -527,14 +404,13 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
                     "引用了不存在的 Tailscale endpoint。",
                     context.Diagnostics);
             }
-            else if (server is HttpsDnsServer httpsServer)
+            else if (server is HttpsDnsServer httpsServer
+                && string.IsNullOrWhiteSpace(httpsServer.Tls?.ServerName))
             {
-                ValidateRequired(
-                    httpsServer.Tls?.ServerName,
+                context.Diagnostics.Add(new ConfigDiagnostic(
                     "SB054",
                     $"dns.servers[{index}].tls.server_name",
-                    "HTTPS DNS TLS server_name 不能为空。",
-                    context.Diagnostics);
+                    "HTTPS DNS TLS server_name 不能为空。"));
             }
         }
     }
@@ -558,13 +434,6 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
         {
             DnsRule rule = rules[index];
             string path = $"dns.rules[{index}]";
-            if (rule.Action == null)
-            {
-                context.Diagnostics.Add(new ConfigDiagnostic(
-                    "SB025",
-                    $"{path}.action",
-                    "DNS 规则动作不能为空。"));
-            }
 
             ValidateReference(
                 rule.Server,
@@ -574,7 +443,8 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
                 "引用了不存在的 DNS server。",
                 context.Diagnostics);
 
-            ValidateRuleSets(rule.RuleSet, context.RuleSetTags, $"{path}.rule_set", context.Diagnostics);
+            ValidateReferences(rule.RuleSet, context.RuleSetTags, "SB011", $"{path}.rule_set",
+                "引用了不存在的 rule-set。", context.Diagnostics);
             if (rule.PreferredBy != null)
             {
                 for (var preferredIndex = 0; preferredIndex < rule.PreferredBy.Count; preferredIndex++)
@@ -609,56 +479,17 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
                 context.Diagnostics.Add(new ConfigDiagnostic("SB085", $"{path}.tag",
                     $"evaluate 响应标签 '{rule.Tag}' 重复。"));
             }
-
-            if (rule.Action == DnsRuleAction.Predefined
-                && !rule.Rcode.HasValue)
-            {
-                context.Diagnostics.Add(new ConfigDiagnostic(
-                    "SB042",
-                    $"{path}.rcode",
-                    "predefined 动作必须指定 rcode。"));
-            }
-
-            if (rule.Race == true
-                && rule.Action != DnsRuleAction.Respond)
-            {
-                context.Diagnostics.Add(new ConfigDiagnostic(
-                    "SB031",
-                    $"{path}.race",
-                    "race 只允许用于 respond 动作。"));
-            }
         }
     }
 
-    private static void ValidateRuleSets(
+    private static void ValidateRuleSetHttpClients(
         List<SingboxRuleSet> ruleSets,
         ValidationContext context)
     {
         for (var index = 0; index < ruleSets.Count; index++)
         {
             SingboxRuleSet ruleSet = ruleSets[index];
-            if (!ruleSet.Format.HasValue)
-            {
-                context.Diagnostics.Add(new ConfigDiagnostic(
-                    "SB056",
-                    $"route.rule_set[{index}].format",
-                    "rule-set format 不能为空。"));
-            }
 
-            ValidateRequired(
-                ruleSet.Url,
-                "SB057",
-                $"route.rule_set[{index}].url",
-                "远程 rule-set URL 不能为空。",
-                context.Diagnostics);
-            if (ruleSet.Tag is { Count: > 1 }
-                && ruleSet.Url?.Contains("{tag}", StringComparison.Ordinal) != true)
-            {
-                context.Diagnostics.Add(new ConfigDiagnostic(
-                    "SB072",
-                    $"route.rule_set[{index}].url",
-                    "包含多个 tag 的远程 rule-set URL 必须使用 {tag} 占位符。"));
-            }
             if (ruleSet.Type == RuleSetType.Remote)
             {
                 ValidateReference(
@@ -681,12 +512,6 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
             return;
         }
 
-        ValidateRequired(
-            cacheFile.Path,
-            "SB058",
-            "experimental.cache_file.path",
-            "缓存文件路径不能为空。",
-            diagnostics);
         if (cacheFile.CacheId is not { Length: 64 }
             || cacheFile.CacheId.Any(character => !Uri.IsHexDigit(character)))
         {
@@ -697,37 +522,32 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
         }
     }
 
-    private static void ValidateRouteRules(
-        List<RouteRule> rules,
-        ValidationContext context)
-    {
-        for (var index = 0; index < rules.Count; index++)
-        {
-            ValidateRouteRule(
-                rules[index],
-                $"route.rules[{index}]",
-                context.RouteTargets,
-                context.RuleSetTags,
-                context.InboundTags,
-                requireAction: true,
-                context.Diagnostics);
-        }
-    }
-
     private static void ValidateAddressFamilyGuards(SingboxConfig config, ValidationContext context)
     {
         if (context.AddressFamily != AddressFamilyPolicy.Ipv4Only) return;
-        List<RouteRule> rules = config.Route.Rules;
-        int firstForwarding = rules.FindIndex(rule => rule.Action is
-            RouteRuleAction.Route or RouteRuleAction.Bypass or RouteRuleAction.Sniff or RouteRuleAction.Resolve);
-        int early = rules.FindIndex(rule => IsIpv6RejectGuard(rule, context.InboundTags));
-        bool hasEarlyGuard = early >= 0 && (firstForwarding < 0 || early < firstForwarding);
+        bool forwardingSeen = false;
+        bool hasEarlyGuard = false;
+        int guardCount = 0;
+        bool guardAfterLastScopedResolve = false;
+        foreach (RouteRule rule in config.Route.Rules)
+        {
+            if (IsIpv6RejectGuard(rule, context.InboundTags))
+            {
+                if (guardCount == 0) hasEarlyGuard = !forwardingSeen;
+                guardCount++;
+                guardAfterLastScopedResolve = true;
+            }
+
+            if (rule.Action == RouteRuleAction.Resolve && rule.RuleSet is { Count: > 0 })
+                guardAfterLastScopedResolve = false;
+            if (rule.Action is RouteRuleAction.Route or RouteRuleAction.Bypass or RouteRuleAction.Sniff or RouteRuleAction.Resolve)
+                forwardingSeen = true;
+        }
+
         if (!hasEarlyGuard)
             context.Diagnostics.Add(new ConfigDiagnostic("SB080", "route.rules",
                 "Ipv4Only 必须在 sniff、resolve 或转发之前包含全局 IPv6 reject guard。"));
-        int lastScopedResolve = rules.FindLastIndex(rule => rule.Action == RouteRuleAction.Resolve && rule.RuleSet is { Count: > 0 });
-        int postResolve = rules.FindLastIndex(rule => IsIpv6RejectGuard(rule, context.InboundTags));
-        if (postResolve < 0 || postResolve <= lastScopedResolve || (hasEarlyGuard && postResolve <= early))
+        if (!guardAfterLastScopedResolve || (hasEarlyGuard && guardCount < 2))
             context.Diagnostics.Add(new ConfigDiagnostic("SB081", "route.rules",
                 "Ipv4Only 必须在规则集 resolve 之后保留独立的 IPv6 reject guard。"));
 
@@ -749,14 +569,6 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
         && rule.IpCidr is not { Count: > 0 } && rule.IpIsPrivate != true
         && rule.PreferredBy is not { Count: > 0 }
         && (rule.Inbound is not { Count: > 0 } || inboundTags.IsSubsetOf(rule.Inbound));
-
-    private static void ThrowIfInvalid(List<ConfigDiagnostic> diagnostics)
-    {
-        if (diagnostics.Count > 0)
-        {
-            throw new ConfigValidationException(diagnostics);
-        }
-    }
 
     private sealed record ValidationContext(
         List<ConfigDiagnostic> Diagnostics,
@@ -792,20 +604,7 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
                 string path = tags.Count == 1
                     ? $"route.rule_set[{ruleSetIndex}].tag"
                     : $"route.rule_set[{ruleSetIndex}].tag[{tagIndex}]";
-                if (string.IsNullOrWhiteSpace(tag))
-                {
-                    diagnostics.Add(new ConfigDiagnostic(
-                        "SB008",
-                        path,
-                        "标签不能为空。"));
-                }
-                else if (!result.Add(tag))
-                {
-                    diagnostics.Add(new ConfigDiagnostic(
-                        "SB009",
-                        path,
-                        $"标签 '{tag}' 重复。"));
-                }
+                CollectTag(tag, path, result, diagnostics);
             }
         }
 
@@ -821,25 +620,23 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
         var index = 0;
         foreach (var tag in tags)
         {
-            if (string.IsNullOrWhiteSpace(tag))
-            {
-                diagnostics.Add(new ConfigDiagnostic(
-                    "SB008",
-                    $"{path}[{index}].tag",
-                    "标签不能为空。"));
-            }
-            else if (!result.Add(tag))
-            {
-                diagnostics.Add(new ConfigDiagnostic(
-                    "SB009",
-                    $"{path}[{index}].tag",
-                    $"标签 '{tag}' 重复。"));
-            }
-
+            CollectTag(tag, $"{path}[{index}].tag", result, diagnostics);
             index++;
         }
 
         return result;
+    }
+
+    private static void CollectTag(
+        string? tag,
+        string path,
+        HashSet<string> tags,
+        List<ConfigDiagnostic> diagnostics)
+    {
+        if (string.IsNullOrWhiteSpace(tag))
+            diagnostics.Add(new ConfigDiagnostic("SB008", path, "标签不能为空。"));
+        else if (!tags.Add(tag))
+            diagnostics.Add(new ConfigDiagnostic("SB009", path, $"标签 '{tag}' 重复。"));
     }
 
     private static void ValidateEndpointTagCollisions(
@@ -862,146 +659,41 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
         }
     }
 
-    private static void ValidateRouteRule(
-        RouteRule rule,
-        string path,
-        HashSet<string> routeTargets,
-        HashSet<string> ruleSetTags,
-        HashSet<string> inboundTags,
-        bool requireAction,
-        List<ConfigDiagnostic> diagnostics)
+    private static void ValidateRouteRules(
+        List<RouteRule> rules,
+        ValidationContext context,
+        string path = "route.rules")
     {
-        ValidateReference(
-            rule.Outbound,
-            routeTargets,
-            "SB010",
-            $"{path}.outbound",
-            "引用了不存在的 outbound 或 endpoint。",
-            diagnostics);
-        ValidateRuleSets(
-            rule.RuleSet,
-            ruleSetTags,
-            $"{path}.rule_set",
-            diagnostics);
+        for (var index = 0; index < rules.Count; index++)
+        {
+            RouteRule rule = rules[index];
+            string rulePath = $"{path}[{index}]";
+            ValidateReference(rule.Outbound, context.RouteTargets, "SB010", $"{rulePath}.outbound",
+                "引用了不存在的 outbound 或 endpoint。", context.Diagnostics);
+            ValidateReferences(rule.RuleSet, context.RuleSetTags, "SB011", $"{rulePath}.rule_set",
+                "引用了不存在的 rule-set。", context.Diagnostics);
 
-        if (rule.PreferredBy != null)
-        {
-            for (var index = 0; index < rule.PreferredBy.Count; index++)
-            {
-                ValidateReference(
-                    rule.PreferredBy[index],
-                    routeTargets,
-                    "SB065",
-                    $"{path}.preferred_by[{index}]",
-                    "引用了不存在的 outbound 或 endpoint。",
-                    diagnostics);
-            }
-        }
-
-        if (rule.Inbound != null)
-        {
-            for (var index = 0; index < rule.Inbound.Count; index++)
-            {
-                ValidateReference(
-                    rule.Inbound[index],
-                    inboundTags,
-                    "SB034",
-                    $"{path}.inbound[{index}]",
-                    "引用了不存在的 inbound。",
-                    diagnostics);
-            }
-        }
-
-        if (requireAction && rule.Action == null)
-        {
-            diagnostics.Add(new ConfigDiagnostic(
-                "SB035",
-                $"{path}.action",
-                "顶层路由规则必须指定 action。"));
-        }
-
-        if (rule.Action == RouteRuleAction.Route
-            && string.IsNullOrWhiteSpace(rule.Outbound))
-        {
-            diagnostics.Add(new ConfigDiagnostic(
-                "SB036",
-                $"{path}.outbound",
-                "route 动作必须指定 outbound。"));
-        }
-        else if (rule.Action is not (
-                null or RouteRuleAction.Route or RouteRuleAction.Bypass)
-            && rule.Outbound != null)
-        {
-            diagnostics.Add(new ConfigDiagnostic(
-                "SB037",
-                $"{path}.outbound",
-                "只有 route 或 bypass 动作可以指定 outbound。"));
-        }
-
-        if (rule.Strategy.HasValue
-            && rule.Action != RouteRuleAction.Resolve)
-        {
-            diagnostics.Add(new ConfigDiagnostic(
-                "SB063",
-                $"{path}.strategy",
-                "只有 resolve 动作可以指定 DNS strategy。"));
-        }
-
-        if (rule.IpVersion is not (null or 4 or 6))
-        {
-            diagnostics.Add(new ConfigDiagnostic(
-                "SB073",
-                $"{path}.ip_version",
-                "ip_version 只能是 4 或 6。"));
-        }
-
-        if (rule.NoDrop.HasValue
-            && rule.Action != RouteRuleAction.Reject)
-        {
-            diagnostics.Add(new ConfigDiagnostic(
-                "SB074",
-                $"{path}.no_drop",
-                "只有 reject 动作可以指定 no_drop。"));
-        }
-
-        if (rule.Rules == null)
-        {
-            return;
-        }
-
-        for (var index = 0; index < rule.Rules.Count; index++)
-        {
-            ValidateRouteRule(
-                rule.Rules[index],
-                $"{path}.rules[{index}]",
-                routeTargets,
-                ruleSetTags,
-                inboundTags,
-                requireAction: false,
-                diagnostics);
+            ValidateReferences(rule.PreferredBy, context.RouteTargets, "SB065", $"{rulePath}.preferred_by",
+                "引用了不存在的 outbound 或 endpoint。", context.Diagnostics);
+            ValidateReferences(rule.Inbound, context.InboundTags, "SB034", $"{rulePath}.inbound",
+                "引用了不存在的 inbound。", context.Diagnostics);
+            if (rule.Rules is { } children)
+                ValidateRouteRules(children, context, $"{rulePath}.rules");
         }
     }
 
-    private static void ValidateRuleSets(
+    private static void ValidateReferences(
         List<string>? references,
         HashSet<string> availableTags,
+        string code,
         string path,
+        string message,
         List<ConfigDiagnostic> diagnostics)
     {
-        if (references == null)
-        {
-            return;
-        }
-
+        if (references is null) return;
         for (var index = 0; index < references.Count; index++)
         {
-            ValidateReference(
-                references[index],
-                availableTags,
-                "SB011",
-                $"{path}[{index}]",
-                "引用了不存在的 rule-set。",
-                diagnostics);
+            ValidateReference(references[index], availableTags, code, $"{path}[{index}]", message, diagnostics);
         }
     }
 
@@ -1014,20 +706,6 @@ public sealed class SingboxConfigValidator : ISingboxConfigValidator
         List<ConfigDiagnostic> diagnostics)
     {
         if (reference != null && !availableTags.Contains(reference))
-        {
-            diagnostics.Add(new ConfigDiagnostic(code, path, message));
-        }
-    }
-
-    private static void ValidateRequired(
-        string? value,
-        string code,
-        string path,
-        string message,
-        List<ConfigDiagnostic> diagnostics,
-        bool allowWhitespace = false)
-    {
-        if (allowWhitespace ? string.IsNullOrEmpty(value) : string.IsNullOrWhiteSpace(value))
         {
             diagnostics.Add(new ConfigDiagnostic(code, path, message));
         }

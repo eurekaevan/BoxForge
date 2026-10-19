@@ -14,7 +14,8 @@ CLI 会为 Windows、Android 和 Linux 批量生成平台化配置，并在
 
 ## 特性
 
-- 支持 `trojan`、`vless`、`hysteria2`、`shadowsocks` (`ss`) 和 `anytls`
+- 支持 `trojan`、`vless`、`hysteria2`、`shadowsocks` (`ss`) 和 `anytls`；
+  VLESS/Trojan 仅接受原生 TCP，可使用受支持的 TLS、uTLS 与 Reality
 - 自动生成地区 URLTest AUTO、人工 selector、DNS、路由规则和远程 rule-set
 - 全局 DNS 与域名解析只使用 IPv4，所有 AAAA 查询返回空 `NOERROR`
 - TUN 保留仅用于捕获的 IPv6 地址，并在 sniff 前拒绝全部 IPv6；解析后另有兜底拒绝，防止硬编码地址、缓存和内置 DoH 逃逸
@@ -192,11 +193,14 @@ dotnet format BoxForge.slnx --verify-no-changes
 dotnet build BoxForge.slnx --no-incremental --warnaserror
 dotnet test BoxForge.slnx --no-build
 node --test scripts/verification-process.test.mjs
+python3 scripts/verify-generated-configs.py src/BoxForge.Cli/bin/Debug/net10.0/BoxForge.dll
 ```
 
-内置校验器负责 BoxForge 自身的生成约束，例如标签唯一性、引用完整性和
-必填字段。它不代替目标 sing-box 版本的官方检查；部署前应对产物另行执行
-`sing-box check -c <config.json>`。
+内置校验器只检查 BoxForge 的生成约束，包括 IPv6 守卫、标签与引用完整性、
+控制面策略和来源映射保真；输入字段合法性由解析器和转换器检查。
+官方检查脚本默认下载并验证锁定核心，覆盖 60 份三平台 fixture 配置与核心反例，
+同时接入普通 CI 和发布前验证；已有核心可通过 `--core /path/to/sing-box` 指定。
+它不创建 TUN 或验证连通性；部署实际配置前仍可执行 `sing-box check -c <config.json>`。
 
 当前资格验证锁定官方 `1.15.0-alpha.8`，并将单元测试、官方配置检查、
 本地协议回环与真实设备/网络验证分开记录。完整命令和未验证路径见

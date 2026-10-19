@@ -44,11 +44,10 @@ public sealed class SemanticCoverageTests
         });
         ClashProxyNode plugin = CreateNode("ss", new Hashtable
         {
-            ["plugin"] = "v2ray-plugin",
+            ["plugin"] = "obfs",
             ["plugin-opts"] = new Hashtable
             {
-                ["mode"] = "websocket",
-                ["mux"] = false,
+                ["mode"] = "tls",
                 ["host"] = "example.com"
             }
         });
@@ -88,8 +87,8 @@ public sealed class SemanticCoverageTests
                 CreateNode("ss", new Hashtable { ["name"] = "ss-basic" }),
                 CreateNode("ss", new Hashtable
                 {
-                    ["name"] = "ss-plugin", ["plugin"] = "v2ray-plugin",
-                    ["plugin-opts"] = new Hashtable { ["mode"] = "websocket", ["mux"] = false }
+                    ["name"] = "ss-plugin", ["plugin"] = "obfs",
+                    ["plugin-opts"] = new Hashtable { ["mode"] = "tls" }
                 }),
                 CreateNode("hysteria2", new Hashtable { ["name"] = "hy2-basic" }),
                 CreateNode("anytls", new Hashtable { ["name"] = "anytls-basic" })
@@ -99,6 +98,31 @@ public sealed class SemanticCoverageTests
         var catalog = builder.Build(config, strictNodeValidation: true);
 
         Assert.That(catalog.Outbounds, Has.Count.EqualTo(7));
+    }
+
+    private static IEnumerable<TestCaseData> RemovedTransports()
+    {
+        foreach (string protocol in new[] { "vless", "trojan" })
+        {
+            foreach (string network in new[] { "ws", "grpc", "httpupgrade", "http", "h2", "xhttp", "unknown", " WS " })
+                yield return new TestCaseData(protocol, "network", network);
+            foreach (string field in new[] { "ws-opts", "grpc-opts", "http-opts", "h2-opts", "http-upgrade-opts", "httpupgrade-opts", "xhttp-opts", "smux-opts" })
+                foreach (string alias in new[] { field, field.Replace('-', '_') })
+                    yield return new TestCaseData(protocol, alias, new Hashtable());
+        }
+    }
+
+    [TestCaseSource(nameof(RemovedTransports))]
+    public void RemovedTransportsFailStrictAndSkipWholeNode(string protocol, string field, object value)
+    {
+        var builder = new NodeCatalogBuilder([Converter(protocol)], new RecordingLogger<NodeCatalogBuilder>());
+        var config = new ClashConfig
+        {
+            Proxies = [CreateNode(protocol, new Hashtable { [field] = value }), CreateNode(protocol, new Hashtable { ["name"] = "safe" })]
+        };
+        NodeParseException? error = Assert.Throws<NodeParseException>(() => builder.Build(config, strictNodeValidation: true));
+        Assert.That(error!.Message, Does.Contain(field));
+        Assert.That(builder.Build(config, strictNodeValidation: false).Names, Is.EqualTo(new[] { "safe" }));
     }
 
     [Test]
@@ -116,6 +140,10 @@ public sealed class SemanticCoverageTests
         });
     }
 
+    [TestCase("vless", "encryption", "nonempty")]
+    [TestCase("vless", "fingerprint", "nonempty")]
+    [TestCase("vless", "name-cert-verify", "nonempty")]
+    [TestCase("trojan", "ss-opts", "unsupported")]
     [TestCase("vless", "network", "xhttp")]
     [TestCase("vless", "ws-opts", "ignored")]
     [TestCase("trojan", "network", "unknown")]
@@ -171,7 +199,7 @@ public sealed class SemanticCoverageTests
     }
 
     [TestCase("udp-over-tcp-version", 3, "udp-over-tcp-version")]
-    [TestCase("plugin", "obfs-local", "SIP003")]
+    [TestCase("plugin", "obfs-local", "仅支持 obfs")]
     [TestCase("plugin-opts", "invalid", "没有插件")]
     public void UnsafeExistingShadowsocksMappingsFailFast(
         string field,
@@ -184,23 +212,19 @@ public sealed class SemanticCoverageTests
         Assert.That(((InvalidNode)result).ErrorMessage, Does.Contain(reason));
     }
 
-    [Test]
-    public void StructuredPluginOptionsCannotBeFlattenedIntoDifferentSemantics()
+    [TestCase(null)]
+    [TestCase("plugin-opts")]
+    [TestCase("plugin_opts")]
+    public void RemovedV2RayPluginRejectsWholeNode(string? optionsKey)
     {
-        NodeConversionResult result = new ShadowsocksConverter().Convert(
-            CreateNode("ss", new Hashtable
-            {
-                ["plugin"] = "v2ray-plugin",
-                ["plugin-opts"] = new Hashtable
-                {
-                    ["mode"] = "websocket",
-                    ["tls"] = true
-                }
-            }));
-
-        Assert.That(result, Is.TypeOf<InvalidNode>());
-        Assert.That(((InvalidNode)result).ErrorMessage,
-            Does.Contain("plugin-opts.mux"));
+        var fields = new Hashtable { ["plugin"] = "v2ray-plugin" };
+        if (optionsKey is not null)
+            fields[optionsKey] = new Hashtable { ["mode"] = "websocket", ["mux"] = false };
+        var builder = new NodeCatalogBuilder([new ShadowsocksConverter()], new RecordingLogger<NodeCatalogBuilder>());
+        var config = new ClashConfig { Proxies = [CreateNode("ss", fields), CreateNode("ss", new Hashtable { ["name"] = "safe" })] };
+        NodeParseException? error = Assert.Throws<NodeParseException>(() => builder.Build(config, strictNodeValidation: true));
+        Assert.That(error!.Message, Does.Contain("plugin"));
+        Assert.That(builder.Build(config, strictNodeValidation: false).Names, Is.EqualTo(new[] { "safe" }));
     }
 
     [Test]
@@ -390,10 +414,7 @@ public sealed class SemanticCoverageTests
             Enabled = true,
             Version = targetVersion
         }));
-        if (targetVersion == 2)
-            Assert.That(Serialize(outbound), Does.Not.Contain("\"version\""));
-        else
-            Assert.That(Serialize(outbound), Does.Contain("\"version\": " + targetVersion));
+        Assert.That(Serialize(outbound), Does.Contain("\"version\": " + targetVersion));
     }
 
     [Test]
@@ -447,16 +468,11 @@ public sealed class SemanticCoverageTests
     {
         var result = (ConvertedNode)new ShadowsocksConverter().Convert(CreateNode("ss", new Hashtable
         {
-            ["plugin"] = "v2ray-plugin",
-            ["plugin_opts"] = new Hashtable
-            {
-                ["mode"] = "websocket",
-                ["mux"] = false,
-                ["path"] = "/a;b=c\\d"
-            }
+            ["plugin"] = "obfs",
+            ["plugin_opts"] = new Hashtable { ["mode"] = "http", ["host"] = "a;b=c\\d" }
         }));
         Assert.That(((ShadowsocksOutbound)result.Outbound).PluginOpts,
-            Is.EqualTo("mode=websocket;host=bing.com;path=/a\\;b\\=c\\\\d;mux=0"));
+            Is.EqualTo("obfs=http;obfs-host=a\\;b\\=c\\\\d"));
     }
 
     [Test]
@@ -646,7 +662,7 @@ public sealed class SemanticCoverageTests
         Assert.That(outbound.MinIdleSession, Is.EqualTo(count));
         Assert.That(outbound.ClientMetadata, Is.EqualTo(" utf8-中文=value "));
         Assert.That(Serialize(outbound), Does.Contain("client_metadata"));
-        Assert.That(Serialize(outbound).Contains("min_idle_session", StringComparison.Ordinal), Is.EqualTo(count != 0));
+        Assert.That(Serialize(outbound), Does.Contain("\"min_idle_session\": " + count));
     }
 
     [Test]

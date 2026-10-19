@@ -8,7 +8,7 @@ namespace BoxForge.Tests;
 public sealed class ConfigSerializerDefaultsTests
 {
     [Test]
-    public void OmitsCoreDefaultsWithoutChangingTheModel()
+    public void PreservesExplicitDefaultsWithoutChangingTheModel()
     {
         var leaf = new AnyTlsOutbound
         {
@@ -34,12 +34,16 @@ public sealed class ConfigSerializerDefaultsTests
         };
         using JsonDocument document = Serialize(leaf, selector);
         JsonElement node = document.RootElement.GetProperty("outbounds")[0];
-        foreach (string field in new[] { "connect_timeout", "tcp_keep_alive", "tcp_keep_alive_interval",
-                     "idle_session_timeout", "idle_session_check_interval", "min_idle_session", "client_metadata" })
-            Assert.That(node.TryGetProperty(field, out _), Is.False, field);
+        Assert.That(node.GetProperty("connect_timeout").GetString(), Is.EqualTo("5000ms"));
+        Assert.That(node.GetProperty("tcp_keep_alive").GetString(), Is.EqualTo("5m"));
+        Assert.That(node.GetProperty("tcp_keep_alive_interval").GetString(), Is.EqualTo("1m15s"));
+        Assert.That(node.GetProperty("idle_session_timeout").GetString(), Is.EqualTo("0.5m"));
+        Assert.That(node.GetProperty("idle_session_check_interval").GetString(), Is.EqualTo("30s"));
+        Assert.That(node.GetProperty("min_idle_session").GetInt32(), Is.Zero);
+        Assert.That(node.GetProperty("client_metadata").GetString(), Is.Empty);
         Assert.That(node.GetProperty("tls").GetProperty("enabled").GetBoolean(), Is.True);
-        Assert.That(node.GetProperty("tls").TryGetProperty("insecure", out _), Is.False);
-        Assert.That(document.RootElement.GetProperty("outbounds")[1].TryGetProperty("default", out _), Is.False);
+        Assert.That(node.GetProperty("tls").GetProperty("insecure").GetBoolean(), Is.False);
+        Assert.That(document.RootElement.GetProperty("outbounds")[1].GetProperty("default").GetString(), Is.EqualTo("node"));
         Assert.That(document.RootElement.GetProperty("outbounds")[1].GetProperty("interrupt_exist_connections").GetBoolean(), Is.True);
         Assert.That(leaf.IdleSessionTimeout, Is.EqualTo("0.5m"));
         Assert.That(selector.Default, Is.EqualTo("node"));
@@ -67,9 +71,9 @@ public sealed class ConfigSerializerDefaultsTests
         Assert.That(document.RootElement.GetProperty("outbounds")[1].GetProperty("default").GetString(), Is.EqualTo("other"));
     }
 
-    [TestCase(1, true)]
-    [TestCase(2, false)]
-    public void UotVersionOneRemainsExplicitWhileVersionTwoUsesTheCoreDefault(int version, bool explicitVersion)
+    [TestCase(1)]
+    [TestCase(2)]
+    public void PreservesBothUotVersions(int version)
     {
         using JsonDocument document = Serialize(new ShadowsocksOutbound
         {
@@ -81,11 +85,11 @@ public sealed class ConfigSerializerDefaultsTests
         });
         JsonElement uot = document.RootElement.GetProperty("outbounds")[0].GetProperty("udp_over_tcp");
         Assert.That(uot.GetProperty("enabled").GetBoolean(), Is.True);
-        Assert.That(uot.TryGetProperty("version", out _), Is.EqualTo(explicitVersion));
+        Assert.That(uot.GetProperty("version").GetInt32(), Is.EqualTo(version));
     }
 
     [Test]
-    public void DoesNotRemoveResponseMatchersOrNonDefaultPolicies()
+    public void PreservesRuleActionsResponseCodesAndRuleSetDefaults()
     {
         var config = new SingboxConfig
         {
@@ -98,28 +102,31 @@ public sealed class ConfigSerializerDefaultsTests
             {
                 RuleSet = [new SingboxRuleSet { Format = RuleSetFormat.Binary, Url = "https://example.com/rules.srs", UpdateInterval = "24h" },
                     new SingboxRuleSet { Format = RuleSetFormat.Binary, Url = "https://example.com/download" }],
-                Rules = [new RouteRule { Action = RouteRuleAction.Route, Outbound = "direct", Invert = false }]
+                Rules = [new RouteRule { Action = RouteRuleAction.Route, Outbound = "direct", Invert = false },
+                    new RouteRule { Action = RouteRuleAction.Sniff, Timeout = "300ms" }]
             }
         };
         using JsonDocument document = JsonDocument.Parse(new ConfigSerializer().Serialize(config));
         JsonElement dns = document.RootElement.GetProperty("dns");
         Assert.That(dns.GetProperty("timeout").GetString(), Is.EqualTo("5s"));
         Assert.That(dns.GetProperty("cache_capacity").GetUInt32(), Is.EqualTo(4096));
-        Assert.That(dns.GetProperty("rules")[0].TryGetProperty("rcode", out _), Is.False);
+        Assert.That(dns.GetProperty("rules")[0].GetProperty("rcode").GetString(), Is.EqualTo("NOERROR"));
         Assert.That(dns.GetProperty("rules")[1].GetProperty("response_rcode").GetString(), Is.EqualTo("NOERROR"));
         JsonElement route = document.RootElement.GetProperty("route");
-        Assert.That(route.GetProperty("rule_set")[0].TryGetProperty("format", out _), Is.False);
-        Assert.That(route.GetProperty("rule_set")[0].TryGetProperty("update_interval", out _), Is.False);
+        Assert.That(route.GetProperty("rule_set")[0].GetProperty("format").GetString(), Is.EqualTo("binary"));
+        Assert.That(route.GetProperty("rule_set")[0].GetProperty("update_interval").GetString(), Is.EqualTo("24h"));
         Assert.That(route.GetProperty("rule_set")[1].GetProperty("format").GetString(), Is.EqualTo("binary"));
-        Assert.That(route.GetProperty("rules")[0].TryGetProperty("action", out _), Is.False);
+        Assert.That(route.GetProperty("rules")[0].GetProperty("action").GetString(), Is.EqualTo("route"));
+        Assert.That(route.GetProperty("rules")[0].GetProperty("invert").GetBoolean(), Is.False);
+        Assert.That(route.GetProperty("rules")[1].GetProperty("timeout").GetString(), Is.EqualTo("300ms"));
         Assert.That(route.GetProperty("auto_detect_interface").GetBoolean(), Is.True);
     }
 
-    [TestCase(null, false)]
-    [TestCase("0s", false)]
-    [TestCase("30s", false)]
-    [TestCase("60s", true)]
-    public void HysteriaHopDefaultCanOnlyBeOmittedForAFixedInterval(string? maximum, bool explicitMinimum)
+    [TestCase(null)]
+    [TestCase("0s")]
+    [TestCase("30s")]
+    [TestCase("60s")]
+    public void PreservesHysteriaHopBoundsWithoutNormalizingDurations(string? maximum)
     {
         using JsonDocument document = Serialize(new Hysteria2Outbound
         {
@@ -131,13 +138,16 @@ public sealed class ConfigSerializerDefaultsTests
             BbrProfile = "standard"
         });
         JsonElement node = document.RootElement.GetProperty("outbounds")[0];
-        Assert.That(node.TryGetProperty("hop_interval", out _), Is.EqualTo(explicitMinimum));
-        Assert.That(node.TryGetProperty("hop_interval_max", out _), Is.EqualTo(explicitMinimum));
-        Assert.That(node.TryGetProperty("bbr_profile", out _), Is.False);
+        Assert.That(node.GetProperty("hop_interval").GetString(), Is.EqualTo("30s"));
+        if (maximum is null)
+            Assert.That(node.TryGetProperty("hop_interval_max", out _), Is.False);
+        else
+            Assert.That(node.GetProperty("hop_interval_max").GetString(), Is.EqualTo(maximum));
+        Assert.That(node.GetProperty("bbr_profile").GetString(), Is.EqualTo("standard"));
     }
 
     [Test]
-    public void OmitsUrlTestAndTransportDefaultsButPreservesRequiredEnablers()
+    public void PreservesUrlTestAndTlsDefaultsAndOmitsNullsAndEmptyCollections()
     {
         using JsonDocument document = Serialize(new UrlTestOutbound
         {
@@ -154,21 +164,27 @@ public sealed class ConfigSerializerDefaultsTests
             Server = "example.com",
             Uuid = "test",
             PacketEncoding = "xudp",
-            Tls = new OutboundTls { ServerName = "example.com", Utls = new Utls { Enabled = true, Fingerprint = "chrome" } },
-            Transport = new WebSocketTransport { Path = "/", MaxEarlyData = 0, Headers = [] }
+            Tls = new OutboundTls { ServerName = "example.com", Alpn = [], Utls = new Utls { Enabled = true, Fingerprint = "chrome" } }
         });
         JsonElement auto = document.RootElement.GetProperty("outbounds")[0];
-        Assert.That(auto.EnumerateObject().Select(property => property.Name), Is.EquivalentTo(new[] { "type", "tag", "outbounds" }));
+        Assert.That(auto.GetProperty("url").GetString(), Is.EqualTo("https://www.gstatic.com/generate_204"));
+        Assert.That(auto.GetProperty("interval").GetString(), Is.EqualTo("3m"));
+        Assert.That(auto.GetProperty("idle_timeout").GetString(), Is.EqualTo("30m"));
+        Assert.That(auto.GetProperty("tolerance").GetInt32(), Is.EqualTo(50));
+        Assert.That(auto.GetProperty("interrupt_exist_connections").GetBoolean(), Is.False);
         JsonElement node = document.RootElement.GetProperty("outbounds")[1];
-        Assert.That(node.TryGetProperty("packet_encoding", out _), Is.False);
-        Assert.That(node.GetProperty("tls").TryGetProperty("server_name", out _), Is.False);
+        Assert.That(node.GetProperty("packet_encoding").GetString(), Is.EqualTo("xudp"));
+        Assert.That(node.GetProperty("tls").GetProperty("server_name").GetString(), Is.EqualTo("example.com"));
         Assert.That(node.GetProperty("tls").GetProperty("utls").GetProperty("enabled").GetBoolean(), Is.True);
-        Assert.That(node.GetProperty("tls").GetProperty("utls").TryGetProperty("fingerprint", out _), Is.False);
-        Assert.That(node.GetProperty("transport").EnumerateObject().Select(property => property.Name), Is.EqualTo(new[] { "type" }));
+        Assert.That(node.GetProperty("tls").GetProperty("utls").GetProperty("fingerprint").GetString(), Is.EqualTo("chrome"));
+        Assert.That(node.GetProperty("tls").TryGetProperty("alpn", out _), Is.False);
+        Assert.That(node.GetProperty("tls").TryGetProperty("reality", out _), Is.False);
+        Assert.That(document.RootElement.TryGetProperty("inbounds", out _), Is.False);
+        Assert.That(document.RootElement.TryGetProperty("services", out _), Is.False);
     }
 
     [Test]
-    public void ContextDefaultsTrackTheirActualParentsAndDoNotMutateThem()
+    public void PreservesExplicitReferencesTimeoutsAndDnsTlsSettings()
     {
         var config = new SingboxConfig
         {
@@ -181,18 +197,25 @@ public sealed class ConfigSerializerDefaultsTests
                 Timeout = "2s",
                 Rules = [new DnsRule { Timeout = "2000ms", Server = "dns" }, new DnsRule { Timeout = "10s", Server = "dns" }]
             },
-            Route = new RouteConfig { Final = "direct", DefaultHttpClient = "first" },
+            Route = new RouteConfig
+            {
+                Final = "direct",
+                DefaultHttpClient = "first",
+                RuleSet = [new SingboxRuleSet { HttpClient = "first" }]
+            },
             Inbounds = [new Inbound { Type = "tun", Tag = "tun", DnsMode = "hijack" }]
         };
         using JsonDocument document = JsonDocument.Parse(new ConfigSerializer().Serialize(config));
         JsonElement dns = document.RootElement.GetProperty("dns");
-        Assert.That(dns.TryGetProperty("final", out _), Is.False);
-        Assert.That(dns.GetProperty("rules")[0].TryGetProperty("timeout", out _), Is.False);
+        Assert.That(dns.GetProperty("final").GetString(), Is.EqualTo("dns"));
+        Assert.That(dns.GetProperty("rules")[0].GetProperty("timeout").GetString(), Is.EqualTo("2000ms"));
         Assert.That(dns.GetProperty("rules")[1].GetProperty("timeout").GetString(), Is.EqualTo("10s"));
         Assert.That(dns.GetProperty("servers")[0].GetProperty("tls").GetProperty("server_name").GetString(), Is.EqualTo("cloudflare-dns.com"));
-        Assert.That(document.RootElement.GetProperty("route").TryGetProperty("default_http_client", out _), Is.False);
-        Assert.That(document.RootElement.GetProperty("route").TryGetProperty("final", out _), Is.False);
-        Assert.That(document.RootElement.GetProperty("inbounds")[0].TryGetProperty("dns_mode", out _), Is.False);
+        Assert.That(dns.GetProperty("servers")[0].GetProperty("tls").GetProperty("enabled").GetBoolean(), Is.True);
+        Assert.That(document.RootElement.GetProperty("route").GetProperty("default_http_client").GetString(), Is.EqualTo("first"));
+        Assert.That(document.RootElement.GetProperty("route").GetProperty("final").GetString(), Is.EqualTo("direct"));
+        Assert.That(document.RootElement.GetProperty("route").GetProperty("rule_set")[0].GetProperty("http_client").GetString(), Is.EqualTo("first"));
+        Assert.That(document.RootElement.GetProperty("inbounds")[0].GetProperty("dns_mode").GetString(), Is.EqualTo("hijack"));
         Assert.That(config.Dns.Rules[0].Timeout, Is.EqualTo("2000ms"));
         Assert.That(config.Route.DefaultHttpClient, Is.EqualTo("first"));
     }
@@ -211,7 +234,7 @@ public sealed class ConfigSerializerDefaultsTests
     }
 
     [Test]
-    public void TransportDefaultsUseTheOriginalTlsIdentityAndKeepNonDefaultAlpn()
+    public void PreservesTlsIdentityAndAlpnOrder()
     {
         var tls = new OutboundTls { ServerName = "name.example.com", Alpn = ["http/1.1"] };
         using JsonDocument document = Serialize(new TrojanOutbound
@@ -219,22 +242,18 @@ public sealed class ConfigSerializerDefaultsTests
             Tag = "default",
             Server = "node.example.com",
             Password = "test",
-            Tls = tls,
-            Transport = new HttpUpgradeTransport { Host = "name.example.com", Path = "/" }
+            Tls = tls
         }, new TrojanOutbound
         {
             Tag = "custom",
             Server = "node.example.com",
             Password = "test",
-            Tls = tls with { Alpn = ["h2", "http/1.1", "h2"] },
-            Transport = new HttpUpgradeTransport { Host = "other.example.com", Path = "/custom" }
+            Tls = tls with { Alpn = ["h2", "http/1.1", "h2"] }
         });
         JsonElement first = document.RootElement.GetProperty("outbounds")[0];
         Assert.That(first.GetProperty("tls").GetProperty("server_name").GetString(), Is.EqualTo("name.example.com"));
-        Assert.That(first.GetProperty("tls").TryGetProperty("alpn", out _), Is.False);
-        Assert.That(first.GetProperty("transport").TryGetProperty("host", out _), Is.False);
+        Assert.That(first.GetProperty("tls").GetProperty("alpn").EnumerateArray().Select(item => item.GetString()), Is.EqualTo(new[] { "http/1.1" }));
         JsonElement second = document.RootElement.GetProperty("outbounds")[1];
-        Assert.That(second.GetProperty("transport").GetProperty("host").GetString(), Is.EqualTo("other.example.com"));
         Assert.That(second.GetProperty("tls").GetProperty("alpn").EnumerateArray().Select(item => item.GetString()),
             Is.EqualTo(new[] { "h2", "http/1.1", "h2" }));
         Assert.That(tls.Alpn, Is.EqualTo(new[] { "http/1.1" }));
@@ -253,8 +272,8 @@ public sealed class ConfigSerializerDefaultsTests
                 Outbounds = [new AnyTlsOutbound { Tag = "node", Server = server, Password = "test", Tls = tls }]
             };
             using JsonDocument document = JsonDocument.Parse(serializer.Serialize(config));
-            Assert.That(document.RootElement.GetProperty("outbounds")[0].GetProperty("tls").TryGetProperty("server_name", out _),
-                Is.EqualTo(index % 2 != 0));
+            Assert.That(document.RootElement.GetProperty("outbounds")[0].GetProperty("tls").GetProperty("server_name").GetString(),
+                Is.EqualTo("name.example.com"));
         });
         Assert.That(tls.ServerName, Is.EqualTo("name.example.com"));
     }

@@ -141,12 +141,175 @@ public sealed class LocalGenerationWorkflowTests
             Assert.That(engine.Requests.Select(request => request.Name),
                 Is.EqualTo(new[] { "a", "b" }));
             Assert.That(File.ReadAllText(existingFile), Is.EqualTo("preserve-me"));
+            Assert.That(Directory.GetDirectories(temporaryDirectory, ".output.boxforge-*"), Is.Empty);
             Assert.That(
                 File.Exists(GetOutputPath(
                     outputDirectory,
                     "a",
                     TargetPlatform.Android)),
                 Is.False);
+        });
+    }
+
+    [Test]
+    public async Task DiscoversOnlyTopLevelYamlFilesInOrdinalFileNameOrder()
+    {
+        string inputDirectory = CreateDirectory("input");
+        string outputDirectory = System.IO.Path.Combine(temporaryDirectory, "output");
+        foreach (string name in new[] { "z.YaMl", "a.yaml", "B.YML", "ignored.txt", "ignored.yaml.bak" })
+        {
+            await File.WriteAllTextAsync(System.IO.Path.Combine(inputDirectory, name), name);
+        }
+        string nestedDirectory = System.IO.Path.Combine(inputDirectory, "nested");
+        Directory.CreateDirectory(nestedDirectory);
+        await File.WriteAllTextAsync(System.IO.Path.Combine(nestedDirectory, "nested.yaml"), "nested");
+        var engine = new RecordingEngine(request => new ConversionBundle(request.Name,
+            [new ConversionArtifact(TargetPlatform.Android, request.ClashYaml, new string('a', 64))]));
+
+        LocalGenerationSummary summary = await CreateWorkflow(engine).GenerateAsync(
+            new LocalGenerationRequest(inputDirectory, outputDirectory, [TargetPlatform.Android]));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(summary.Succeeded, Is.EqualTo(3));
+            Assert.That(summary.Failed, Is.Zero);
+            Assert.That(engine.Requests.Select(request => request.Name), Is.EqualTo(new[] { "B", "a", "z" }));
+            Assert.That(Directory.GetFiles(outputDirectory, "*", SearchOption.AllDirectories), Has.Length.EqualTo(3));
+        });
+    }
+
+    [Test]
+    public async Task DuplicateStemsDiscardTheEntireBatchAndPreserveOldOutput()
+    {
+        string inputDirectory = CreateDirectory("input");
+        string outputDirectory = CreateDirectory("output");
+        foreach (string name in new[] { "good.yaml", "sample.yaml", "sample.yml" })
+        {
+            await File.WriteAllTextAsync(System.IO.Path.Combine(inputDirectory, name), "input");
+        }
+        string existingFile = System.IO.Path.Combine(outputDirectory, "old.txt");
+        await File.WriteAllTextAsync(existingFile, "old");
+        var engine = new RecordingEngine(request => new ConversionBundle(request.Name,
+            [new ConversionArtifact(TargetPlatform.Android, "new", new string('a', 64))]));
+
+        LocalGenerationSummary summary = await CreateWorkflow(engine).GenerateAsync(
+            new LocalGenerationRequest(inputDirectory, outputDirectory, [TargetPlatform.Android]));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(summary.Succeeded, Is.Zero);
+            Assert.That(summary.Failed, Is.EqualTo(2));
+            Assert.That(summary.Discarded, Is.EqualTo(1));
+            Assert.That(engine.Requests.Select(request => request.Name), Is.EqualTo(new[] { "good" }));
+            Assert.That(File.ReadAllText(existingFile), Is.EqualTo("old"));
+            Assert.That(Directory.GetFiles(outputDirectory, "*", SearchOption.AllDirectories), Is.EqualTo(new[] { existingFile }));
+            Assert.That(Directory.GetDirectories(temporaryDirectory, ".output.boxforge-*"), Is.Empty);
+        });
+    }
+
+    [TestCase(false, false)]
+    [TestCase(true, false)]
+    [TestCase(false, true)]
+    [TestCase(true, true)]
+    public async Task RejectsOutputThatPhysicallyEqualsOrContainsInput(bool ancestor, bool throughSymbolicLink)
+    {
+        string parentDirectory = CreateDirectory("parent");
+        string inputDirectory = System.IO.Path.Combine(parentDirectory, "input");
+        Directory.CreateDirectory(inputDirectory);
+        string inputFile = System.IO.Path.Combine(inputDirectory, "sample.yaml");
+        await File.WriteAllTextAsync(inputFile, "preserve-input");
+        string outputDirectory = ancestor ? parentDirectory : inputDirectory;
+        if (throughSymbolicLink)
+        {
+            string link = System.IO.Path.Combine(temporaryDirectory, "output-link");
+            try
+            {
+                Directory.CreateSymbolicLink(link, outputDirectory);
+            }
+            catch (Exception ex) when (ex is PlatformNotSupportedException or UnauthorizedAccessException)
+            {
+                Assert.Ignore($"Creating symbolic links is unavailable: {ex.Message}");
+            }
+            outputDirectory = link;
+        }
+        var engine = new RecordingEngine(_ => throw new AssertionException("Unsafe paths must be rejected before conversion"));
+
+        LocalGenerationSummary summary = await CreateWorkflow(engine).GenerateAsync(
+            new LocalGenerationRequest(inputDirectory, outputDirectory, [TargetPlatform.Android]));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(summary.Succeeded, Is.Zero);
+            Assert.That(summary.Failed, Is.EqualTo(1));
+            Assert.That(engine.Requests, Is.Empty);
+            Assert.That(File.ReadAllText(inputFile), Is.EqualTo("preserve-input"));
+        });
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public async Task UnchangedArtifactsKeepOutputUnlessItContainsStaleFiles(bool hasStaleFile)
+    {
+        string inputDirectory = CreateDirectory("input");
+        string outputDirectory = CreateDirectory("output");
+        await File.WriteAllTextAsync(System.IO.Path.Combine(inputDirectory, "sample.yaml"), "input");
+        string existingFile = GetOutputPath(outputDirectory, "sample", TargetPlatform.Android);
+        Directory.CreateDirectory(System.IO.Path.GetDirectoryName(existingFile)!);
+        await File.WriteAllTextAsync(existingFile, "same");
+        string emptyDirectory = System.IO.Path.Combine(outputDirectory, "directory-marker");
+        Directory.CreateDirectory(emptyDirectory);
+        string staleFile = System.IO.Path.Combine(outputDirectory, "stale.txt");
+        if (hasStaleFile)
+        {
+            await File.WriteAllTextAsync(staleFile, "stale");
+        }
+        var engine = new RecordingEngine(request => new ConversionBundle(request.Name,
+            [new ConversionArtifact(TargetPlatform.Android, "same", new string('a', 64))]));
+
+        LocalGenerationSummary summary = await CreateWorkflow(engine).GenerateAsync(
+            new LocalGenerationRequest(inputDirectory, outputDirectory, [TargetPlatform.Android]));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(summary.Succeeded, Is.Zero);
+            Assert.That(summary.Skipped, Is.EqualTo(1));
+            Assert.That(summary.Failed, Is.Zero);
+            Assert.That(File.ReadAllText(existingFile), Is.EqualTo("same"));
+            Assert.That(File.Exists(staleFile), Is.False);
+            Assert.That(Directory.Exists(emptyDirectory), Is.EqualTo(!hasStaleFile));
+            Assert.That(Directory.GetDirectories(temporaryDirectory, ".output.boxforge-*"), Is.Empty);
+        });
+    }
+
+    [Test]
+    public async Task CancellationDiscardsStagedArtifactsAndPreservesOldOutput()
+    {
+        string inputDirectory = CreateDirectory("input");
+        string outputDirectory = CreateDirectory("output");
+        await File.WriteAllTextAsync(System.IO.Path.Combine(inputDirectory, "a.yaml"), "first");
+        await File.WriteAllTextAsync(System.IO.Path.Combine(inputDirectory, "b.yaml"), "second");
+        string existingFile = System.IO.Path.Combine(outputDirectory, "old.txt");
+        await File.WriteAllTextAsync(existingFile, "old");
+        using var cancellation = new CancellationTokenSource();
+        var engine = new RecordingEngine(request =>
+        {
+            if (request.Name == "b")
+            {
+                cancellation.Cancel();
+            }
+            return new ConversionBundle(request.Name,
+                [new ConversionArtifact(TargetPlatform.Android, "new", new string('a', 64))]);
+        });
+
+        Assert.CatchAsync<OperationCanceledException>(() => CreateWorkflow(engine).GenerateAsync(
+            new LocalGenerationRequest(inputDirectory, outputDirectory, [TargetPlatform.Android]), cancellation.Token));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(engine.Requests.Select(request => request.Name), Is.EqualTo(new[] { "a", "b" }));
+            Assert.That(File.ReadAllText(existingFile), Is.EqualTo("old"));
+            Assert.That(Directory.GetFiles(outputDirectory, "*", SearchOption.AllDirectories), Is.EqualTo(new[] { existingFile }));
+            Assert.That(Directory.GetDirectories(temporaryDirectory, ".output.boxforge-*"), Is.Empty);
         });
     }
 
@@ -190,29 +353,34 @@ public sealed class LocalGenerationWorkflowTests
 
     [TestCase(false)]
     [TestCase(true)]
-    public void PublicationFailureRestoresOldOutputOrPreservesBackupAndBothErrors(bool restorationFails)
+    public async Task PublicationFailureRestoresOldOutputOrPreservesBackupAndBothErrors(bool restorationFails)
     {
-        string staging = CreateDirectory("staging");
         string output = CreateDirectory("output");
-        File.WriteAllText(System.IO.Path.Combine(staging, "new.txt"), "new");
         File.WriteAllText(System.IO.Path.Combine(output, "old.txt"), "old");
-        var workflow = CreateWorkflow(new RecordingEngine(_ => throw new AssertionException("No conversion expected")));
         var publishError = new IOException("publish failed");
         var restoreError = new UnauthorizedAccessException("restore failed");
         int moves = 0;
         string? backup = null;
+        string? staging = null;
         void Move(string source, string destination)
         {
             moves++;
             if (moves == 1) backup = destination;
-            if (moves == 2) throw publishError;
+            if (moves == 2)
+            {
+                staging = source;
+                throw publishError;
+            }
             if (moves == 3 && restorationFails) throw restoreError;
             Directory.Move(source, destination);
         }
 
+        using var transaction = new OutputTransaction(output, NullLogger<LocalGenerationWorkflow>.Instance, Move);
+        await transaction.StageAsync("sample", new ConversionArtifact(TargetPlatform.Android, "new", "unused"), CancellationToken.None);
+
         if (restorationFails)
         {
-            var error = Assert.Throws<AggregateException>(() => workflow.ReplaceOutputDirectory(staging, output, Move));
+            var error = Assert.Throws<AggregateException>(transaction.Commit);
             Assert.Multiple(() =>
             {
                 Assert.That(error!.InnerExceptions, Is.EqualTo(new Exception[] { publishError, restoreError }));
@@ -223,22 +391,24 @@ public sealed class LocalGenerationWorkflowTests
         }
         else
         {
-            Assert.That(Assert.Throws<IOException>(() => workflow.ReplaceOutputDirectory(staging, output, Move)),
+            Assert.That(Assert.Throws<IOException>(transaction.Commit),
                 Is.SameAs(publishError));
             Assert.That(File.ReadAllText(System.IO.Path.Combine(output, "old.txt")), Is.EqualTo("old"));
             Assert.That(Directory.Exists(backup), Is.False);
         }
-        Assert.That(File.ReadAllText(System.IO.Path.Combine(staging, "new.txt")), Is.EqualTo("new"));
+        Assert.That(File.ReadAllText(GetOutputPath(staging!, "sample", TargetPlatform.Android)), Is.EqualTo("new"));
     }
 
     [Test]
-    public void RealDirectoryMoveFailureRestoresExistingOutput()
+    public async Task RealDirectoryMoveFailureRestoresExistingOutput()
     {
         string output = CreateDirectory("output");
         File.WriteAllText(System.IO.Path.Combine(output, "old.txt"), "old");
-        var workflow = CreateWorkflow(new RecordingEngine(_ => throw new AssertionException("No conversion expected")));
-        Assert.Throws<DirectoryNotFoundException>(() => workflow.ReplaceOutputDirectory(
-            System.IO.Path.Combine(temporaryDirectory, "missing-staging"), output));
+        using var transaction = new OutputTransaction(output, NullLogger<LocalGenerationWorkflow>.Instance);
+        await transaction.StageAsync("sample", new ConversionArtifact(TargetPlatform.Android, "new", "unused"), CancellationToken.None);
+        string staging = Directory.GetDirectories(temporaryDirectory, ".output.boxforge-*").Single();
+        Directory.Delete(staging, recursive: true);
+        Assert.Throws<DirectoryNotFoundException>(transaction.Commit);
         Assert.That(File.ReadAllText(System.IO.Path.Combine(output, "old.txt")), Is.EqualTo("old"));
         Assert.That(Directory.GetDirectories(temporaryDirectory), Is.EqualTo(new[] { output }));
     }

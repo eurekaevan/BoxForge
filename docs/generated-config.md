@@ -2,47 +2,15 @@
 
 本文记录生成配置的有效行为及 JSON 输出约定。
 
-## 默认值省略
+## JSON 输出约定
 
-输出只保留会改变 sing-box 有效行为的字段。默认值依据当前验证核心
-`1.15.0-alpha.8`（`b609f959f57ce34416c51c7b87ce4a76f2e1df56`）及其锁定依赖核对，
-不是对所有字段使用 .NET 的零值省略。内部模型仍保留完整映射和调优值，
-校验完成后才创建不修改原模型的输出投影；规则与候选列表不会重排。
+输出层只省略 `null` 和空集合，不根据核心默认值删除字段，也不根据其他字段
+推导并省略等价值。模型中已有的标量值均保留，包括空字符串、`false` 和 `0`；
+规则、候选及 ALPN 列表保留原有顺序和重复项。
 
-主要省略项：
-
-- [Dial](https://sing-box.sagernet.org/configuration/shared/dial/) 的连接超时 `5s`、
-  keepalive `5m/75s`；桌面策略的 `1m/30s` 不同于默认值，继续输出。
-- [AnyTLS](https://sing-box.sagernet.org/configuration/outbound/anytls/) 会话超时和
-  检查周期 `30s`、最少空闲会话 `0`；等价 Go duration（如 `0.5m`）同样省略。
-- VLESS 默认 `xudp`、UoT 默认版本 `2`、uTLS 默认 `chrome`、默认 BBR `standard`、
-  Gecko 默认包大小 `512/1200`、WS/HTTPUpgrade 根路径及空集合。
-  模型层的显式空 `packet_encoding` 表示原生 UDP，仍输出；但来源 Mihomo 的空
-  `packet-encoding` 实际使用 XUDP，转换时按 XUDP 处理并省略默认值。UoT v1 仍显式写版本。
-- URLTest 的官方 URL、`3m` 周期、`50` 容差、`30m` 空闲超时及
-  `interrupt_exist_connections: false`；Linux/Windows 的 `1m` 周期显式输出，
-  selector 的 `true` 策略不变。
-- 默认 route action、sniff `300ms`、predefined 响应 `NOERROR`、`.srs` URL
-  可推导的 binary 格式、规则集更新周期 `24h`、缓存路径 `cache.db`。
-  DNS `response_rcode: NOERROR` 是匹配条件，不会删除。
-- selector 默认值等于首候选时省略 `default`；DNS/route final 等于首定义时省略；
-  默认 HTTP client 等于首 client 时省略。非首选引用保留，不能重新排列这些列表。
-- TLS 名称恰好等于目标 server 时使用自动回退；其他 SNI 保留。HTTPS DNS 自动开启
-  TLS，因此不输出 `tls.enabled`；代理 TLS、uTLS、Reality 的 `enabled: true` 仍必需。
-  WS/HTTPUpgrade 单项 ALPN `http/1.1`、gRPC 单项 `h2`、HY2 单项 `h3` 使用对应
-  transport/protocol 的默认值；其他列表仍保留顺序和重复项。HTTPUpgrade Host 与
-  有效 TLS 名称相同也省略，其他 Host 不变。
-
-依赖其他字段的默认值会单独判断。例如固定 HY2 `30s` 可以省略，但
-`hop_interval_max` 表示非退化范围时核心要求两个边界均显式存在，因此默认调优的
-`30s/60s` 仍完整输出。DNS rule timeout 仅在等于当前全局 timeout 时省略，
-不会将全局 `5s` 下的显式 `10s` 错当作默认。
-
-IPv4-only、DIRECT/bridge/bypass、Tailscale、DNS 超时 `5s`、缓存容量 `4096`、
-optimistic `6h` 等非默认策略继续显式输出。Linux/Windows 的 DNS A 查询
-独立禁用过期缓存，只让含 IPv4 地址的响应竞速，正常 TTL 缓存保留；其他查询
-与 Android 策略不变。升级核心时必须重新核对这些默认值，
-运行单元测试、三平台生成检查与官方核心验证，而不是扩大通用零值删除。
+来源映射和 BoxForge 调优仍决定模型中有哪些值。未映射、未调优的可选字段可以
+保持 `null` 并省略，因此这不表示生成配置已显式设置核心的全部默认值。
+核心版本变化时仍需运行单元测试、三平台生成检查与官方核心验证。
 
 ## 平台差异
 
@@ -55,7 +23,7 @@ DNS 顺序回退的首选 `2s` 预算属于算法常量，不是 Mobile 的全�
 
 每个平台都只生成一个 TUN inbound，不再提供本地 SOCKS/HTTP mixed 入口。
 原先显式使用 `127.0.0.1:8848` 的客户端须改为通过 TUN 联网。
-TUN 固定启用 `auto_route`，DNS 模式使用核心默认的 `hijack`，不输出 `dns_mode`。
+TUN 固定启用 `auto_route`，DNS 模式显式输出 `dns_mode: hijack`。
 `strict_route` 仅在 Linux/Windows 显式启用；指定版本 Android feature matrix
 标记该能力未实现，因此省略。不生成 `set_system_proxy` 或
 `platform.http_proxy`，因此不会由
@@ -109,6 +77,7 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
   `2s` 超时，失败后才查询备用；Linux/Windows 同时查询两家。A 查询优先让
   含 IPv4 地址的 `NOERROR` 响应竞速，双方均无地址时才依次接受 primary、secondary
   的空答或仅 CNAME 等 `NOERROR` 后备；非 A 查询让最快的 `NOERROR` 胜出。
+  Linux/Windows 的 A 查询禁用 optimistic 过期缓存，正常 TTL 缓存保留。
   NXDOMAIN 不参与竞速，双方没有 `NOERROR` 时依次接受 primary、secondary 的
   NXDOMAIN。两家都失败时明确返回 `SERVFAIL`；详见
   [DNS 分类与回退](routing-and-dns.md)。
@@ -137,7 +106,7 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
   以及未指定跳端口间隔的 HY2 `hop_interval: 30s`、`hop_interval_max: 60s`。
   没有正显式带宽时才补 `bbr_profile: standard`；显式固定间隔不补随机上限。
   已有显式出站值不会被调优覆盖；Android 不注入
-  桌面 keepalive。以上是有效值；与核心默认等价的值在输出 JSON 时省略。
+  桌面 keepalive。以上模型值均显式输出。
 - AnyTLS 的 `idle-session-timeout`、下划线别名以及旧
   `idle-timeout` 输入统一生成官方 `idle_session_timeout`；纯数字输入按秒转换。
   `idle-session-check-interval` 使用同一正 Go duration 校验：最多 128 字符，
@@ -151,11 +120,11 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
   不对认证材料做 `Trim()`。
 - VLESS `packet-encoding`（兼容 `packet_encoding`）按锁定 Mihomo 的实际语义映射：
   只有精确小写 `packetaddr` / `packet` 使用 `packetaddr`；其他值（含空值、不同大小写、
-  未知值）以及缺失字段均使用 XUDP，JSON 省略该默认值。不支持的 `packet-addr` / `xudp`
-  独立来源字段仍拒绝。
+  未知值）以及缺失字段均使用 XUDP，JSON 显式输出 `packet_encoding: xudp`。
+  不支持的 `packet-addr` / `xudp` 独立来源字段仍拒绝。
 - VLESS `flow` 按来源规则处理：UTF-8 少于 16 字节时不启用 flow；否则前 16 字节
   必须为 `xtls-rprx-vision`，后缀（例如 `-udp443`）不传递到目标。其他前缀在转换阶段
-  明确拒绝；validator 也拒绝目标模型中的非标准 flow。
+  明确拒绝；目标模型中的非标准 flow 由自动化官方核心检查覆盖。
   flow 和 packet encoding 的依据是锁定的
   [Mihomo VLESS constructor](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/vless.go)。
 - Reality 转换要求有效的 32 字节 Base64URL 公钥和显式 short ID。short ID
@@ -171,13 +140,12 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
   `1 <= min <= max <= 2048`，包大小仅可用于 Gecko。UDP MTU、握手超时、
   QUIC receive-window、Realm 拓扑和 HY2 uTLS 没有精确映射，仍明确拒绝。
 - Shadowsocks UoT 使用对象形式：未指定版本或来源版本 0 使用 Mihomo 默认 v1，
-  v1 显式输出；v2 使用 sing-box 默认版本而省略 `version`。未启用时省略 UoT。
+  v1 和 v2 均显式输出 `version`。未启用时省略 UoT。
   插件只接受 Mihomo 结构化选项，不接受原始 SIP003 字符串；输出值按 SIP003 转义。
   `obfs` 的 HTTP/TLS 映射为 `obfs-local`，显式保留默认 host `bing.com`。
-  `v2ray-plugin` 仅支持 websocket、普通绝对路径、显式 `mux: false` 与可选标准 TLS；
-  自定义 header、证书、指纹和 HTTPUpgrade 等输入拒绝。来源没有 `network` 字段，
+  仅支持上述 `obfs` 插件，`v2ray-plugin` 明确拒绝。来源没有 `network` 字段，
   因此不能将该字段转换为目标网络限制。
-- 未支持的 transport/TLS 组合（见下节）、AnyTLS disable-reuse
+- 未支持的 TCP/TLS 选项（见下节）、AnyTLS disable-reuse
   以及不能精确传递的 Shadowsocks 插件配置
   当前均 fail-fast；详见[来源语义与调优优先级](architecture.md#来源语义与调优优先级)。
 - 远程 rule-set 每天更新，通过默认 HTTP client `http-ruleset-proxy` 走代理下载。
@@ -214,26 +182,17 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
 - AI、Google 和最终兜底的 UDP/443 拒绝规则写入 `no_drop: true`，持续返回拒绝
   响应以促使 QUIC 回退 TCP；STUN、广告和两道 IPv6 拒绝不启用该字段。
 
-## Transport 与 shared TLS
+## TCP、TLS 与 Reality
 
-VLESS 支持省略/`tcp`、`ws`、受限基础 `grpc`；Trojan 支持省略/`tcp` 和
-`ws`。两者可通过 WS 选项启用无 fast-open 的 HTTPUpgrade。未知 network
-不会降级为 TCP，不注入自定义 path、service-name 或 ALPN。
+VLESS 和 Trojan 只支持原生 TCP，`network` 可以省略或设为 `tcp`。
+非 `tcp` 的 network 以及 `ws-opts`、`grpc-opts`、`http-opts`、`h2-opts`、
+`xhttp-opts` 等旧传输选项明确拒绝；下划线别名同样拒绝，不能静默降级为 TCP。
+生成的节点不包含 V2Ray `transport` 对象。VLESS 可使用明文 TCP 或显式启用
+TLS，Trojan 始终启用 TLS；两者保留受支持的 uTLS 与 Reality 映射。
 
-| 来源字段 | sing-box 字段 | 条件 |
-| --- | --- | --- |
-| `ws-opts.path` | `transport.path` | 普通路径；缺失时省略 |
-| `ws-opts.headers` | `transport.headers` | 字符串值，不裁剪或合并 |
-| `ws-opts.max-early-data` | `transport.max_early_data` | 0 到 2147483647 的整数；缺失时省略 |
-| `ws-opts.early-data-header-name` | `transport.early_data_header_name` | 空/缺失时沿用路径携带 early-data 的行为 |
-| `ws-opts.v2ray-http-upgrade: true` | `transport.type: httpupgrade` | HTTP 101 后使用原始字节流，而非 WS framing |
-| HTTPUpgrade 的 `headers.Host` | `transport.host` | 其他 headers 保留，Host 不重复生成 |
-| `grpc-opts.grpc-service-name` | `transport.service_name` | 仅 VLESS，非空普通服务名 |
-| `alpn` | `tls.alpn` | 保留有效顺序、重复项和值；缺失或等价协议默认值时省略 |
-
-`ws_opts`/`grpc_opts` 及已支持的连字符子字段兼容下划线别名。双别名同时出现
-仍会失败。header 名称不是配置别名，不做连字符转换。嵌套未知字段会报告完整
-路径，例如 `ws-opts.future-field`；无法转换时 non-strict 也只会跳过整个节点。
+`alpn` 映射为 `tls.alpn`，保留有效顺序、重复项和值；缺失或空列表时省略，
+不主动注入 ALPN。`sni`/`servername` 映射为 TLS server name，缺失时沿用
+来源服务器名称。
 
 `client-fingerprint` / `client_fingerprint` 只接受等价支持的 `chrome`、`firefox`、
 `safari`、`ios`、`android`、`edge`、`360`、`qq`、`randomized`。空值或 `none`
@@ -242,40 +201,6 @@ VLESS 支持省略/`tcp`、`ws`、受限基础 `grpc`；Trojan 支持省略/`tcp
 避免目标无法启动或静默变成现代 Chrome。`random` 也拒绝，因为两端选择范围和分布不同。
 对照来源为锁定的 [Mihomo 指纹实现](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/component/tls/utls.go)
 和 [sing-box 指纹实现](https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/common/tls/utls_client.go)。
-
-HTTP Host 按来源实际行为生成：无显式 Host 时，VLESS TLS 使用 server，
-Trojan 使用 SNI/server。VLESS WS 的 TLS SNI 在未指定 `sni`/`servername`
-时使用 headers.Host。这是来源默认行为的映射，不是 BoxForge tuning。
-无 TLS 的 VLESS WS 必须提供 Host，否则 Mihomo 随机 Host 无法等价表达。
-
-不支持的 transport 输入：
-
-- URL authority/scheme/query/fragment/percent-escape 路径，包括 `?ed=`；两端
-  URL 解析不同，仅支持普通路径与显式 early-data 字段。
-- 列表/对象 header、大小写重复或无效 header、握手保留 header；active
-  early-data 不得覆盖 Host 或握手保留字段。静态 `headers.Sec-WebSocket-Protocol`
-  拒绝：锁定核心会在第一次连接后删除该值；独立的 `early-data-header-name`
-  仍允许 `Sec-WebSocket-Protocol`，每次连接的 early-data 不受影响。
-- `v2ray-http-upgrade-fast-open: true`；HTTPUpgrade 与非零 early-data 或
-  非空 early-data-header-name 的组合，目标没有等价字段。
-- 缺失/空 gRPC service-name、自定义完整 RPC path；`grpc-user-agent`、
-  `ping-interval`、`max-connections`、`min-streams`、`max-streams`。
-- VLESS gRPC 显式 `sni`/`servername`：指定官方核心使用 grpc-lite，将 TLS
-  server_name 拼成 `host:port` authority，而 Mihomo 对显式名称不加端口。
-  目标没有独立 authority 字段，只接受来源默认 `server:port` authority。
-- **Trojan gRPC**：Mihomo 默认使用裸 SNI/server authority，grpc-lite 会增加端口，
-  无法保持来源语义。
-- Reality + WS/HTTPUpgrade：Mihomo WS 分支不应用 Reality，目标会应用。
-  此组合经确认拒绝；Reality 仍可用于现有 TCP 和满足限制的 VLESS gRPC。
-- VLESS WS 或带 uTLS 的 Trojan WS/HTTPUpgrade 显式 ALPN 不等于
-  `[http/1.1]`；VLESS gRPC 显式 ALPN 不等于 `[h2]`；transport 下显式空 ALPN。
-  它们无法同时保留来源的强制/空值行为和目标的显式列表行为。
-- HTTP/http-opts：Mihomo 首包 Content-Length HTTP 伪装与目标的原始/流式载荷
-  不同，单 path 也不能证明等价。H2/h2-opts 的非 TLS 模式在来源中使用 h2c，
-  目标无 TLS 的 HTTP transport 却使用 HTTP/1；TLS 子集虽有相似 PUT framing，
-  来源逐 stream 建立/关闭物理连接，目标复用 HTTP/2 连接，生命周期差异未获
-  精确映射与跨核心验证，因此拒绝。xHTTP 没有对应目标 transport，
-  不近似转换为 HTTP/WS。
 
 TLS 仍拒绝 `fingerprint`、`name-cert-verify`、`certificate`/`private-key`，以及
 ShadowTLS、Restls、JLS、tlsmirror、ECH；非空 VLESS encryption 和 Trojan
@@ -291,23 +216,15 @@ CA/名称验证，而非叠加校验。但 Mihomo 还能匹配中间/根证书�
 
 研究基线：Mihomo Meta `88dcbf7f1614a67c3b36b848ee3592dfa92ada36`，
 sing-box `1.15.0-alpha.8` / `b609f959f57ce34416c51c7b87ce4a76f2e1df56`。
-官方 [Mihomo transport](https://wiki.metacubex.one/en/config/proxies/transport/)、
-[TLS](https://wiki.metacubex.one/en/config/proxies/tls/) 文档与固定源码交叉核对：
+官方 Mihomo [TLS](https://wiki.metacubex.one/en/config/proxies/tls/) 文档与固定源码交叉核对：
 
 - Mihomo [VLESS](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/vless.go)、
   [Trojan](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/trojan.go)、
-  [WS](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/transport/vmess/websocket.go)、
-  [gRPC](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/transport/gun/gun.go)、
   [证书链 pin](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/component/ca/fingerprint.go)。
-- sing-box [transport model](https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/option/v2ray_transport.go)、
-  [WS](https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/transport/v2raywebsocket/client.go)、
-  [HTTPUpgrade](https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/transport/v2rayhttpupgrade/client.go)、
-  [grpc-lite](https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/transport/v2raygrpclite/client.go)、
-  [leaf pin](https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/common/tls/std_client.go)。
+- sing-box [TLS 客户端与 leaf pin](https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/common/tls/std_client.go)。
 
-带 `with_grpc` 的非官方构建具有不同 authority 行为，不属于当前资格验证范围。
 源码对照与本地 sing-box 回环提供不同层次的证据，均不能代替真实服务端和设备验证。
-完整命令、fixture 覆盖与历史 HTTPUpgrade 风险见[协议验证边界](protocol-validation.md)。
+完整命令与 fixture 覆盖见[协议验证边界](protocol-validation.md)。
 
 ## sing-box API
 
@@ -324,11 +241,11 @@ origin 被限制为同端口的 `127.0.0.1` 与 `localhost`，
   `🇺🇸 US AUTO`、`🇯🇵 JP AUTO`、`🇭🇰 HK AUTO`、`🇸🇬 SG AUTO`。
   地区 AUTO 只测试该地区真实节点；地区 selector 保留逐节点人工选择，并默认
   选择自己的 AUTO。
-- 地区 URLTest 在 Linux/Windows 显式设置 `interval: 1m`；Android 省略该字段，
-  使用官方默认 `3m`。缩短周期用于更及时地发现节点延迟变化，不保证单连接提速。
-  `url`、`tolerance`、`idle_timeout` 和 `interrupt_exist_connections` 继续省略，
-  使用 sing-box 官方默认值，因此 AUTO 切换不主动中断已有连接。现有 selector
-  继续生成 `interrupt_exist_connections: true`。
+- 地区 URLTest 显式设置探测 URL `https://www.gstatic.com/generate_204`、
+  `tolerance: 50`、`idle_timeout: 30m` 和 `interrupt_exist_connections: false`，
+  因此 AUTO 切换不主动中断已有连接。Linux/Windows 使用 `interval: 1m`，
+  Android 使用 `interval: 3m`。缩短周期用于更及时地发现节点延迟变化，
+  不保证单连接提速。现有 selector 继续生成 `interrupt_exist_connections: true`。
 - 主 `🚀 PROXIES` selector 依次保留地区组、单个节点和 `DIRECT` 的人工
   选择能力，不生成跨地区的全局 URLTest。美国地区组可用时默认选择 `🇺🇸 US`；
   否则默认第一个已生成的地区组。没有地区组时，有节点则选择第一个节点，

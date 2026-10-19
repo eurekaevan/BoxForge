@@ -14,7 +14,7 @@ public sealed record PlatformProfile
     public bool UseDirectForwarding { get; init; }
     public string? TcpKeepAlive { get; init; }
     public string? TcpKeepAliveInterval { get; init; }
-    public string? UrlTestInterval { get; init; }
+    public string UrlTestInterval { get; init; } = "3m";
     public DnsResolverSelectionMode DnsSelectionMode { get; init; }
     public string TaildropDirectory { get; init; } = "Taildrop";
 

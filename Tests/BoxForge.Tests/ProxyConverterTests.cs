@@ -1,5 +1,7 @@
 using System.Collections;
+using System.Globalization;
 using BoxForge.Converters;
+using BoxForge.Configuration;
 using BoxForge.Models;
 using BoxForge.Models.Clash;
 using BoxForge.Models.Singbox;
@@ -12,6 +14,50 @@ public sealed class ProxyConverterTests
 {
     private const string RealityPublicKey =
         "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0";
+
+    [TestCase("trojan", "port", "443")]
+    [TestCase("anytls", "min-idle-session", "1")]
+    [TestCase("ss", "udp-over-tcp-version", "1")]
+    [TestCase("hysteria2", "ports", "443")]
+    [TestCase("hysteria2", "obfs-min-packet-size", "512")]
+    [TestCase("hysteria2", "obfs-max-packet-size", "1200")]
+    public void IntegerFieldsUseInvariantSigns(string protocol, string field, string number)
+    {
+        CultureInfo previous = CultureInfo.CurrentCulture;
+        var culture = (CultureInfo)CultureInfo.InvariantCulture.Clone();
+        culture.NumberFormat.PositiveSign = "^";
+        CultureInfo.CurrentCulture = culture;
+        try
+        {
+            IProxyConverter converter = protocol switch
+            {
+                "trojan" => new TrojanConverter(),
+                "anytls" => new AnyTlsConverter(),
+                "ss" => new ShadowsocksConverter(),
+                _ => new Hysteria2Converter()
+            };
+            var fields = new Hashtable { ["password"] = "test-only" };
+            if (protocol == "ss")
+            {
+                fields["cipher"] = "aes-128-gcm";
+                fields["udp-over-tcp"] = true;
+            }
+            if (field.StartsWith("obfs-", StringComparison.Ordinal))
+            {
+                fields["obfs"] = "gecko";
+                fields["obfs-password"] = "test-only";
+            }
+
+            fields[field] = "+" + number;
+            Assert.That(converter.Convert(CreateNode(protocol, fields)), Is.TypeOf<ConvertedNode>());
+            fields[field] = "^" + number;
+            Assert.That(converter.Convert(CreateNode(protocol, fields)), Is.TypeOf<InvalidNode>());
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = previous;
+        }
+    }
 
     [TestCase("idle-session-timeout", "30", "30s")]
     [TestCase("idle_session_timeout", "45s", "45s")]
@@ -35,10 +81,7 @@ public sealed class ProxyConverterTests
         Assert.Multiple(() =>
         {
             Assert.That(outbound.IdleSessionTimeout, Is.EqualTo(expected));
-            if (expected == "30s")
-                Assert.That(json, Does.Not.Contain("\"idle_session_timeout\""));
-            else
-                Assert.That(json, Does.Contain($"\"idle_session_timeout\": \"{expected}\""));
+            Assert.That(json, Does.Contain($"\"idle_session_timeout\": \"{expected}\""));
             Assert.That(json, Does.Not.Contain("\"idle_timeout\""));
         });
     }
@@ -67,10 +110,7 @@ public sealed class ProxyConverterTests
         Assert.Multiple(() =>
         {
             Assert.That(outbound.PacketEncoding, Is.EqualTo(expected));
-            if (expected == "xudp")
-                Assert.That(json, Does.Not.Contain("\"packet_encoding\""));
-            else
-                Assert.That(json, Does.Contain("\"packet_encoding\": \"packetaddr\""));
+            Assert.That(json, Does.Contain($"\"packet_encoding\": \"{expected}\""));
         });
     }
 
@@ -303,6 +343,96 @@ public sealed class ProxyConverterTests
             ((InvalidNode)result).ErrorMessage,
             Does.Contain("AnyTLS").And.Contain("idle-session-timeout"));
     }
+
+    [TestCase("vless")]
+    [TestCase("trojan")]
+    public void NativeTcpAllowsMissingEmptyAndNormalizedNetwork(string protocol)
+    {
+        IProxyConverter converter = protocol == "vless" ? new VlessConverter() : new TrojanConverter();
+        foreach (string? network in new string?[] { null, "", " ", "tcp", " TCP " })
+        {
+            var fields = new Hashtable
+            {
+                [protocol == "vless" ? "uuid" : "password"] = protocol == "vless"
+                    ? "00000000-0000-4000-8000-000000000001" : "test-only",
+                ["tls"] = true
+            };
+            if (network is not null) fields["network"] = network;
+            ProxyOutbound outbound = Convert<ProxyOutbound>(converter, CreateNode(protocol, fields));
+            Assert.That(SerializeOutbound(outbound), Does.Not.Contain("\"transport\""));
+        }
+    }
+
+    [TestCase("vless")]
+    [TestCase("trojan")]
+    [TestCase("anytls")]
+    [TestCase("hysteria2")]
+    public void SharedTlsAlpnPreservesOrderDuplicatesAndAbsence(string protocol)
+    {
+        IProxyConverter converter = protocol switch
+        {
+            "vless" => new VlessConverter(),
+            "trojan" => new TrojanConverter(),
+            "hysteria2" => new Hysteria2Converter(),
+            _ => new AnyTlsConverter()
+        };
+        var fields = new Hashtable
+        {
+            [protocol == "vless" ? "uuid" : "password"] = protocol == "vless"
+                ? "00000000-0000-4000-8000-000000000001" : "test-only",
+            ["tls"] = true
+        };
+        ProxyOutbound absent = Convert<ProxyOutbound>(converter, CreateNode(protocol, fields));
+        fields["alpn"] = new[] { "h2", "http/1.1", "h2" };
+        ProxyOutbound present = Convert<ProxyOutbound>(converter, CreateNode(protocol, fields));
+        Assert.That(GetTls(absent)!.Alpn, Is.Null);
+        Assert.That(GetTls(present)!.Alpn, Is.EqualTo(new[] { "h2", "http/1.1", "h2" }));
+        foreach (object malformed in new object[] { "h2", new object[] { 1 } })
+        {
+            fields["alpn"] = malformed;
+            NodeConversionResult result = converter.Convert(CreateNode(protocol, fields));
+            Assert.That(result, Is.TypeOf<InvalidNode>());
+            Assert.That(((InvalidNode)result).ErrorMessage, Does.Contain("alpn"));
+        }
+    }
+
+    [TestCase("vless")]
+    [TestCase("trojan")]
+    public void TuningPreservesNativeRealityTlsAndExplicitConnectionSettings(string protocol)
+    {
+        IProxyConverter converter = protocol == "vless" ? new VlessConverter() : new TrojanConverter();
+        ProxyOutbound source = Convert<ProxyOutbound>(converter, CreateNode(protocol, new Hashtable
+        {
+            [protocol == "vless" ? "uuid" : "password"] = protocol == "vless"
+                ? "00000000-0000-4000-8000-000000000001" : "test-only",
+            ["tls"] = true,
+            ["alpn"] = new[] { "h2" },
+            ["client-fingerprint"] = "chrome",
+            ["reality-opts"] = new Hashtable { ["public-key"] = RealityPublicKey, ["short-id"] = "00" }
+        })) with
+        { ConnectTimeout = "9s", TcpKeepAlive = "2m", TcpKeepAliveInterval = "15s" };
+        foreach (TargetPlatform platform in Enum.GetValues<TargetPlatform>())
+        {
+            ProxyOutbound tuned = OutboundTuningPolicy.Apply(source, platform);
+            OutboundTls tls = GetTls(tuned)!;
+            Assert.That(tls, Is.EqualTo(GetTls(source)));
+            Assert.That(tls.Alpn, Is.EqualTo(new[] { "h2" }));
+            Assert.That(tls.Utls!.Fingerprint, Is.EqualTo("chrome"));
+            Assert.That(tls.Reality!.PublicKey, Is.EqualTo(RealityPublicKey));
+            Assert.That(tuned.ConnectTimeout, Is.EqualTo("9s"));
+            Assert.That(tuned.TcpKeepAlive, Is.EqualTo("2m"));
+            Assert.That(tuned.TcpKeepAliveInterval, Is.EqualTo("15s"));
+        }
+    }
+
+    private static OutboundTls? GetTls(ProxyOutbound outbound) => outbound switch
+    {
+        VlessOutbound vless => vless.Tls,
+        TrojanOutbound trojan => trojan.Tls,
+        Hysteria2Outbound hysteria2 => hysteria2.Tls,
+        AnyTlsOutbound anyTls => anyTls.Tls,
+        _ => throw new AssertionException("Expected a TLS-capable outbound.")
+    };
 
     private static ClashProxyNode CreateNode(string type, Hashtable extra)
     {

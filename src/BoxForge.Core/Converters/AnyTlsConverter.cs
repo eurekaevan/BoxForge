@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using BoxForge.Models.Clash;
 using BoxForge.Models.Singbox;
@@ -56,7 +57,7 @@ public sealed class AnyTlsConverter()
     {
         object? value = node.GetValue("min-idle-session") ?? node.GetValue("min_idle_session");
         if (value is null) return null;
-        if (int.TryParse(value?.ToString(), out int count) && count >= 0) return count;
+        if (int.TryParse(value?.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int count) && count >= 0) return count;
         throw new NodeParseException("字段 'min-idle-session' 必须是 0..2147483647 的整数");
     }
 

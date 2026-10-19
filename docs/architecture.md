@@ -24,7 +24,8 @@ BoxForge.Tests  ──→ BoxForge.Cli, BoxForge.Server, BoxForge.Core
 ## 处理流程
 
 1. `GenerateCommandParser` 解析 `generate` 子命令、路径和平台。
-2. `LocalGenerationWorkflow` 校验路径，并按文件名排序读取顶层 YAML。
+2. `InputDiscovery` 解析物理路径、检查输入输出目录关系，并按文件名排序发现
+   顶层 YAML；重复配置名和无效文件名在读取前报告。
 3. `LocalGenerationWorkflow` 将每个文件作为一个 `ConversionRequest` 交给
    `IBoxForgeEngine`。
 4. `BoxForgeEngine` 校验内存输入，调用 `ConversionService.Prepare` 解析
@@ -35,8 +36,8 @@ BoxForge.Tests  ──→ BoxForge.Cli, BoxForge.Server, BoxForge.Core
 6. `SingboxConfigValidator` 检查 BoxForge 自身约束，`ConfigSerializer` 生成
    JSON 并计算小写十六进制 SHA-256。只有全部平台成功才返回
    `ConversionBundle`。
-7. 本地产物先写入临时目录；所有输入和平台成功后，工作流才
-   替换输出目录。
+7. `OutputTransaction` 暂存本地产物并比较完整文本和文件集；所有输入和平台
+   成功后，工作流才提交事务。提交失败时恢复旧输出；未提交的暂存在退出时清理。
 
 ## 不可信 YAML 的资源边界
 
@@ -88,10 +89,9 @@ sing-box 运行时默认值。BoxForge 不保证逐字段原样复制；它保�
 converter 拥有自己的字段声明；`NodeCatalogBuilder` 只负责选择 converter 和
 处理转换结果。已知但未支持的连接字段、尚未分类的字段、冲突的别名和无效的
 显式值都会形成包含协议、节点名、字段名及原因的错误。schema 同时声明值形状，
-避免把列表或对象转换成字符串；嵌套 Reality、WS、gRPC 对象也逐项检查。
-嵌套声明可以附带使用条件，拒绝不属于当前 `network` 的选项；别名沿用
-同一嵌套 schema 和冲突检测。HTTP header 名称是开放键，但每个值必须是
-字符串，并单独检查大小写冲突和握手保留字段，不能把列表扁平化。
+避免把列表或对象转换成字符串；嵌套 Reality 和 Shadowsocks 插件对象也逐项检查。
+嵌套声明可以附带使用条件；别名沿用同一嵌套 schema 和冲突检测。
+VLESS/Trojan 只接受原生 TCP，旧传输选项作为不支持的来源语义明确拒绝。
 `name`/`type` 等元数据和明确无连接作用的选项在 schema 中列明，
 不会用通配规则吞掉未知字段。
 
@@ -113,10 +113,10 @@ HY2 hop/BBR 值优先于调优。显式固定间隔不会补入调优的随机�
 | 模块 | 职责 |
 | --- | --- |
 | `Converters` / `SourceFieldSchemas` | 协议选择、来源字段声明、值与组合校验、目标映射 |
-| `TlsConfigHelper` / `TransportConfigHelper` | VLESS/Trojan 的共享 TLS、Reality 与 transport 映射 |
+| `TlsConfigHelper` | 共享 TLS、uTLS 与 Reality 映射 |
 | `Models/Singbox` | 目标 JSON 形状与已支持的多态类型，不携带来源字段或调优策略 |
 | `OutboundTuningPolicy` / `RouteTuningPolicy` | 仅对缺失值施加 BoxForge 调优 |
-| `SingboxJsonDefaults` | 校验后的无副作用输出投影，省略锁定核心的等价默认值 |
+| `ConfigSerializer` | 序列化已校验模型，仅省略 null 和空集合 |
 
 各协议字段、拒绝组合和输出默认值以[生成配置约定](generated-config.md)为准；
 来源/目标核心版本、脚本使用方法和未验证路径以
@@ -138,9 +138,14 @@ DualStack 测试显式传入 policy，不要求上述 IPv4-only 限制；没有�
 平台的 DualStack。Android 不输出未实现的 strict_route，仍保留 TUN 捕获地址、
 AAAA 阻断及 IPv6 reject guards；本地静态验证不等于真机防逃逸抓包证明。
 
+- 路由顺序由 `RouteProfileBuilder` 的阶段列表与前置约束声明；检查阶段顺序后，
+  独立一遍展开 Linux 的 bypass/bridge 伴随规则。阶段说明生成
+  [路由顺序文档](routing-and-dns.md#路由规则顺序)，并由测试检查同步；阶段元数据
+  不进入目标 JSON。validator 独立检查实际规则，不能依赖生成器阶段标签。
 - 输入文件按文件名排序，平台顺序固定为 Android、Linux、Windows。
 - 引擎不依赖 `File`、`Directory`、`Path` 或环境输入输出目录；文件边界
-  只存在于 `LocalGenerationWorkflow`。
+  由 CLI 的 `InputDiscovery`、`OutputTransaction` 和 `LocalGenerationWorkflow`
+  承担，分别负责发现与路径检查、输出事务、批次编排。
 - 引擎先完成所有请求平台的转换，任一平台失败时不返回部分
   `ConversionBundle`。
 - 同名 `.yaml`/`.yml` 会导致对应配置失败，避免不确定的输出覆盖。
@@ -151,10 +156,16 @@ AAAA 阻断及 IPv6 reject guards；本地静态验证不等于真机防逃逸�
 
 ## 校验边界
 
-`SingboxConfigValidator` 检查标签、引用、必填字段、端口和生成器特有约束。
+`SingboxConfigValidator` 只检查生成器特有约束：IPv6/AAAA 守卫、控制面策略、
+显式 SNI 映射保真、等价指纹范围、缓存身份，以及标签和引用完整性。
+来源字段、端口和认证材料在解析器和转换器中校验；目标语法与核心默认语义由
+自动化的官方 `check` 覆盖，校验器不再维护一份目标核心格式规则。
 outbound、endpoint 和 inbound 各自的 tag 必须唯一，outbound 与 endpoint
 共享路由目标命名空间，tag 也不得互相重复。
-它不会启动 sing-box，也不会下载或验证远程 rule-set。发布流程应对每个最终
-`config.json` 另行执行目标版本的 `sing-box check`。
+内置校验器不会启动 sing-box 或下载核心。`scripts/verify-generated-configs.py`
+在独立临时目录中生成 5 个 fixture × 3 平台 × Tailscale/API 开关两种状态的
+60 份配置，交给固定版本和 revision 的官方核心检查；下载模式同时校验固定
+归档 SHA-256。普通 CI 和发布前验证使用同一脚本。部署实际配置时的核心检查和
+运行时验证仍是独立步骤。
 
 [返回 README](../README.md)

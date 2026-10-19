@@ -1,3 +1,4 @@
+using System.Globalization;
 using BoxForge.Models.Clash;
 using BoxForge.Models.Singbox;
 using BoxForge.Exceptions;
@@ -9,24 +10,19 @@ public sealed class ShadowsocksConverter()
 {
     private static readonly SourceFieldSchema ObfsOptions = new SourceFieldSchema()
         .Mapped("mode", "host");
-    private static readonly SourceFieldSchema V2RayOptions = new SourceFieldSchema()
-        .Mapped("mode", "host", "path", "mux", "tls")
-        .Unsupported("目标内置插件无法精确表达此选项", "headers", "skip-cert-verify",
-            "fingerprint", "certificate", "private-key", "name-cert-verify", "ech-opts",
-            "v2ray-http-upgrade", "v2ray-http-upgrade-fast-open");
     private static readonly SourceFieldSchema SourceFields = SourceFieldSchemas.Common()
         .Mapped("cipher", "password")
         .Alias("cipher", "method")
         .Conditional("plugin-opts", SourceFieldDisposition.Mapped,
             ValidatePluginOptions, SourceFieldValueKind.Any)
-        .ConditionalAlias("plugin-opts", "plugin_opts", ValidatePluginOptions)
+        .Alias("plugin-opts", "plugin_opts")
         .Conditional("plugin", SourceFieldDisposition.Mapped,
-            (_, value) => value is null or "" or "v2ray-plugin" or "obfs"
+            (_, value) => value is null or "" or "obfs"
                 ? null
-                : "此插件名称不能直接映射到 sing-box 支持的 SIP003 插件")
+                : "仅支持 obfs 插件；v2ray-plugin 已移除")
         .Mapped("udp-over-tcp")
         .Conditional("udp-over-tcp-version", SourceFieldDisposition.Mapped,
-            (_, value) => value is null || int.TryParse(value.ToString(), out int version) && version is >= 0 and <= 2
+            (_, value) => value is null || int.TryParse(value.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int version) && version is >= 0 and <= 2
                 ? null : "UoT 版本必须是整数 0（源默认 v1）、1 或 2")
         .Alias("udp-over-tcp", "udp_over_tcp")
         .Alias("udp-over-tcp-version", "udp_over_tcp_version")
@@ -37,15 +33,18 @@ public sealed class ShadowsocksConverter()
 
     private static string? ValidatePluginOptions(ClashProxyNode node, object? value)
     {
-        if (node.GetString("plugin") is null)
+        string? plugin = node.GetString("plugin");
+        if (plugin is null)
         {
             return "指定了插件选项，但没有插件";
         }
 
+        if (plugin != "obfs")
+            return "仅支持 obfs 插件；v2ray-plugin 已移除";
+
         if (value is not ClashObject options)
             return "Mihomo 插件选项必须是对象，不能原样传递 SIP003 字符串";
-        (node.GetString("plugin") == "obfs" ? ObfsOptions : V2RayOptions)
-            .ValidateNested(options, node, ReferenceEquals(node.GetObject("plugin_opts"), options)
+        ObfsOptions.ValidateNested(options, node, ReferenceEquals(node.GetObject("plugin_opts"), options)
                 ? "plugin_opts" : "plugin-opts");
         return null;
     }
@@ -75,27 +74,10 @@ public sealed class ShadowsocksConverter()
             string host = options.GetRawString("host") ?? "bing.com";
             if (string.IsNullOrWhiteSpace(host) || host.Any(char.IsControl))
                 throw new NodeParseException("字段 'plugin-opts.host' 必须是非空、无控制字符的主机名");
-            if (plugin == "obfs")
-            {
-                if (mode is not ("http" or "tls"))
-                    throw new NodeParseException("字段 'plugin-opts.mode' 只支持 http 或 tls");
-                plugin = "obfs-local";
-                pluginOptions = $"obfs={Escape(mode)};obfs-host={Escape(host)}";
-            }
-            else
-            {
-                if (mode != "websocket")
-                    throw new NodeParseException("字段 'plugin-opts.mode' 只支持 websocket");
-                if (options.GetNullableBool("mux") != false)
-                    throw new NodeParseException("字段 'plugin-opts.mux' 必须显式关闭；默认复用的精确映射尚未验证");
-                string path = options.GetRawString("path") ?? "/";
-                if (path.Length == 0) path = "/";
-                if (!path.StartsWith('/') || path.StartsWith("//", StringComparison.Ordinal)
-                    || path.Any(char.IsControl) || path.IndexOfAny(['?', '#', '%']) >= 0)
-                    throw new NodeParseException("字段 'plugin-opts.path' 只支持普通绝对路径");
-                pluginOptions = $"mode=websocket;host={Escape(host)};path={Escape(path)};mux=0";
-                if (options.GetBool("tls")) pluginOptions += ";tls";
-            }
+            if (mode is not ("http" or "tls"))
+                throw new NodeParseException("字段 'plugin-opts.mode' 只支持 http 或 tls");
+            plugin = "obfs-local";
+            pluginOptions = $"obfs={Escape(mode)};obfs-host={Escape(host)}";
         }
 
         return new ShadowsocksOutbound

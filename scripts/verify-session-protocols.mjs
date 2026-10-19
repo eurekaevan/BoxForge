@@ -8,6 +8,7 @@ import { createSocket } from 'node:dgram';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import { freePort, launch, waitListening, stop } from './verification-process.mjs';
 
@@ -26,7 +27,6 @@ const certificate = join(directory, 'certificate.pem');
 const key = join(directory, 'key.pem');
 const body = 'BoxForge session protocol verified\n';
 const httpServer = createServer((_request, response) => response.end(body));
-const delay = milliseconds => new Promise(done => setTimeout(done, milliseconds));
 
 // Both hopping ports forward to one server, preserving its QUIC connection state.
 async function hopRelay(backendPort) {
@@ -80,11 +80,11 @@ try {
         if (tag === 'hy2-gecko') {
             assert.equal(outbound.obfs?.type, 'gecko');
             assert.equal(outbound.obfs.min_packet_size, 600);
-            assert.equal(outbound.obfs.max_packet_size ?? 1200, 1200);
+            assert.equal(outbound.obfs.max_packet_size, 1200);
         }
         if (tag === 'anytls-session') {
-            assert.equal(outbound.idle_session_check_interval ?? '30s', '30s');
-            assert.equal(outbound.idle_session_timeout ?? '30s', '30s');
+            assert.equal(outbound.idle_session_check_interval, '30s');
+            assert.equal(outbound.idle_session_timeout, '30s');
             assert.equal(outbound.min_idle_session, 1);
             assert.equal(outbound.client_metadata, 'test-only');
         }
