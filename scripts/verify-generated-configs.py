@@ -19,11 +19,11 @@ import tempfile
 import urllib.request
 
 
-VERSION = "1.15.0-alpha.8"
-REVISION = "b609f959f57ce34416c51c7b87ce4a76f2e1df56"
+VERSION = "1.15.0-alpha.12"
+REVISION = "25b0d5ea3e466d246c708ac0f20d0448110e566c"
 ARCHIVE_NAME = f"sing-box-{VERSION}-linux-amd64.tar.gz"
-# Official release asset digest: https://api.github.com/repos/SagerNet/sing-box/releases/tags/v1.15.0-alpha.8
-ARCHIVE_SHA256 = "67f314bd6c465cca5d86e46c7eb70a94876b210e16aeb47215bac91dd8e3a0d5"
+# Official release asset digest: https://api.github.com/repos/SagerNet/sing-box/releases/tags/v1.15.0-alpha.12
+ARCHIVE_SHA256 = "b107528ec7d989333d986573c097d840b9ef1afa9bb177f8eb03e0767f370514"
 ARCHIVE_URL = f"https://github.com/SagerNet/sing-box/releases/download/v{VERSION}/{ARCHIVE_NAME}"
 
 

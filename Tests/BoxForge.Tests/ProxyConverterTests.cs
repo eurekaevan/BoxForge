@@ -1276,7 +1276,7 @@ public sealed class ProxyConverterTests
         {
             ProxyOutbound tuned = OutboundTuningPolicy.Apply(source, BoxForgeProfile.Default.GetPlatform(platform));
             OutboundTls tls = GetTls(tuned)!;
-            Assert.That(tls, Is.EqualTo(GetTls(source)));
+            Assert.That(SerializeOutbound(tuned), Is.EqualTo(SerializeOutbound(source)));
             Assert.That(tls.Alpn, Is.EqualTo(new[] { "h2" }));
             Assert.That(tls.Utls!.Fingerprint, Is.EqualTo("chrome"));
             Assert.That(tls.Reality!.PublicKey, Is.EqualTo(RealityPublicKey));

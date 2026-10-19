@@ -207,6 +207,88 @@ public sealed class LocalGenerationWorkflowTests
         });
     }
 
+    [TestCase("..yaml", false)]
+    [TestCase("..yml", true)]
+    [TestCase("...yaml", false)]
+    [TestCase("...yaml", true)]
+    [TestCase("...yml", true)]
+    public async Task NavigationStemsDiscardEntireBatchAndPreserveExternalFiles(string fileName, bool existingOutput)
+    {
+        string inputDirectory = CreateDirectory("input");
+        string outputDirectory = System.IO.Path.Combine(temporaryDirectory, "output");
+        await File.WriteAllTextAsync(System.IO.Path.Combine(inputDirectory, fileName), "unsafe");
+        await File.WriteAllTextAsync(System.IO.Path.Combine(inputDirectory, "good.yaml"), "valid");
+        // The vulnerable path escapes the staging directory into its parent.
+        string externalFile = System.IO.Path.Combine(CreateDirectory("Android"), "config.json");
+        await File.WriteAllTextAsync(externalFile, "preserve-external");
+        string existingFile = System.IO.Path.Combine(outputDirectory, "old.txt");
+        if (existingOutput)
+        {
+            Directory.CreateDirectory(outputDirectory);
+            await File.WriteAllTextAsync(existingFile, "preserve-output");
+        }
+        var engine = new RecordingEngine(request => new ConversionBundle(request.Name,
+            [new ConversionArtifact(TargetPlatform.Android, "new", new string('a', 64))]));
+        var logger = new RecordingLogger<LocalGenerationWorkflow>();
+
+        LocalGenerationSummary summary = await new LocalGenerationWorkflow(engine, logger).GenerateAsync(
+            new LocalGenerationRequest(inputDirectory, outputDirectory, [TargetPlatform.Android]));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(summary.Succeeded, Is.Zero);
+            Assert.That(summary.Skipped, Is.Zero);
+            Assert.That(summary.Failed, Is.EqualTo(1));
+            Assert.That(summary.Discarded, Is.EqualTo(1));
+            Assert.That(engine.Requests.Select(request => request.Name), Is.EqualTo(new[] { "good" }));
+            Assert.That(File.ReadAllText(externalFile), Is.EqualTo("preserve-external"));
+            Assert.That(logger.Entries.Select(entry => entry.EventId.Id), Does.Contain(18));
+            Assert.That(logger.Entries.Select(entry => entry.EventId.Id), Does.Not.Contain(12));
+            Assert.That(Directory.GetDirectories(temporaryDirectory, ".output.boxforge-*"), Is.Empty);
+            Assert.That(Directory.Exists(outputDirectory), Is.EqualTo(existingOutput));
+            if (existingOutput)
+            {
+                Assert.That(File.ReadAllText(existingFile), Is.EqualTo("preserve-output"));
+                Assert.That(Directory.GetFiles(outputDirectory, "*", SearchOption.AllDirectories), Is.EqualTo(new[] { existingFile }));
+            }
+        });
+    }
+
+    [TestCase("..")]
+    [TestCase("../output-other")]
+    [TestCase("absolute")]
+    public void TransactionRejectsEscapingPathsBeforeWriting(string configName)
+    {
+        string outputDirectory = CreateDirectory("output");
+        using var transaction = new OutputTransaction(outputDirectory, NullLogger<LocalGenerationWorkflow>.Instance);
+        string staging = Directory.GetDirectories(temporaryDirectory, ".output.boxforge-*").Single();
+        string outsideDirectory = configName switch
+        {
+            ".." => temporaryDirectory,
+            "absolute" => CreateDirectory("absolute"),
+            _ => staging + "-other"
+        };
+        string unsafeName = configName switch
+        {
+            ".." => "..",
+            "absolute" => outsideDirectory,
+            _ => System.IO.Path.Combine("..", System.IO.Path.GetFileName(outsideDirectory))
+        };
+        string externalFile = System.IO.Path.Combine(outsideDirectory, "Android", "config.json");
+        Directory.CreateDirectory(System.IO.Path.GetDirectoryName(externalFile)!);
+        File.WriteAllText(externalFile, "preserve-external");
+
+        Assert.ThrowsAsync<InvalidOperationException>(() => transaction.StageAsync(
+            unsafeName, new ConversionArtifact(TargetPlatform.Android, "new", "unused"), CancellationToken.None));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(File.ReadAllText(externalFile), Is.EqualTo("preserve-external"));
+            Assert.That(Directory.GetFileSystemEntries(staging), Is.Empty);
+            Assert.That(Directory.GetFileSystemEntries(outputDirectory), Is.Empty);
+        });
+    }
+
     [TestCase(false, false)]
     [TestCase(true, false)]
     [TestCase(false, true)]
@@ -243,6 +325,79 @@ public sealed class LocalGenerationWorkflowTests
             Assert.That(summary.Failed, Is.EqualTo(1));
             Assert.That(engine.Requests, Is.Empty);
             Assert.That(File.ReadAllText(inputFile), Is.EqualTo("preserve-input"));
+        });
+    }
+
+    [TestCase("direct")]
+    [TestCase("relative")]
+    [TestCase("chain")]
+    [TestCase("directory-alias")]
+    [TestCase("safe-sibling")]
+    public async Task InputFileLinksCannotLoseTheirSourceDuringOutputReplacement(string linkKind)
+    {
+        string inputDirectory = CreateDirectory("input");
+        string outputDirectory = CreateDirectory("output");
+        bool unsafeTarget = linkKind != "safe-sibling";
+        string sourceDirectory = unsafeTarget ? outputDirectory : CreateDirectory("output-other");
+        string sourceFile = System.IO.Path.Combine(sourceDirectory, "source.yaml");
+        await File.WriteAllTextAsync(sourceFile, "preserve-source");
+        string oldFile = System.IO.Path.Combine(outputDirectory, "old.txt");
+        await File.WriteAllTextAsync(oldFile, "preserve-output");
+        await File.WriteAllTextAsync(System.IO.Path.Combine(inputDirectory, "a-good.yaml"), "valid");
+        string inputLink = System.IO.Path.Combine(inputDirectory, "sample.yaml");
+        string linkTarget = sourceFile;
+        try
+        {
+            if (linkKind == "relative")
+            {
+                linkTarget = System.IO.Path.GetRelativePath(inputDirectory, sourceFile);
+            }
+            else if (linkKind == "chain")
+            {
+                linkTarget = System.IO.Path.Combine(temporaryDirectory, "source-link");
+                File.CreateSymbolicLink(linkTarget, sourceFile);
+            }
+            else if (linkKind == "directory-alias")
+            {
+                string alias = System.IO.Path.Combine(temporaryDirectory, "output-alias");
+                Directory.CreateSymbolicLink(alias, outputDirectory);
+                linkTarget = System.IO.Path.Combine(alias, "source.yaml");
+            }
+            File.CreateSymbolicLink(inputLink, linkTarget);
+        }
+        catch (Exception ex) when (ex is PlatformNotSupportedException or UnauthorizedAccessException)
+        {
+            Assert.Ignore($"Creating symbolic links is unavailable: {ex.Message}");
+        }
+        var engine = new RecordingEngine(request => new ConversionBundle(request.Name,
+            [new ConversionArtifact(TargetPlatform.Android, "new", new string('a', 64))]));
+        var logger = new RecordingLogger<LocalGenerationWorkflow>();
+
+        LocalGenerationSummary summary = await new LocalGenerationWorkflow(engine, logger).GenerateAsync(
+            new LocalGenerationRequest(inputDirectory, outputDirectory, [TargetPlatform.Android]));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(summary.Succeeded, Is.EqualTo(unsafeTarget ? 0 : 2));
+            Assert.That(summary.Failed, Is.EqualTo(unsafeTarget ? 1 : 0));
+            Assert.That(summary.Skipped, Is.Zero);
+            Assert.That(summary.Discarded, Is.Zero);
+            Assert.That(engine.Requests, Has.Count.EqualTo(unsafeTarget ? 0 : 2));
+            Assert.That(File.ReadAllText(sourceFile), Is.EqualTo("preserve-source"));
+            Assert.That(File.ReadAllText(inputLink), Is.EqualTo("preserve-source"));
+            Assert.That(new FileInfo(inputLink).LinkTarget, Is.EqualTo(linkTarget));
+            Assert.That(Directory.GetDirectories(temporaryDirectory, ".output.boxforge-*"), Is.Empty);
+            if (unsafeTarget)
+            {
+                Assert.That(File.ReadAllText(oldFile), Is.EqualTo("preserve-output"));
+                Assert.That(Directory.GetFiles(outputDirectory, "*", SearchOption.AllDirectories),
+                    Is.EquivalentTo(new[] { sourceFile, oldFile }));
+                Assert.That(logger.Entries.Select(entry => entry.EventId.Id), Does.Contain(19));
+            }
+            else
+            {
+                Assert.That(File.ReadAllText(GetOutputPath(outputDirectory, "sample", TargetPlatform.Android)), Is.EqualTo("new"));
+            }
         });
     }
 

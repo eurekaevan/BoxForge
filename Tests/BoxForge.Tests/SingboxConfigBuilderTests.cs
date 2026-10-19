@@ -167,14 +167,22 @@ public sealed class SingboxConfigBuilderTests
         });
     }
 
-    [Test]
-    public async Task SharedIrCatalogGeneratesIndependentPlatformConfigurationsConcurrently()
+    [TestCase("untouched")]
+    [TestCase("read")]
+    [TestCase("hash")]
+    [TestCase("equality")]
+    [TestCase("copy-hash")]
+    [TestCase("legacy-constructor")]
+    [TestCase("converted-nodes")]
+    public async Task SharedCatalogGeneratesIndependentPlatformConfigurationsConcurrently(string access)
     {
         var input = new ClashConfig { Proxies = [] };
         var parser = new ClashParser();
         foreach (string fixture in new[] { "tls", "hysteria2", "anytls", "shadowsocks" })
         {
             string yaml = await File.ReadAllTextAsync(Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", fixture + ".yaml"));
+            if (fixture is "hysteria2" or "anytls")
+                yaml = yaml.Replace("    password: test-only", "    password: test-only\n    alpn: [h2, http/1.1]", StringComparison.Ordinal);
             input.Proxies.AddRange(parser.Parse(yaml)!.Proxies);
         }
         var catalog = new NodeCatalogBuilder(
@@ -185,16 +193,50 @@ public sealed class SingboxConfigBuilderTests
         TargetPlatform[] platforms = Enum.GetValues<TargetPlatform>();
         var expected = platforms.ToDictionary(platform => platform,
             platform => serializer.Serialize(builder.Build(new SingboxBuildRequest(catalog, platform, new string('a', 64)))));
+        switch (access)
+        {
+            case "read":
+                _ = catalog.Outbounds;
+                break;
+            case "hash":
+                _ = catalog.GetHashCode();
+                break;
+            case "equality":
+                Assert.That(catalog.Equals(catalog with { }), Is.True);
+                break;
+            case "copy-hash":
+                _ = (catalog with { }).GetHashCode();
+                break;
+            case "legacy-constructor":
+                catalog = new NodeCatalog(catalog.Outbounds, catalog.Names);
+                break;
+            case "converted-nodes":
+                catalog = NodeCatalog.FromEntries(catalog.Outbounds.Select(NodeConversionResult.Success).ToArray(), catalog.Names);
+                break;
+        }
         var generated = await Task.WhenAll(Enumerable.Range(0, 3).SelectMany(_ => platforms.Reverse().Select(platform =>
             Task.Run(() => (Platform: platform, Config: builder.Build(new SingboxBuildRequest(catalog, platform, new string('a', 64))))))));
         foreach (var result in generated)
             Assert.That(serializer.Serialize(result.Config), Is.EqualTo(expected[result.Platform]));
-        generated[0].Config.Outbounds.OfType<TrojanOutbound>().Single().Tls!.Alpn!.Clear();
+        foreach (ProxyOutbound outbound in generated[0].Config.Outbounds.OfType<ProxyOutbound>())
+        {
+            OutboundTls? tls = outbound switch
+            {
+                VlessOutbound vless => vless.Tls,
+                TrojanOutbound trojan => trojan.Tls,
+                Hysteria2Outbound hysteria2 => hysteria2.Tls,
+                AnyTlsOutbound anyTls => anyTls.Tls,
+                _ => null
+            };
+            tls?.Alpn?.Clear();
+        }
         generated[0].Config.Outbounds.OfType<Hysteria2Outbound>().Single(node => node.Tag == "hy2-hop").ServerPorts!.Clear();
+        foreach (var result in generated.Skip(1))
+            Assert.That(serializer.Serialize(result.Config), Is.EqualTo(expected[result.Platform]));
         foreach (TargetPlatform platform in platforms)
             Assert.That(serializer.Serialize(builder.Build(new SingboxBuildRequest(catalog, platform, new string('a', 64)))),
                 Is.EqualTo(expected[platform]));
-        foreach (ParsedNode entry in catalog.Entries!)
+        foreach (ParsedNode entry in (catalog.Entries ?? []).OfType<ParsedNode>())
         {
             Assert.That(entry.Node.Connection.ConnectTimeout, Is.Null);
             if (entry.Node is Hysteria2Node hysteria2)

@@ -2,7 +2,9 @@
 
 研究基线为 Mihomo Meta/Alpha `88dcbf7f1614a67c3b36b848ee3592dfa92ada36`
 及官方 sing-box `1.15.0-alpha.8`、revision
-`b609f959f57ce34416c51c7b87ce4a76f2e1df56`；更换构建后必须重新资格验证。
+`b609f959f57ce34416c51c7b87ce4a76f2e1df56`。当前最低支持与资格验证核心为官方
+sing-box `1.15.0-alpha.12`、revision `25b0d5ea3e466d246c708ac0f20d0448110e566c`，
+覆盖 Tailscale `on_demand` 与 Linux TUN `multi_queue`；更换构建后必须重新资格验证。
 
 ## TCP、TLS 与 Reality 支持范围
 

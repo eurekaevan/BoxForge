@@ -18,8 +18,8 @@ if (!coreArgument || !configArgument)
     throw new Error('Usage: node scripts/verify-shadowsocks.mjs <sing-box core> <generated config.json>');
 const core = resolve(coreArgument);
 const { stdout: version } = await run(core, ['version']);
-assert.ok(version.includes('1.15.0-alpha.8')
-    && version.includes('b609f959f57ce34416c51c7b87ce4a76f2e1df56'), version);
+assert.ok(version.includes('1.15.0-alpha.12')
+    && version.includes('25b0d5ea3e466d246c708ac0f20d0448110e566c'), version);
 const generated = JSON.parse(await readFile(resolve(configArgument), 'utf8'));
 const directory = await mkdtemp(join(tmpdir(), 'boxforge-shadowsocks-'));
 const body = 'BoxForge Shadowsocks loopback verified\n';

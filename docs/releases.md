@@ -24,7 +24,7 @@ PR 摘要和比较链接。这不是 Copilot AI 总结，也不需要额外凭�
 | 契约 | 当前承诺 | 详细依据 |
 | --- | --- | --- |
 | Input | 读取 Clash/Mihomo YAML 的 `proxies`；支持 Trojan、VLESS、Hysteria2、Shadowsocks、AnyTLS 的已声明子集。任一无法安全映射的节点使引擎请求失败；不转换来源 rules/proxy-groups | [来源字段与 strict conversion](architecture.md#来源语义与调优优先级)、[字段与拒绝项](generated-config.md) |
-| Target | 生成面向 sing-box 1.15 的配置；因 Tailscale `on_demand` 最低要求 alpha.1。当前资格验证基线是官方 alpha.8 / `b609f959f57ce34416c51c7b87ce4a76f2e1df56`，不代表验证了所有后续版本或定制构建 | [验证边界](protocol-validation.md) |
+| Target | 生成面向 sing-box 1.15 的配置；最低支持 `1.15.0-alpha.12`，覆盖 Tailscale `on_demand` 与 Linux TUN `multi_queue`。当前资格验证基线是官方 alpha.12 / `25b0d5ea3e466d246c708ac0f20d0448110e566c`，不代表验证了所有后续版本或定制构建 | [验证边界](protocol-validation.md) |
 | CLI | `generate`；既有参数、退出码、三平台目录结构与整批事务替换语义保持稳定 | [CLI 契约](../README.md#输出与事务语义) |
 | Behavior | IPv4-only、DNS/route 顺序、地区 selector/URLTest、平台 TUN/bridge、默认 Tailscale 与缺失字段 tuning 均是 BoxForge 策略 | [生成配置](generated-config.md)、[DNS 与路由](routing-and-dns.md)、[开关与默认值](configuration.md) |
 

@@ -46,16 +46,28 @@ public static class OutboundTuningPolicy
                 ?? profile.TcpKeepAliveInterval
         };
 
-        return tuned is Hysteria2Outbound hysteria2
-            ? hysteria2 with
+        // Records copy references: each output must own its mutable collections.
+        return tuned switch
+        {
+            VlessOutbound vless => vless with { Tls = CopyTls(vless.Tls) },
+            TrojanOutbound trojan => trojan with { Tls = CopyTls(trojan.Tls) },
+            AnyTlsOutbound anyTls => anyTls with { Tls = CopyTls(anyTls.Tls) },
+            Hysteria2Outbound hysteria2 => hysteria2 with
             {
+                Tls = CopyTls(hysteria2.Tls),
+                ServerPorts = hysteria2.ServerPorts is { } ports ? [.. ports] : null,
                 HopInterval = hysteria2.HopInterval ?? DefaultHysteria2Hop.MinimumSeconds.ToString(CultureInfo.InvariantCulture) + "s",
                 HopIntervalMax = hysteria2.HopIntervalMax
                     ?? (hysteria2.HopInterval is null ? DefaultHysteria2Hop.MaximumSeconds?.ToString(CultureInfo.InvariantCulture) + "s" : null),
                 BbrProfile = hysteria2.BbrProfile
                     ?? (hysteria2.UpMbps is > 0 || hysteria2.DownMbps is > 0
                         ? null : DefaultHysteria2Bbr.ToString().ToLowerInvariant())
-            }
-            : tuned;
+            },
+            _ => tuned
+        };
     }
+
+    private static OutboundTls? CopyTls(OutboundTls? tls) => tls is null
+        ? null
+        : tls with { Alpn = tls.Alpn is { } alpn ? [.. alpn] : null };
 }

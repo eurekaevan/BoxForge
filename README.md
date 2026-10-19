@@ -39,8 +39,8 @@ Release workflow 自动使用台北时区的日期 tag（`YYYY-MM-DD`，同日�
 以下为源码运行方式。
 
 需要 .NET SDK 10.0。生成配置面向 sing-box 1.15 系列；当前最低要求为
-`1.15.0-alpha.1`，因为生成的 Tailscale endpoint 使用了该版本新增的
-`on_demand`。
+`1.15.0-alpha.12`，统一覆盖 Tailscale endpoint 的 `on_demand` 和 Linux
+TUN 的 `multi_queue`；不承诺更早 alpha 版本兼容。
 
 ```bash
 dotnet run --project src/BoxForge.Cli -- generate \
@@ -208,6 +208,6 @@ python3 scripts/verify-generated-configs.py src/BoxForge.Cli/bin/Debug/net10.0/B
 同时接入普通 CI 和发布前验证；已有核心可通过 `--core /path/to/sing-box` 指定。
 它不创建 TUN 或验证连通性；部署实际配置前仍可执行 `sing-box check -c <config.json>`。
 
-当前资格验证锁定官方 `1.15.0-alpha.8`，并将单元测试、官方配置检查、
+当前资格验证锁定官方 `1.15.0-alpha.12`，并将单元测试、官方配置检查、
 本地协议回环与真实设备/网络验证分开记录。完整命令和未验证路径见
 [协议验证边界](docs/protocol-validation.md)。

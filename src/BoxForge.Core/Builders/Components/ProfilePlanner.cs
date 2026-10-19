@@ -71,8 +71,10 @@ public static class ProfilePlanner
             : nodes.Names.Count > 0
                 ? nodes.Names[0]
                 : SingboxTags.DirectOutbound;
-        string defaultSelection = regions.FirstOrDefault(group =>
-                group.Name == profile.Regions.Single(region => region.Id == "us").DisplayName)?.Name
+        string? preferredRegionName = regions.Count == 0
+            ? null
+            : profile.Regions.Single(region => region.Id == "us").DisplayName;
+        string defaultSelection = regions.FirstOrDefault(group => group.Name == preferredRegionName)?.Name
             ?? fallbackSelection;
 
         return new SelectionGroupPlan(SingboxTags.MainProxyGroup, groupOptions, defaultSelection);

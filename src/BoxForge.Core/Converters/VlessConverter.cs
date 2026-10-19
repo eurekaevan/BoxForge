@@ -6,7 +6,6 @@ using BoxForge.Models.Intermediate;
 
 namespace BoxForge.Converters;
 
-// Compatibility adapter while the remaining protocols still return target models.
 public sealed class VlessConverter()
     : ProxyConverterBase("VLESS", "vless"), INodeFrontend
 {

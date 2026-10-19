@@ -35,7 +35,17 @@ internal sealed partial class OutputTransaction : IDisposable
     {
         string staging = stagingDirectory ?? throw new ObjectDisposedException(nameof(OutputTransaction));
         string relativePath = Path.Combine(configName, artifact.Platform.ToString(), "config.json");
-        string stagedFile = Path.Combine(staging, relativePath);
+        string stagedFile = Path.GetFullPath(Path.Combine(staging, relativePath));
+        string stagingRoot = Path.GetFullPath(staging)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        if (!stagedFile.StartsWith(stagingRoot, OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException($"配置输出路径必须位于暂存目录内：{configName}");
+        }
+
         string existingFile = Path.Combine(outputDirectory, relativePath);
         Directory.CreateDirectory(Path.GetDirectoryName(stagedFile)!);
         await File.WriteAllTextAsync(stagedFile, artifact.Content, cancellationToken);

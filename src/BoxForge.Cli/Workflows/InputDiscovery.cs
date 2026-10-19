@@ -64,6 +64,16 @@ internal sealed partial class InputDiscovery
             return null;
         }
 
+        foreach (string inputFile in inputFiles)
+        {
+            string physicalFile = ResolvePhysicalPath(inputFile);
+            if (IsSameOrChildPath(physicalFile, outputDirectory))
+            {
+                LogInputInsideOutput(logger, inputFile, physicalFile);
+                return null;
+            }
+        }
+
         return new InputDiscovery(outputDirectory, inputFiles, logger);
     }
 
@@ -73,6 +83,12 @@ internal sealed partial class InputDiscovery
         if (string.IsNullOrWhiteSpace(configName))
         {
             LogEmptyConfigName(logger, inputFile);
+            return null;
+        }
+
+        if (configName is "." or "..")
+        {
+            LogUnsafeConfigName(logger, inputFile);
             return null;
         }
 
@@ -144,8 +160,9 @@ internal sealed partial class InputDiscovery
                 : File.Exists(candidate)
                     ? new FileInfo(candidate)
                     : null;
-            current = entry?.ResolveLinkTarget(returnFinalTarget: true)?.FullName
-                ?? candidate;
+            FileSystemInfo? target = entry?.ResolveLinkTarget(returnFinalTarget: true);
+            // A file link's final target can still contain directory links.
+            current = target is null ? candidate : ResolvePhysicalPath(target.FullName);
         }
 
         return Path.GetFullPath(current);
@@ -175,4 +192,10 @@ internal sealed partial class InputDiscovery
 
     [LoggerMessage(9, LogLevel.Error, "配置名重复，无法确定输出目录：{ConfigName}")]
     private static partial void LogDuplicateConfigName(ILogger logger, string configName);
+
+    [LoggerMessage(18, LogLevel.Error, "配置文件名不能使用目录导航名称 . 或 ..：{InputFile}")]
+    private static partial void LogUnsafeConfigName(ILogger logger, string inputFile);
+
+    [LoggerMessage(19, LogLevel.Error, "输入文件指向待替换的输出目录内，无法安全生成：{InputFile} → {PhysicalFile}")]
+    private static partial void LogInputInsideOutput(ILogger logger, string inputFile, string physicalFile);
 }
