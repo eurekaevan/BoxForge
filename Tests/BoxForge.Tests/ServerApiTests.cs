@@ -7,11 +7,13 @@ using System.Text;
 using System.Text.Json;
 using BoxForge.Engine;
 using BoxForge.Builders;
+using BoxForge.Builders.Components;
+using BoxForge.Configuration;
+using Microsoft.Extensions.Options;
 using BoxForge.Models.Singbox;
 using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
 using BoxForge.Models;
-using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -554,6 +556,48 @@ public sealed class ServerApiTests
             Assert.That(problem, Does.Not.Contain("artifacts"));
             Assert.That(problem, Does.Not.Contain("stack"));
             Assert.That(problem, Does.Not.Contain("YamlDotNet"));
+        });
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public async Task PlanDiagnosticsRemainPrivateInConversionAndExportResponses(bool export)
+    {
+        var logs = new RecordingLogProvider();
+        using var failingFactory = factory.WithWebHostBuilder(builder => builder.ConfigureServices(services =>
+        {
+            services.AddSingleton<ILoggerProvider>(logs);
+            services.RemoveAll<ISingboxConfigBuilder>();
+            services.AddSingleton<ISingboxConfigBuilder>(provider =>
+            {
+                var profile = provider.GetRequiredService<BoxForgeProfile>();
+                return new SingboxConfigBuilder(
+                    new TailscaleEndpointBuilder(Options.Create(new TailscaleOptions { Enabled = false, AndroidEnabled = true }), profile),
+                    provider.GetRequiredService<DnsProfileBuilder>(), provider.GetRequiredService<RouteProfileBuilder>(),
+                    provider.GetRequiredService<SingboxApiServiceBuilder>(), profile);
+            });
+        }));
+        using HttpClient client = failingFactory.CreateClient();
+        const string secret = "secret-plan-node-marker";
+        string yaml = ValidYaml.Replace("name: test", "name: " + secret, StringComparison.Ordinal)
+            .Replace("test-only", secret, StringComparison.Ordinal);
+        using var multipart = new MultipartFormDataContent();
+        multipart.Add(new StringContent(yaml), "file", "plan-failure.yaml");
+        foreach (string platform in new[] { "Android", "Linux", "Windows" })
+            multipart.Add(new StringContent(platform), "platforms");
+        using HttpResponseMessage response = export
+            ? await client.PostAsync("/api/v1/export", multipart)
+            : await PostConversionAsync(client, "plan-failure", yaml, ["Android", "Linux", "Windows"]);
+        await AssertProblemAsync(response, HttpStatusCode.UnprocessableEntity);
+        string problem = await response.Content.ReadAsStringAsync();
+        using var document = JsonDocument.Parse(problem);
+        Assert.Multiple(() =>
+        {
+            Assert.That(document.RootElement.GetProperty("detail").GetString(), Is.EqualTo("Clash YAML 无法转换为 sing-box 配置。"));
+            Assert.That(response.Content.Headers.ContentDisposition, Is.Null);
+            Assert.That(problem, Does.Not.Contain(secret).And.Not.Contain("IR004").And.Not.Contain("plan.dns")
+                .And.Not.Contain("artifacts").And.Not.Contain("stack"));
+            Assert.That(logs.Errors, Is.Empty);
         });
     }
 

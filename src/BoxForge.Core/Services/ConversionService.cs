@@ -1,4 +1,5 @@
 using BoxForge.Builders;
+using BoxForge.Configuration;
 using BoxForge.Builders.Components;
 using BoxForge.Models;
 using BoxForge.Parsers;
@@ -14,7 +15,8 @@ public sealed class ConversionService(
     IProxyCacheIdGenerator proxyCacheIdGenerator,
     ISingboxConfigBuilder configBuilder,
     ISingboxConfigValidator configValidator,
-    IConfigSerializer configSerializer)
+    IConfigSerializer configSerializer,
+    BoxForgeProfile profile)
 {
     public PreparedConversion Prepare(
         string yamlContent,
@@ -39,7 +41,7 @@ public sealed class ConversionService(
                 prepared.CacheId);
         SingboxConfig config = configBuilder.Build(request);
 
-        configValidator.Validate(config, request.AddressFamily);
+        configValidator.Validate(config, profile.GetPlatform(platform).AddressFamily);
         return configSerializer.Serialize(config);
     }
 }

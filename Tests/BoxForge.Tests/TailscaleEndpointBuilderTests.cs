@@ -46,7 +46,7 @@ public sealed class TailscaleEndpointBuilderTests
     private static TailscaleEndpoint BuildEndpoint(
         TailscaleOptions options,
         TargetPlatform platform) =>
-        (TailscaleEndpoint)new TailscaleEndpointBuilder(Options.Create(options))
+        (TailscaleEndpoint)new TailscaleEndpointBuilder(Options.Create(options), BoxForgeProfile.Default)
             .Build(platform)
             .Single();
 }

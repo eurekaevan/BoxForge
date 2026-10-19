@@ -16,11 +16,14 @@ public sealed class BoxForgeProfile
     private readonly BuiltInProfile data;
     private readonly HashSet<string> reservedTags;
 
-    private BoxForgeProfile(BuiltInProfile data)
+    internal BoxForgeProfile(BuiltInProfile data)
     {
         var sources = ImmutableArray.CreateBuilder<BuiltInProfile.RuleSetSource>();
+        var ruleSetTags = new HashSet<string>(StringComparer.Ordinal);
         foreach (var source in data.RuleSets)
         {
+            foreach (string tag in source.Tags)
+                ValidateId(tag, ruleSetTags, "rule_sets.tag");
             ValidateRuleSetUrl(source.Url);
             if (!GoDurationHelper.TryNormalizePositiveExtendedDuration(source.UpdateInterval, out string interval))
                 throw new FormatException("profile.rule_sets.update_interval: 必须为有效的正 duration，且不能超出 int64 纳秒范围。");
@@ -44,8 +47,7 @@ public sealed class BoxForgeProfile
         }
         if (!resolverIds.SetEquals(["alidns", "tencent", "cloudflare", "google"]))
             throw new FormatException("profile.resolvers: 必须保留四个固定 resolver ID。");
-        var ruleSetTags = data.RuleSets.SelectMany(source => source.Tags).ToHashSet(StringComparer.Ordinal);
-        reservedTags = new HashSet<string>(ruleSetTags, StringComparer.Ordinal)
+        reservedTags = new HashSet<string>(StringComparer.Ordinal)
         {
             SingboxTags.MainProxyGroup,
             SingboxTags.DirectOutbound,
@@ -59,13 +61,12 @@ public sealed class BoxForgeProfile
             SingboxTags.TunInbound,
             SingboxTags.ApiService,
             HttpClientTags.RuleSetProxy,
-            HttpClientTags.DashboardDirect,
-            RuleSetTags.Ads,
-            RuleSetTags.Cn,
-            RuleSetTags.CnIp
+            HttpClientTags.DashboardDirect
         };
         reservedTags.UnionWith(DnsResponseTags.BaseTags);
         reservedTags.UnionWith(DnsResponseTags.BaseTags.Select(DnsResponseTags.ForAddressQuery));
+        foreach (string tag in ruleSetTags)
+            ReserveTag(tag, "rule_sets.tag");
         var ids = new HashSet<string>(StringComparer.Ordinal);
         var regions = ImmutableArray.CreateBuilder<RegionDefinition>();
         foreach (var region in data.Regions)
@@ -95,7 +96,7 @@ public sealed class BoxForgeProfile
                 throw new FormatException("profile.services.default_region: 引用了不存在的地区。");
             if (service.RuleSets.IsDefaultOrEmpty || service.RuleSets.Any(tag => !ruleSetTags.Contains(tag))
                 || service.RuleSets.Distinct(StringComparer.Ordinal).Count() != service.RuleSets.Length)
-                throw new FormatException("profile.services.rule_sets: 必须为非空、不重复且全部引用现有 rule-set 的数组。");
+                throw new FormatException("profile.services.rule_sets: 必须为非空、不重复且全部引用已声明 rule-set 的数组。");
         }
         Regions = regions.ToImmutable();
     }
@@ -104,6 +105,13 @@ public sealed class BoxForgeProfile
 
     public ImmutableArray<RegionDefinition> Regions { get; }
     public ImmutableArray<ServiceDefinition> Services => data.Services;
+    public ImmutableDictionary<TargetPlatform, PlatformProfile> Platforms => data.Platforms;
+
+    public PlatformProfile GetPlatform(TargetPlatform platform) =>
+        Platforms.TryGetValue(platform, out var settings)
+            ? settings
+            : throw new ArgumentOutOfRangeException(nameof(platform), platform, null);
+
     internal ImmutableArray<BuiltInProfile.RuleSetSource> RuleSets => data.RuleSets;
     internal BuiltInProfile.Resolver GetResolver(string id) => data.Resolvers.Single(resolver => resolver.Id == id);
 
@@ -181,18 +189,23 @@ public sealed class BoxForgeProfile
             var originals = ruleSetSources.SelectMany(source => source.Tags.Select(tag => (tag, source)))
                 .ToDictionary(entry => entry.tag, entry => entry.source, StringComparer.Ordinal);
             var replacements = new Dictionary<string, BuiltInProfile.RuleSetSource>(StringComparer.Ordinal);
+            var additions = new List<BuiltInProfile.RuleSetSource>();
             foreach (var (tag, item) in ReadOverrides(root, "rule_sets", "tag", "url", "update_interval"))
             {
-                if (!originals.TryGetValue(tag, out var original))
-                    throw new FormatException("profile.rule_sets.tag: 必须引用现有 tag。");
-                string url = ReadString(item, "url") ?? original.Url;
-                string interval = ReadString(item, "update_interval") ?? original.UpdateInterval;
+                originals.TryGetValue(tag, out var original);
+                string url = ReadString(item, "url") ?? original?.Url
+                    ?? throw new FormatException("profile.rule_sets.url: 新规则集必填。");
+                string interval = ReadString(item, "update_interval") ?? original?.UpdateInterval ?? "1d";
                 ValidateRuleSetUrl(url);
-                if (url != original.Url || interval != original.UpdateInterval)
-                    replacements.Add(tag, new BuiltInProfile.RuleSetSource([tag],
-                        url.Replace("{tag}", tag, StringComparison.Ordinal), interval));
+                if (original is null || url != original.Url || interval != original.UpdateInterval)
+                {
+                    var replacement = new BuiltInProfile.RuleSetSource([tag],
+                        url.Replace("{tag}", tag, StringComparison.Ordinal), interval);
+                    if (original is null) additions.Add(replacement);
+                    else replacements.Add(tag, replacement);
+                }
             }
-            if (replacements.Count > 0)
+            if (replacements.Count > 0 || additions.Count > 0)
             {
                 var sources = ImmutableArray.CreateBuilder<BuiltInProfile.RuleSetSource>();
                 foreach (var original in ruleSetSources)
@@ -207,6 +220,7 @@ public sealed class BoxForgeProfile
                     foreach (string tag in original.Tags)
                         if (replacements.TryGetValue(tag, out var replacement)) sources.Add(replacement);
                 }
+                sources.AddRange(additions);
                 ruleSetSources = sources.ToImmutable();
             }
             var resolvers = BuiltInProfile.Default.Resolvers.ToList();

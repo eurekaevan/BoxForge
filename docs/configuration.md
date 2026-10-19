@@ -108,8 +108,8 @@ CLI 和 Server 也可以使用 `BOXFORGE_Profile=profile.json`，或宿主配置
 省略 `precedes_domestic_routes` 时为 `false`。`services: []` 保留全部默认服务。
 
 只接受 `id`、`name`、`rule_sets`、`default_region`、`precedes_domestic_routes`。
-`rule_sets` 整体替换，不能是空数组，元素必须唯一并引用现有 rule-set tag；本阶段
-不会通过服务条目新增或修改下载来源；来源单独通过下节覆盖。`default_region` 必须引用合并后的地区 ID，可在同一文件
+`rule_sets` 整体替换，不能是空数组，元素必须唯一并引用内置或同一文件 `rule_sets`
+新增的 tag；服务条目本身不定义下载来源。`default_region` 必须引用合并后的地区 ID，可在同一文件
 中新增地区。`name` 是实际 selector tag，必须与所有有效地区、服务及固定保留 tag
 互不冲突；订阅节点同样不能占用它。修改服务名称后，路由引用跟随新名称。
 未知键、重复键、重复 ID、悬空引用和显式 `null` 均拒绝。
@@ -128,7 +128,8 @@ Games 会先匹配。远端 rule-set 内容本身也可能重叠，服务 ID 不
 
 ## rule-set 来源 profile
 
-`rule_sets` 按已有 tag 覆盖 URL 或更新间隔，不会增加、删除或改名 rule-set：
+`rule_sets` 按已有 tag 覆盖 URL 或更新间隔，也可以追加新的远端规则集；不能删除或
+改名已有 rule-set：
 
 ```json
 {
@@ -141,10 +142,33 @@ Games 会先匹配。远端 rule-set 内容本身也可能重叠，服务 ID 不
 ```
 
 `rules.example.net` 是示例地址，使用时替换为实际托管二进制 SRS 的来源。
-每个条目只接受 `tag`、`url`、`update_interval`。`tag` 必填且不能重复，只能是
-`ai`、`spotify`、`games`、`cn`、`cnip`、`ads`、`google`、`microsoft` 中的一个。
-省略字段继承该 tag 的默认来源；`rule_sets: []`、仅指定 tag 或填写相同默认值
-不会拆分原分组，也不改变生成结果。未知键、未知 tag、重复键和显式 `null` 均拒绝。
+每个条目只接受 `tag`、`url`、`update_interval`。`tag` 必填且不能重复。
+对内置 `ai`、`spotify`、`games`、`cn`、`cnip`、`ads`、`google`、`microsoft`，
+省略字段继承该 tag 的默认来源；`rule_sets: []`、仅指定内置 tag 或填写相同默认值
+不会拆分原分组，也不改变生成结果。
+
+新 tag 必须为 1–32 个小写字母、数字或连字符，并以小写字母开头；必须提供
+`url`，省略 `update_interval` 时默认 `1d`。新 tag 不能与固定保留 tag、有效地区
+或服务 tag 冲突，订阅节点同样不能占用它。未知键、重复键、重复 tag、悬空服务引用
+和显式 `null` 均拒绝。
+
+例如，添加 Netflix 分流及其下载来源：
+
+```json
+{
+  "version": 1,
+  "rule_sets": [
+    { "tag": "netflix", "url": "https://rules.example.net/netflix.srs" }
+  ],
+  "services": [
+    { "id": "netflix", "name": "Netflix", "rule_sets": ["netflix"] }
+  ]
+}
+```
+
+这里的 `rules.example.net` 是占位地址，必须替换为实际托管 Netflix 二进制 SRS
+的 HTTPS 来源。该服务默认使用主代理组，位于普通服务阶段；若需偏好地区，可设置
+`default_region`。
 
 URL 只接受绝对 HTTPS 地址，不能含用户信息、片段或未编码的空白/控制字符。
 只识别字面量 `{tag}`，且它只能位于路径或查询部分；不允许其他或不完整占位符。
@@ -154,8 +178,9 @@ URL 只接受绝对 HTTPS 地址，不能含用户信息、片段或未编码的
 内置 `ai/spotify/games/cn/cnip` 共用一个 `{tag}` 批量来源。覆盖其中一个成员时，
 仅将它拆出为独立来源，未覆盖成员保留原 URL 和间隔；原组只剩一个成员时展开其
 URL，全部覆盖时不留下空组。处理顺序固定为原来源顺序，各组中保留成员在前、
-拆出成员按原 tag 顺序排列，不受覆盖文件条目顺序影响。服务和 DNS/路由仍引用
-原 tag，不随 URL 更换而变化。
+拆出成员按原 tag 顺序排列，不受覆盖文件条目顺序影响。新增定义追加在全部原有
+来源之后，按覆盖文件中的条目顺序排列。服务和 DNS/路由仍引用 tag，不随 URL
+更换而变化。
 
 `update_interval` 必须是带单位的正 duration，最长 128 字符，不超过
 `9223372036854775807ns`。支持 `ns/us/µs/μs/ms/s/m/h/d`、小数、组合和前导 `+`，
@@ -255,8 +280,8 @@ Linux/Windows 的 A 查询另用独立响应 tag，在上述六个名称后追�
 `response-domestic-primary-a`、`response-domestic-secondary-a`、
 `response-global-primary-a`、`response-global-secondary-a`。
 这十二个响应 tag 均为全平台保留名称。
-规则集使用 BoxForge 语义 tag：`ads`、`ai`、`google`、`microsoft`、
-`spotify`、`games`、`cn`、`cnip`。外部文件名由来源映射决定，
+内置规则集使用 BoxForge 语义 tag：`ads`、`ai`、`google`、`microsoft`、
+`spotify`、`games`、`cn`、`cnip`，可通过来源 profile 追加新 tag。外部文件名由来源映射决定，
 不作为内部命名约定。
 
 订阅中的真实节点保留来源名称。若节点名与任一有效地区或服务 tag、BoxForge 固定 tag、DNS 响应 tag

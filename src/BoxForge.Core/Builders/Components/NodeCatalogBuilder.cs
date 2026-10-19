@@ -4,21 +4,19 @@ using BoxForge.Converters;
 using BoxForge.Exceptions;
 using BoxForge.Models;
 using BoxForge.Models.Clash;
-using BoxForge.Models.Singbox;
 
 namespace BoxForge.Builders.Components;
 
 public sealed partial class NodeCatalogBuilder(
     IEnumerable<IProxyConverter> converters,
     ILogger<NodeCatalogBuilder> logger,
-    BoxForgeProfile? profile = null)
+    BoxForgeProfile profile)
 {
-    private readonly BoxForgeProfile effectiveProfile = profile ?? BoxForgeProfile.Default;
     public NodeCatalog Build(
         ClashConfig clashConfig,
         bool strictNodeValidation = false)
     {
-        var outbounds = new List<ProxyOutbound>();
+        var entries = new List<NodeConversionResult>();
         var names = new List<string>();
 
         foreach (var proxy in clashConfig.Proxies)
@@ -39,36 +37,43 @@ public sealed partial class NodeCatalogBuilder(
                 continue;
             }
 
-            var result = converter.Convert(proxy);
+            var result = converter is INodeFrontend frontend
+                ? frontend.Parse(proxy)
+                : converter.Convert(proxy);
             if (result is InvalidNode invalidNode)
             {
                 ReportInvalidNode(invalidNode.ErrorMessage);
                 continue;
             }
 
-            var outbound = ((ConvertedNode)result).Outbound;
-            if (effectiveProfile.IsReservedTag(outbound.Tag))
+            string tag = result switch
+            {
+                ParsedNode parsed => parsed.Node.Name,
+                ConvertedNode converted => converted.Outbound.Tag,
+                _ => throw new InvalidOperationException("Unexpected node conversion result.")
+            };
+            if (profile.IsReservedTag(tag))
             {
                 string message =
-                    $"节点名称 '{outbound.Tag}' 与 BoxForge 保留 tag 冲突";
+                    $"节点名称 '{tag}' 与 BoxForge 保留 tag 冲突";
                 ReportInvalidNode(message);
                 continue;
             }
 
-            if (!string.IsNullOrEmpty(outbound.Tag))
+            if (!string.IsNullOrEmpty(tag))
             {
-                names.Add(outbound.Tag);
+                names.Add(tag);
             }
 
-            outbounds.Add(outbound);
+            entries.Add(result);
         }
 
-        if (strictNodeValidation && outbounds.Count == 0)
+        if (strictNodeValidation && entries.Count == 0)
         {
             throw new NodeParseException("配置中没有可转换的有效节点");
         }
 
-        return new NodeCatalog(outbounds, names);
+        return NodeCatalog.FromEntries(entries.AsReadOnly(), names.AsReadOnly());
 
         void ReportInvalidNode(string message)
         {

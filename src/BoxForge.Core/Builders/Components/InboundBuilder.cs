@@ -1,4 +1,3 @@
-using BoxForge.Models;
 using BoxForge.Models.Singbox;
 using BoxForge.Configuration;
 
@@ -6,9 +5,8 @@ namespace BoxForge.Builders.Components;
 
 public static class InboundBuilder
 {
-    public static List<Inbound> Build(TargetPlatform platform)
+    public static List<Inbound> Build(PlatformProfile profile)
     {
-        PlatformProfile profile = PlatformProfile.For(platform);
         return
         [
             new Inbound

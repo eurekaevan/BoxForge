@@ -11,9 +11,13 @@ public sealed class SingboxApiServiceBuilder(
     private const int ListenPort = 9090;
     private readonly SingboxApiOptions apiOptions = options.Value;
 
-    public List<SingboxService> Build()
+    internal bool IsEnabled => apiOptions.Enabled;
+
+    public List<SingboxService> Build() => Build(IsEnabled);
+
+    internal static List<SingboxService> Build(bool enabled)
     {
-        if (!apiOptions.Enabled)
+        if (!enabled)
         {
             return [];
         }

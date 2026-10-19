@@ -83,6 +83,20 @@ def verify(cli, supplied_core):
     fixtures = repository / "Tests/BoxForge.Tests/Fixtures"
     with tempfile.TemporaryDirectory(prefix="boxforge-core-check-") as temporary:
         root = Path(temporary)
+        # Keep committed fixtures and their byte baselines unchanged.
+        fixtures = Path(shutil.copytree(fixtures, root / "fixtures"))
+        port_cases = {
+            "hy2-port-scalar": ("443", None),
+            "hy2-port-equal-range": ("443-443", ["443:443"]),
+            "hy2-port-list": ("443,8443", ["443:443", "8443:8443"]),
+            "hy2-port-mixed": ("443,8443-8444", ["443:443", "8443:8444"]),
+            "hy2-port-range-first": ("443-444,8443", ["443:444", "8443:8443"]),
+            "hy2-port-duplicates": ("1,65535,1", ["1:1", "65535:65535", "1:1"]),
+        }
+        with (fixtures / "hysteria2.yaml").open("a", encoding="utf-8") as source:
+            for tag, (ports, _) in port_cases.items():
+                source.write(f"\n  - name: {tag}\n    type: hysteria2\n    server: node.example.com\n"
+                             f"    port: 0\n    ports: {json.dumps(ports)}\n    password: test-only\n")
         core = supplied_core or download_core(root)
         version = subprocess.check_output([str(core), "version"], text=True, cwd=root)
         if f"sing-box version {VERSION}\n" not in version or REVISION not in version:
@@ -105,6 +119,16 @@ def verify(cli, supplied_core):
                 if len(configs) != 15:
                     raise RuntimeError(f"Expected 5 fixtures × 3 platforms, found {len(configs)} in {output}")
                 for config in configs:
+                    if config.parent.parent.name == "hysteria2":
+                        leaves = {item["tag"]: item for item in json.loads(config.read_text())["outbounds"]}
+                        for tag, (_, expected) in port_cases.items():
+                            leaf = leaves[tag]
+                            if expected is None:
+                                valid = leaf.get("server_port") == 443 and "server_ports" not in leaf
+                            else:
+                                valid = leaf.get("server_ports") == expected and "server_port" not in leaf
+                            if not valid:
+                                raise RuntimeError(f"Incorrect Hysteria2 port representation for {tag} in {config}")
                     subprocess.run([str(core), "check", "-c", str(config)], cwd=root, check=True)
                     count += 1
         rejected = verify_rejections(core, root, output)

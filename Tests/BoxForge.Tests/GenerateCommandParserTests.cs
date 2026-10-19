@@ -190,7 +190,7 @@ public sealed class GenerateCommandParserTests
             await File.WriteAllTextAsync(path, """{"version":1,"rule_sets":[{"tag":"missing","update_interval":"12h"}]}""");
             rejected = await RunCliAsync(arguments, environment);
             Assert.That(rejected.ExitCode, Is.EqualTo(GenerateCommandRunner.FailureExitCode));
-            Assert.That(rejected.Error, Does.Contain("rule_sets.tag"));
+            Assert.That(rejected.Error, Does.Contain("rule_sets.url"));
             foreach (string file in files) Assert.That(await File.ReadAllBytesAsync(file), Is.EqualTo(before[file]));
             await File.WriteAllTextAsync(path, """{"version":1,"services":[{"id":"ai","default_region":"missing"}]}""");
             rejected = await RunCliAsync(arguments, environment);

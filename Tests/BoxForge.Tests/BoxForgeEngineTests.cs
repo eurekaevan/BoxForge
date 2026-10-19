@@ -10,6 +10,7 @@ using BoxForge.Models.Singbox;
 using BoxForge.Services;
 using BoxForge.Parsers;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -399,6 +400,38 @@ public sealed class BoxForgeEngineTests
         });
     }
 
+    [Test]
+    public void PlanFailurePreservesStructuredDiagnosticsAndStopsPlatformGeneration()
+    {
+        RecordingConfigBuilder? recording = null;
+        using ServiceProvider provider = CreateProvider(services =>
+        {
+            var profile = services.GetRequiredService<BoxForgeProfile>();
+            return recording = new RecordingConfigBuilder(new SingboxConfigBuilder(
+                new TailscaleEndpointBuilder(Options.Create(new TailscaleOptions { Enabled = false, AndroidEnabled = true }), profile),
+                services.GetRequiredService<DnsProfileBuilder>(), services.GetRequiredService<RouteProfileBuilder>(),
+                services.GetRequiredService<SingboxApiServiceBuilder>(), profile));
+        });
+        var engine = provider.GetRequiredService<IBoxForgeEngine>();
+        ConversionBundle? bundle = null;
+        var error = Assert.ThrowsAsync<BoxForgePlatformConversionException>(async () =>
+            bundle = await engine.ConvertAsync(new ConversionRequest("plan-failure", ValidYaml,
+                [TargetPlatform.Android, TargetPlatform.Linux, TargetPlatform.Windows])))!;
+        Assert.That(error.InnerException, Is.TypeOf<ConfigValidationException>());
+        var diagnostics = ((ConfigValidationException)error.InnerException!).Diagnostics;
+        Assert.Multiple(() =>
+        {
+            Assert.That(bundle, Is.Null);
+            Assert.That(error.Platform, Is.EqualTo(TargetPlatform.Linux));
+            Assert.That(recording!.Calls, Is.EqualTo(new[] { TargetPlatform.Android, TargetPlatform.Linux }));
+            Assert.That(diagnostics.Select(diagnostic => (diagnostic.Code, diagnostic.Path)), Is.EqualTo(new[]
+            {
+                ("IR004", "plan.dns.tailscale_enabled"),
+                ("IR004", "plan.route.tailscale_enabled")
+            }));
+        });
+    }
+
     [TestCase("proxies: null", "proxies")]
     [TestCase("proxies: [null]", "proxies[0]")]
     public void RejectsNullProxyStructuresWithNodeDiagnostics(string yaml, string location)
@@ -435,7 +468,8 @@ public sealed class BoxForgeEngineTests
             serviceProvider.GetRequiredService<TailscaleEndpointBuilder>(),
             serviceProvider.GetRequiredService<DnsProfileBuilder>(),
             serviceProvider.GetRequiredService<RouteProfileBuilder>(),
-            serviceProvider.GetRequiredService<SingboxApiServiceBuilder>());
+            serviceProvider.GetRequiredService<SingboxApiServiceBuilder>(),
+            serviceProvider.GetRequiredService<BoxForgeProfile>());
 
     private sealed class RecordingConfigBuilder(
         ISingboxConfigBuilder inner,

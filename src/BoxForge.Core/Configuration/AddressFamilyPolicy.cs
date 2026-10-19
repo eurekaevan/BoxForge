@@ -1,4 +1,3 @@
-using BoxForge.Models;
 using BoxForge.Models.Singbox;
 
 namespace BoxForge.Configuration;
@@ -11,9 +10,6 @@ public enum AddressFamilyPolicy
 
 public static class AddressFamilyPolicies
 {
-    public static AddressFamilyPolicy For(TargetPlatform platform) =>
-        PlatformProfile.For(platform).AddressFamily;
-
     public static DnsStrategy? ToDnsStrategy(this AddressFamilyPolicy policy) => policy switch
     {
         AddressFamilyPolicy.Ipv4Only => DnsStrategy.Ipv4Only,

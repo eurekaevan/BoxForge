@@ -1,37 +1,40 @@
 using BoxForge.Configuration;
 using BoxForge.Models;
-using BoxForge.Models.Singbox;
+using BoxForge.Models.Intermediate;
 
 namespace BoxForge.Builders.Components;
 
 public static class ProfilePlanner
 {
-    public static ProfilePlan Plan(NodeCatalog nodes, BoxForgeProfile? profile = null)
+    public static ProfilePlan Plan(NodeCatalog nodes, BoxForgeProfile profile)
+        => SingboxGroupEmitter.Emit(PlanGroups(nodes, profile, probeInterval: null));
+
+    internal static ProfileGroupPlan PlanGroups(NodeCatalog nodes, BoxForgeProfile profile, string? probeInterval)
     {
-        profile ??= BoxForgeProfile.Default;
         var inventory = profile.Regions.Select(definition => new RegionInventory(
             definition, nodes.Names.Where(name => definition.Pattern.IsMatch(name)).ToArray())).ToArray();
-        var regionAutoOutbounds = new List<UrlTestOutbound>();
-        var regionOutbounds = BuildRegionOutbounds(
+        var probes = new List<ProbeGroupPlan>();
+        var regions = BuildRegionGroups(
             inventory,
-            regionAutoOutbounds);
-        var mainOutbound = BuildMainOutbound(nodes, regionOutbounds, profile);
-        var serviceOutbounds = BuildServiceOutbounds(nodes, inventory, regionOutbounds, profile);
-        var directOutbound = new DirectOutbound { Tag = SingboxTags.DirectOutbound };
-
-        return new ProfilePlan(
-            mainOutbound,
-            regionOutbounds,
-            regionAutoOutbounds,
-            serviceOutbounds,
-            directOutbound);
+            probes, probeInterval);
+        var main = BuildMainGroup(nodes, regions, profile);
+        var services = BuildServiceGroups(nodes, inventory, regions, profile);
+        var plan = new ProfileGroupPlan(
+            nodes.Names.ToArray(),
+            SingboxTags.DirectOutbound,
+            main,
+            regions,
+            probes,
+            services);
+        plan.Validate();
+        return plan;
     }
 
-    private static List<SelectorOutbound> BuildRegionOutbounds(
+    private static List<SelectionGroupPlan> BuildRegionGroups(
         IReadOnlyList<RegionInventory> inventory,
-        List<UrlTestOutbound> regionAutoOutbounds)
+        List<ProbeGroupPlan> probes, string? probeInterval)
     {
-        var outbounds = new List<SelectorOutbound>();
+        var groups = new List<SelectionGroupPlan>();
 
         foreach (RegionInventory region in inventory)
         {
@@ -41,87 +44,64 @@ public static class ProfilePlanner
             }
 
             string autoTag = $"{region.Definition.DisplayName} AUTO";
-            regionAutoOutbounds.Add(new UrlTestOutbound
-            {
-                Tag = autoTag,
-                Outbounds = [.. region.Leaves],
-                Url = "https://www.gstatic.com/generate_204",
-                Tolerance = 50,
-                IdleTimeout = "30m",
-                InterruptExistConnections = false
-            });
-            outbounds.Add(new SelectorOutbound
-            {
-                Tag = region.Definition.DisplayName,
-                Outbounds = [autoTag, .. region.Leaves],
-                Default = autoTag,
-                InterruptExistConnections = true
-            });
+            probes.Add(new ProbeGroupPlan(
+                autoTag, region.Leaves.ToArray(),
+                "https://www.gstatic.com/generate_204", 50, "30m", probeInterval));
+            groups.Add(new SelectionGroupPlan(
+                region.Definition.DisplayName, [autoTag, .. region.Leaves], autoTag));
         }
 
-        return outbounds;
+        return groups;
     }
 
-    private static SelectorOutbound BuildMainOutbound(
+    private static SelectionGroupPlan BuildMainGroup(
         NodeCatalog nodes,
-        List<SelectorOutbound> regionOutbounds,
+        List<SelectionGroupPlan> regions,
         BoxForgeProfile profile)
     {
         List<string> groupOptions =
         [
-            .. regionOutbounds.Select(outbound => outbound.Tag),
+            .. regions.Select(group => group.Name),
             .. nodes.Names,
             SingboxTags.DirectOutbound
         ];
 
-        string fallbackSelection = regionOutbounds.Count > 0
-            ? regionOutbounds[0].Tag
+        string fallbackSelection = regions.Count > 0
+            ? regions[0].Name
             : nodes.Names.Count > 0
                 ? nodes.Names[0]
                 : SingboxTags.DirectOutbound;
-        string defaultSelection = regionOutbounds.FirstOrDefault(outbound =>
-                outbound.Tag == profile.Regions.Single(region => region.Id == "us").DisplayName)?.Tag
+        string defaultSelection = regions.FirstOrDefault(group =>
+                group.Name == profile.Regions.Single(region => region.Id == "us").DisplayName)?.Name
             ?? fallbackSelection;
 
-        return new SelectorOutbound
-        {
-            Tag = SingboxTags.MainProxyGroup,
-            Outbounds = groupOptions,
-            Default = defaultSelection,
-            InterruptExistConnections = true
-        };
+        return new SelectionGroupPlan(SingboxTags.MainProxyGroup, groupOptions, defaultSelection);
     }
 
-    private static List<SelectorOutbound> BuildServiceOutbounds(
+    private static List<SelectionGroupPlan> BuildServiceGroups(
         NodeCatalog nodes,
         IReadOnlyList<RegionInventory> inventory,
-        IReadOnlyList<SelectorOutbound> regionOutbounds,
+        IReadOnlyList<SelectionGroupPlan> regions,
         BoxForgeProfile profile)
     {
         List<string> groupOptions =
         [
             SingboxTags.MainProxyGroup,
-            .. regionOutbounds.Select(outbound => outbound.Tag),
+            .. regions.Select(group => group.Name),
             .. nodes.Names,
             SingboxTags.DirectOutbound
         ];
 
-        var outbounds = new List<SelectorOutbound>();
+        var groups = new List<SelectionGroupPlan>();
         foreach (var service in profile.Services)
         {
             string defaultSelection = inventory.FirstOrDefault(region =>
                 region.Definition.Id == service.DefaultRegion)?.Target ?? SingboxTags.MainProxyGroup;
 
-            outbounds.Add(new SelectorOutbound
-            {
-                Tag = service.Name,
-                Outbounds = [.. groupOptions],
-                Default = defaultSelection,
-                InterruptExistConnections = true
-            });
+            groups.Add(new SelectionGroupPlan(service.Name, groupOptions.ToArray(), defaultSelection));
         }
 
-        return outbounds;
+        return groups;
     }
 
     private sealed record RegionInventory(RegionDefinition Definition, IReadOnlyList<string> Leaves)

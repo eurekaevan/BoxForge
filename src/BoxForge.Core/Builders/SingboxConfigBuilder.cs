@@ -1,6 +1,7 @@
 using BoxForge.Builders.Components;
 using BoxForge.Configuration;
 using BoxForge.Models.Singbox;
+using BoxForge.Models.Intermediate;
 
 namespace BoxForge.Builders;
 
@@ -14,45 +15,53 @@ public sealed class SingboxConfigBuilder(
     DnsProfileBuilder dnsProfileBuilder,
     RouteProfileBuilder routeProfileBuilder,
     SingboxApiServiceBuilder singboxApiServiceBuilder,
-    BoxForgeProfile? profile = null) : ISingboxConfigBuilder
+    BoxForgeProfile profile) : ISingboxConfigBuilder
 {
-    public SingboxConfig Build(SingboxBuildRequest request)
+    internal ConfigurationPlan Plan(SingboxBuildRequest request)
     {
-        PlatformProfile platform = PlatformProfile.For(request.Platform);
-        var profiles = ProfilePlanner.Plan(request.Nodes, profile);
-        var endpoints = tailscaleEndpointBuilder.Build(request.Platform);
-        var services = singboxApiServiceBuilder.Build();
-        string ruleSetDetour = profiles.RegionAutoOutbounds.Count > 0
-            ? profiles.RegionAutoOutbounds[0].Tag
+        PlatformProfile platform = profile.GetPlatform(request.Platform);
+        var groups = ProfilePlanner.PlanGroups(request.Nodes, profile, platform.UrlTestInterval);
+        var dns = dnsProfileBuilder.Plan(request.Platform);
+        var route = routeProfileBuilder.Plan(request.Platform);
+        var endpoint = tailscaleEndpointBuilder.Plan(request.Platform);
+        bool apiEnabled = singboxApiServiceBuilder.IsEnabled;
+        string ruleSetDetour = groups.Probes.Count > 0
+            ? groups.Probes[0].Name
             : request.Nodes.Names.Count > 0
                 ? request.Nodes.Names[0]
                 : SingboxTags.MainProxyGroup;
-        var httpClients = new List<HttpClientConfig>
+        var clients = new List<HttpClientPlan>
         {
-            new()
-            {
-                Tag = HttpClientTags.RuleSetProxy,
-                Detour = ruleSetDetour,
-                DomainResolver = ControlPlaneDnsPolicy.CreateResolver(request.AddressFamily)
-            }
+            new(HttpClientTags.RuleSetProxy, ruleSetDetour, SingboxTags.DirectAliDns)
         };
-        if (services.Count > 0)
-        {
-            httpClients.Add(new HttpClientConfig
-            {
-                Tag = HttpClientTags.DashboardDirect,
-                DomainResolver = ControlPlaneDnsPolicy.CreateResolver(request.AddressFamily)
-            });
-        }
+        if (apiEnabled)
+            clients.Add(new HttpClientPlan(HttpClientTags.DashboardDirect, null, SingboxTags.DirectAliDns));
+        var plan = new ConfigurationPlan(platform, request.Nodes.GetLeafTags().ToArray(),
+            groups, dns, route, endpoint.Enabled, endpoint.TaildropDirectory, apiEnabled, clients);
+        plan.Validate();
+        return plan;
+    }
 
+    public SingboxConfig Build(SingboxBuildRequest request)
+    {
+        var plan = Plan(request);
+        PlatformProfile platform = plan.Platform;
+        var endpoints = TailscaleEndpointBuilder.Build(plan.TaildropDirectory, plan.TailscaleEndpointEnabled);
+        var services = SingboxApiServiceBuilder.Build(plan.ApiServiceEnabled);
+        var httpClients = plan.HttpClients.Select(client => new HttpClientConfig
+        {
+            Tag = client.Name,
+            Detour = client.Detour,
+            DomainResolver = ControlPlaneDnsPolicy.CreateResolver(platform.AddressFamily) with { Server = client.Resolver }
+        }).ToList();
+        var profiles = SingboxGroupEmitter.Emit(plan.Groups);
         List<Outbound> orderedOutbounds =
         [
             profiles.MainOutbound,
             .. profiles.RegionOutbounds,
-            .. profiles.RegionAutoOutbounds.Select(outbound =>
-                outbound with { Interval = platform.UrlTestInterval }),
+            .. profiles.RegionAutoOutbounds,
             .. profiles.ServiceOutbounds,
-            .. request.Nodes.Outbounds.Select(outbound => OutboundTuningPolicy.Apply(outbound, request.Platform))
+            .. request.Nodes.Emit(platform)
         ];
         if (platform.UseDirectForwarding)
         {
@@ -66,12 +75,12 @@ public sealed class SingboxConfigBuilder(
         return new SingboxConfig
         {
             Log = new LogConfig(),
-            Dns = dnsProfileBuilder.Build(request.Platform, request.AddressFamily),
+            Dns = SingboxDnsEmitter.Emit(plan.Dns),
             HttpClients = httpClients,
-            Inbounds = InboundBuilder.Build(request.Platform),
+            Inbounds = InboundBuilder.Build(platform),
             Endpoints = endpoints.Count > 0 ? endpoints : null,
             Outbounds = orderedOutbounds,
-            Route = routeProfileBuilder.Build(request.Platform, request.AddressFamily),
+            Route = SingboxRouteEmitter.Emit(plan.Route),
             Services = services.Count > 0 ? services : null,
             Experimental = ExperimentalBuilder.Build(request.CacheId)
         };

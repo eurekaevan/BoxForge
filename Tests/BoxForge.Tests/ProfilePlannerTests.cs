@@ -13,6 +13,51 @@ namespace BoxForge.Tests;
 [TestFixture]
 public sealed class ProfilePlannerTests
 {
+    [Test]
+    public void GroupIrKeepsPlatformPolicyAndEmitsIndependentCollections()
+    {
+        string[] names = ["美国 01", "美国 02", "香港 01"];
+        var nodes = new NodeCatalog([], names);
+        var platform = BoxForgeProfile.Default.GetPlatform(TargetPlatform.Linux);
+        var plan = ProfilePlanner.PlanGroups(nodes, BoxForgeProfile.Default, platform.UrlTestInterval);
+        var first = SingboxGroupEmitter.Emit(plan);
+        first.MainOutbound.Outbounds.Clear();
+        first.RegionOutbounds.Single().Outbounds.Clear();
+        first.RegionAutoOutbounds.Single().Outbounds.Clear();
+        first.ServiceOutbounds[0].Outbounds.Clear();
+        names[0] = "changed";
+        var second = SingboxGroupEmitter.Emit(plan);
+        Assert.Multiple(() =>
+        {
+            Assert.That(plan.Leaves, Is.EqualTo(new[] { "美国 01", "美国 02", "香港 01" }));
+            Assert.That(second.MainOutbound.Outbounds, Does.Contain("美国 01"));
+            Assert.That(second.RegionOutbounds.Single().Outbounds, Has.Count.EqualTo(3));
+            Assert.That(second.RegionAutoOutbounds.Single().Outbounds, Is.EqualTo(new[] { "美国 01", "美国 02" }));
+            Assert.That(second.RegionAutoOutbounds.Single().Interval, Is.EqualTo(platform.UrlTestInterval));
+            Assert.That(second.ServiceOutbounds[0].Outbounds, Is.Not.Empty);
+            Assert.That(plan.Probes.Single().Candidates, Is.EqualTo(new[] { "美国 01", "美国 02" }));
+            Assert.That(ProfilePlanner.Plan(CreateCatalog("美国 01", "美国 02"), BoxForgeProfile.Default)
+                .RegionAutoOutbounds.Single().Interval, Is.Null, "Keep the public planner's untuned view");
+        });
+    }
+
+    [TestCase("default")]
+    [TestCase("target")]
+    [TestCase("probe_group")]
+    [TestCase("probe_single_leaf")]
+    public void InvalidGroupIrFailsBeforeTargetEmission(string fault)
+    {
+        var plan = ProfilePlanner.PlanGroups(CreateCatalog("美国 01", "美国 02"), BoxForgeProfile.Default, "3m");
+        plan = fault switch
+        {
+            "default" => plan with { Main = plan.Main with { Preferred = "missing" } },
+            "target" => plan with { Main = plan.Main with { Candidates = [.. plan.Main.Candidates, "missing"] } },
+            "probe_group" => plan with { Probes = [plan.Probes[0] with { Candidates = [plan.Main.Name, "美国 01"] }] },
+            _ => plan with { Probes = [plan.Probes[0] with { Candidates = ["美国 01"] }] }
+        };
+        Assert.Throws<InvalidOperationException>(() => SingboxGroupEmitter.Emit(plan));
+    }
+
     [TestCase("", "SINGAPORE", true)]
     [TestCase("tr-TR", "SINGAPORE", true)]
     [TestCase("tr-TR", "sİngapore", false)]
@@ -110,7 +155,7 @@ public sealed class ProfilePlannerTests
             "新加坡 02",
             "其他 01");
 
-        ProfilePlan plan = ProfilePlanner.Plan(nodes);
+        ProfilePlan plan = ProfilePlanner.Plan(nodes, BoxForgeProfile.Default);
         HashSet<string> leafTags = nodes.Outbounds
             .Select(outbound => outbound.Tag)
             .ToHashSet(StringComparer.Ordinal);
@@ -175,7 +220,7 @@ public sealed class ProfilePlannerTests
     {
         NodeCatalog nodes = CreateCatalog("美国 01");
 
-        ProfilePlan plan = ProfilePlanner.Plan(nodes);
+        ProfilePlan plan = ProfilePlanner.Plan(nodes, BoxForgeProfile.Default);
 
         Assert.Multiple(() =>
         {
@@ -191,7 +236,7 @@ public sealed class ProfilePlannerTests
     [Test]
     public void MultipleNodesWithoutUnitedStatesPreferTheFirstRegionGroup()
     {
-        ProfilePlan plan = ProfilePlanner.Plan(CreateCatalog("日本 01", "日本 02"));
+        ProfilePlan plan = ProfilePlanner.Plan(CreateCatalog("日本 01", "日本 02"), BoxForgeProfile.Default);
         string japan = RegionName("jp");
 
         Assert.Multiple(() =>
@@ -205,7 +250,7 @@ public sealed class ProfilePlannerTests
     [Test]
     public void MultipleUnmatchedNodesFallBackToTheFirstLeafNode()
     {
-        ProfilePlan plan = ProfilePlanner.Plan(CreateCatalog("其他 01", "其他 02"));
+        ProfilePlan plan = ProfilePlanner.Plan(CreateCatalog("其他 01", "其他 02"), BoxForgeProfile.Default);
 
         Assert.Multiple(() =>
         {
@@ -226,7 +271,7 @@ public sealed class ProfilePlannerTests
     [Test]
     public void SinglePreferredRegionLeavesRemainServiceTargetsWithoutGeneratingGroups()
     {
-        ProfilePlan plan = ProfilePlanner.Plan(CreateCatalog("美国 01", "日本 01", "日本 02", "香港 01"));
+        ProfilePlan plan = ProfilePlanner.Plan(CreateCatalog("美国 01", "日本 01", "日本 02", "香港 01"), BoxForgeProfile.Default);
         Assert.That(plan.RegionOutbounds.Select(group => group.Tag), Is.EqualTo(new[] { "🇯🇵 JP" }));
         Assert.That(plan.MainOutbound.Default, Is.EqualTo("🇯🇵 JP"), "Preserve documented generated-group fallback");
         foreach (SelectorOutbound service in plan.ServiceOutbounds)
@@ -247,14 +292,14 @@ public sealed class ProfilePlannerTests
     [Test]
     public void MissingPreferredRegionsUseMainNotAnUnrelatedRegion()
     {
-        ProfilePlan plan = ProfilePlanner.Plan(CreateCatalog("日本 01", "日本 02"));
+        ProfilePlan plan = ProfilePlanner.Plan(CreateCatalog("日本 01", "日本 02"), BoxForgeProfile.Default);
         Assert.That(plan.ServiceOutbounds.Select(service => service.Default), Is.All.EqualTo(SingboxTags.MainProxyGroup));
     }
 
     [Test]
     public void EmptyInventoryProducesOnlyValidDirectMainAndServiceReferences()
     {
-        ProfilePlan plan = ProfilePlanner.Plan(CreateCatalog());
+        ProfilePlan plan = ProfilePlanner.Plan(CreateCatalog(), BoxForgeProfile.Default);
         Assert.That(plan.MainOutbound.Default, Is.EqualTo(SingboxTags.DirectOutbound));
         Assert.That(plan.RegionOutbounds, Is.Empty);
         Assert.That(plan.RegionAutoOutbounds, Is.Empty);

@@ -67,6 +67,11 @@ public class ClashObject
     public object? GetValue(string key) =>
         values.TryGetValue(key, out var value) ? value : null;
 
+    internal string? GetPresentField(string name, string? alias = null) =>
+        values.ContainsKey(name) ? name
+        : alias is not null && values.ContainsKey(alias) ? alias
+        : null;
+
     public string? GetString(string key)
     {
         var value = GetRawString(key);

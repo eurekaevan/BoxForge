@@ -70,6 +70,7 @@ public sealed class ProfileConfigurationTests
     [TestCase("{\"version\":\"1\"}")]
     [TestCase("{\"version\":null}")]
     [TestCase("{\"version\":2}")]
+    [TestCase("{\"version\":1,\"platforms\":{}}")]
     [TestCase("{\"version\":1,\"version\":1}")]
     [TestCase("{\"version\":1,\"resolvers\":{}}")]
     [TestCase("{\"version\":1,\"services\":null}")]
@@ -177,12 +178,11 @@ public sealed class ProfileConfigurationTests
         Assert.That(outbounds["AI Taiwan"].GetProperty("default").GetString(), Is.EqualTo("🇹🇼 TW"));
         Assert.That(outbounds["Custom Games"].GetProperty("default").GetString(), Is.EqualTo("🇹🇼 TW"));
         Assert.That(outbounds.ContainsKey(ServiceGroupNames.Ai), Is.False);
-        var stages = RouteProfileBuilder.CreateRulePlan(AddressFamilyPolicy.Ipv4Only, true, profile);
-        int lateGuard = stages.ToList().FindIndex(stage => stage.Phase == RouteProfileBuilder.RoutePhase.LateIpv6Guard);
-        int serviceStage = stages.ToList().FindIndex(stage => stage.Rules.Any(rule => rule.Outbound == "Custom Games"));
-        Assert.That(serviceStage, Is.GreaterThan(lateGuard));
-        Assert.That(stages[serviceStage].Phase, Is.EqualTo(precedesDomestic
-            ? RouteProfileBuilder.RoutePhase.PriorityServices : RouteProfileBuilder.RoutePhase.OtherServices));
+        var routePlan = new RouteProfileBuilder(Options.Create(new TailscaleOptions()), profile).Plan(platform);
+        Assert.That((precedesDomestic ? routePlan.PriorityServices : routePlan.OtherServices).Select(service => service.Name),
+            Does.Contain("Custom Games"));
+        Assert.That((precedesDomestic ? routePlan.OtherServices : routePlan.PriorityServices).Select(service => service.Name),
+            Does.Not.Contain("Custom Games"));
         var rules = json.RootElement.GetProperty("route").GetProperty("rules").EnumerateArray().ToList();
         int lastGuard = rules.FindLastIndex(rule => rule.TryGetProperty("ip_version", out var version) && version.GetInt32() == 6);
         int customRoute = rules.FindIndex(rule => rule.TryGetProperty("outbound", out var outbound) && outbound.GetString() == "Custom Games");
@@ -325,7 +325,7 @@ public sealed class ProfileConfigurationTests
     {
         var options = Options.Create(new TailscaleOptions());
         var serializer = new BoxForge.Services.ConfigSerializer();
-        var baseline = new SingboxConfig { Route = new RouteProfileBuilder(options).Build(TargetPlatform.Linux) };
+        var baseline = new SingboxConfig { Route = new RouteProfileBuilder(options, BoxForgeProfile.Default).Build(TargetPlatform.Linux) };
         var actual = new SingboxConfig { Route = new RouteProfileBuilder(options, Load(json)).Build(TargetPlatform.Linux) };
         Assert.That(serializer.Serialize(actual), Is.EqualTo(serializer.Serialize(baseline)));
     }
@@ -392,6 +392,118 @@ public sealed class ProfileConfigurationTests
     [TestCase("[{\"tag\":\"ai\",\"path\":\"file.srs\"}]")]
     public void RuleSetOverridesRejectMalformedEntries(string sources) => Assert.Throws<FormatException>(() =>
         Load($"{{\"version\":1,\"rule_sets\":{sources}}}"));
+
+    [TestCase(TargetPlatform.Android, false)]
+    [TestCase(TargetPlatform.Android, true)]
+    [TestCase(TargetPlatform.Linux, false)]
+    [TestCase(TargetPlatform.Linux, true)]
+    [TestCase(TargetPlatform.Windows, false)]
+    [TestCase(TargetPlatform.Windows, true)]
+    public async Task NewRuleSetAndNetflixServiceGenerateCompleteReferences(TargetPlatform platform, bool priority)
+    {
+        string path = Path.Combine(directory, "netflix.json");
+        await File.WriteAllTextAsync(path, JsonSerializer.Serialize(new
+        {
+            version = 1,
+            rule_sets = new[] { new { tag = "netflix", url = "https://rules.example.net/{tag}.srs" } },
+            services = new[] { new { id = "netflix", name = "Netflix", rule_sets = new[] { "netflix" },
+                default_region = "us", precedes_domestic_routes = priority } }
+        }));
+        using var provider = CreateProvider(path);
+        var profile = provider.GetRequiredService<BoxForgeProfile>();
+        var bundle = await provider.GetRequiredService<IBoxForgeEngine>().ConvertAsync(
+            new ConversionRequest("netflix", Yaml("US01", "US02"), [platform]));
+        using var document = JsonDocument.Parse(bundle.Artifacts.Single().Content);
+        JsonElement root = document.RootElement;
+        JsonElement route = root.GetProperty("route");
+        JsonElement source = route.GetProperty("rule_set").EnumerateArray().Single(item =>
+            item.GetProperty("tag").ValueKind == JsonValueKind.String && item.GetProperty("tag").GetString() == "netflix");
+        Assert.Multiple(() =>
+        {
+            Assert.That(source.GetProperty("url").GetString(), Is.EqualTo("https://rules.example.net/netflix.srs"));
+            Assert.That(source.GetProperty("type").GetString(), Is.EqualTo("remote"));
+            Assert.That(source.GetProperty("format").GetString(), Is.EqualTo("binary"));
+            Assert.That(source.GetProperty("update_interval").GetString(), Is.EqualTo("1d"));
+            Assert.That(route.GetProperty("default_http_client").GetString(), Is.EqualTo(HttpClientTags.RuleSetProxy));
+            JsonElement selector = root.GetProperty("outbounds").EnumerateArray()
+                .Single(item => item.GetProperty("tag").GetString() == "Netflix");
+            Assert.That(selector.GetProperty("default").GetString(), Is.EqualTo("🇺🇸 US"));
+            JsonElement serviceRule = route.GetProperty("rules").EnumerateArray()
+                .Single(rule => rule.TryGetProperty("outbound", out var tag) && tag.GetString() == "Netflix");
+            Assert.That(serviceRule.GetProperty("rule_set").EnumerateArray().Select(tag => tag.GetString()),
+                Is.EqualTo(new[] { "netflix" }));
+            Assert.That(root.GetProperty("dns").GetProperty("rules").EnumerateArray().Any(rule =>
+                rule.TryGetProperty("rule_set", out var tags) && tags.EnumerateArray().Any(tag => tag.GetString() == "netflix")), Is.True);
+            var routePlan = new RouteProfileBuilder(Options.Create(new TailscaleOptions()), profile).Plan(platform);
+            Assert.That((priority ? routePlan.PriorityServices : routePlan.OtherServices).Select(service => service.Name),
+                Does.Contain("Netflix"));
+            Assert.That((priority ? routePlan.OtherServices : routePlan.PriorityServices).Select(service => service.Name),
+                Does.Not.Contain("Netflix"));
+            Assert.That(profile.IsReservedTag("netflix"), Is.True);
+            Assert.That(BoxForgeProfile.Default.IsReservedTag("netflix"), Is.False);
+        });
+        Assert.ThrowsAsync<BoxForgeConversionException>(() => provider.GetRequiredService<IBoxForgeEngine>().ConvertAsync(
+            new ConversionRequest("collision", Yaml("netflix"), [platform])));
+        using var resolved = JsonDocument.Parse(profile.ToResolvedJson(new TailscaleOptions(), new SingboxApiOptions()));
+        Assert.That(resolved.RootElement.GetProperty("rule_sets").EnumerateArray().Any(item =>
+            item.GetProperty("tags").EnumerateArray().Any(tag => tag.GetString() == "netflix")), Is.True);
+    }
+
+    [Test]
+    public void NewRuleSetsAppendInFileOrderAlongsideExistingOverrides()
+    {
+        var profile = Load("""
+            {"version":1,"rule_sets":[
+              {"tag":"netflix","url":"https://rules.example.net/{tag}.srs"},
+              {"tag":"ai","update_interval":"12h"},
+              {"tag":"disney","url":"https://rules.example.net/{tag}.srs","update_interval":"6h"}
+            ]}
+            """);
+        Assert.That(profile.RuleSets.TakeLast(2).Select(source => source.Tags.Single()), Is.EqualTo(new[] { "netflix", "disney" }));
+        Assert.That(profile.RuleSets.Single(source => source.Tags.Contains("ai")).UpdateInterval, Is.EqualTo("12h"));
+        Assert.That(profile.RuleSets.Single(source => source.Tags.Contains("disney")).UpdateInterval, Is.EqualTo("6h"));
+        var google = profile.RuleSets.Single(source => source.Tags.Contains("google"));
+        var defaultGoogle = BoxForgeProfile.Default.RuleSets.Single(source => source.Tags.Contains("google"));
+        Assert.That(google.Tags, Is.EqualTo(defaultGoogle.Tags));
+        Assert.That(google.Url, Is.EqualTo(defaultGoogle.Url));
+        Assert.That(google.UpdateInterval, Is.EqualTo(defaultGoogle.UpdateInterval));
+        Assert.That(BoxForgeProfile.Default.RuleSets.Any(source => source.Tags.Contains("netflix")), Is.False);
+    }
+
+    [TestCase("")]
+    [TestCase(" ")]
+    [TestCase("netflix ")]
+    [TestCase("NetFlix")]
+    [TestCase("netflix/path")]
+    [TestCase("netflix_{tag}")]
+    [TestCase("-netflix")]
+    [TestCase("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    [TestCase("bridge-out")]
+    [TestCase("tun-in")]
+    [TestCase("http-ruleset-proxy")]
+    [TestCase("response-global-primary-a")]
+    public void NewRuleSetTagsRejectInvalidNamesAndFixedTagCollisions(string tag) => Assert.Throws<FormatException>(() =>
+        Load(JsonSerializer.Serialize(new { version = 1, rule_sets = new[] { new { tag, url = "https://rules.example.net/new.srs" } } })));
+
+    [TestCase("regions", "{\"id\":\"us\",\"display_name\":\"netflix\"}")]
+    [TestCase("services", "{\"id\":\"ai\",\"name\":\"netflix\"}")]
+    public void NewRuleSetTagsCannotCollideWithEffectiveDisplayNames(string section, string item) => Assert.Throws<FormatException>(() =>
+        Load($$"""{"version":1,"rule_sets":[{"tag":"netflix","url":"https://rules.example.net/new.srs"}],"{{section}}":[{{item}}]}"""));
+
+    [TestCase("{\"tag\":\"netflix\"}")]
+    [TestCase("{\"tag\":\"netflix\",\"update_interval\":\"1d\"}")]
+    [TestCase("{\"tag\":\"netflix\",\"url\":\"http://rules.example.net/new.srs\"}")]
+    [TestCase("{\"tag\":\"netflix\",\"url\":\"https://rules.example.net/new.srs\",\"update_interval\":\"0s\"}")]
+    public void NewRuleSetsRequireValidUrlAndInterval(string entry) => Assert.Throws<FormatException>(() =>
+        Load($$"""{"version":1,"rule_sets":[{{entry}}]}"""));
+
+    [Test]
+    public void NewRuleSetsStillRejectDuplicateTags() => Assert.Throws<FormatException>(() => Load("""
+        {"version":1,"rule_sets":[
+          {"tag":"netflix","url":"https://rules.example.net/first.srs"},
+          {"tag":"netflix","url":"https://rules.example.net/second.srs"}
+        ]}
+        """));
 
     private static IEnumerable<TestCaseData> ResolverCases()
     {
@@ -596,6 +708,116 @@ public sealed class ProfileConfigurationTests
         var error = Assert.ThrowsAsync<BoxForgePlatformConversionException>(() => provider.GetRequiredService<IBoxForgeEngine>()
             .ConvertAsync(new ConversionRequest("timeout", Yaml(new string('a', 10_000) + "!"), [TargetPlatform.Android])));
         Assert.That(error!.InnerException, Is.TypeOf<System.Text.RegularExpressions.RegexMatchTimeoutException>());
+    }
+
+    [TestCase(TargetPlatform.Android)]
+    [TestCase(TargetPlatform.Linux)]
+    [TestCase(TargetPlatform.Windows)]
+    public async Task InjectedPlatformSettingsControlTheCompleteGenerationPath(TargetPlatform platform)
+    {
+        PlatformProfile original = BoxForgeProfile.Default.GetPlatform(platform);
+        PlatformProfile settings = original with
+        {
+            AddressFamily = AddressFamilyPolicy.DualStack,
+            StrictRoute = false,
+            AutoRedirect = !original.UseDirectForwarding,
+            MultiQueue = false,
+            UseDirectForwarding = !original.UseDirectForwarding,
+            TcpKeepAlive = "7m",
+            TcpKeepAliveInterval = "17s",
+            UrlTestInterval = "7m",
+            DnsSelectionMode = original.DnsSelectionMode == DnsResolverSelectionMode.ParallelFastest
+                ? DnsResolverSelectionMode.SequentialFallback : DnsResolverSelectionMode.ParallelFastest,
+            TaildropDirectory = "CustomTaildrop"
+        };
+        var profile = new BoxForgeProfile(BuiltInProfile.Default with
+        { Platforms = BuiltInProfile.Default.Platforms.SetItem(platform, settings) });
+        using var provider = new ServiceCollection().AddLogging()
+            .AddBoxForgeCore(new ConfigurationBuilder().Build()).AddSingleton(profile).BuildServiceProvider();
+        var bundle = await provider.GetRequiredService<IBoxForgeEngine>().ConvertAsync(
+            new ConversionRequest("platform", Yaml("US01", "US02"), [platform]));
+        using var document = JsonDocument.Parse(bundle.Artifacts.Single().Content);
+        JsonElement root = document.RootElement;
+        JsonElement tun = root.GetProperty("inbounds")[0];
+        JsonElement[] outbounds = [.. root.GetProperty("outbounds").EnumerateArray()];
+        JsonElement dns = root.GetProperty("dns");
+        JsonElement route = root.GetProperty("route");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(provider.GetRequiredService<BoxForgeProfile>(), Is.SameAs(profile));
+            Assert.That(profile.Platforms[platform], Is.SameAs(settings));
+            Assert.That(tun.GetProperty("strict_route").GetBoolean(), Is.False);
+            Assert.That(tun.GetProperty("auto_redirect").GetBoolean(), Is.EqualTo(settings.AutoRedirect));
+            Assert.That(tun.GetProperty("multi_queue").GetBoolean(), Is.False);
+            Assert.That(outbounds.Any(outbound => outbound.GetProperty("type").GetString() == "bridge"),
+                Is.EqualTo(settings.UseDirectForwarding));
+            Assert.That(route.GetProperty("rules").EnumerateArray().Any(rule =>
+                    rule.TryGetProperty("action", out var action) && action.GetString() == "bypass"),
+                Is.EqualTo(settings.UseDirectForwarding));
+            foreach (JsonElement proxy in outbounds.Where(outbound => outbound.GetProperty("type").GetString() == "shadowsocks"))
+            {
+                Assert.That(proxy.GetProperty("tcp_keep_alive").GetString(), Is.EqualTo(settings.TcpKeepAlive));
+                Assert.That(proxy.GetProperty("tcp_keep_alive_interval").GetString(), Is.EqualTo(settings.TcpKeepAliveInterval));
+            }
+            foreach (JsonElement auto in outbounds.Where(outbound => outbound.GetProperty("type").GetString() == "urltest"))
+                Assert.That(auto.GetProperty("interval").GetString(), Is.EqualTo(settings.UrlTestInterval));
+            Assert.That(dns.GetProperty("rules").EnumerateArray().Any(rule =>
+                    rule.TryGetProperty("race", out var race) && race.GetBoolean()),
+                Is.EqualTo(settings.DnsSelectionMode == DnsResolverSelectionMode.ParallelFastest));
+            Assert.That(dns.TryGetProperty("strategy", out _), Is.False);
+            Assert.That(dns.GetProperty("rules").EnumerateArray().Any(rule => rule.TryGetProperty("query_type", out var types)
+                && types.EnumerateArray().Any(type => type.GetString() == "AAAA")), Is.False);
+            Assert.That(route.GetProperty("rules").EnumerateArray().Any(rule => rule.TryGetProperty("ip_version", out _)), Is.False);
+            Assert.That(route.GetProperty("default_domain_resolver").TryGetProperty("strategy", out _), Is.False);
+            foreach (JsonElement client in root.GetProperty("http_clients").EnumerateArray())
+                Assert.That(client.GetProperty("domain_resolver").TryGetProperty("strategy", out _), Is.False);
+            Assert.That(root.GetProperty("endpoints")[0].GetProperty("taildrop_directory").GetString(),
+                Is.EqualTo(settings.TaildropDirectory));
+            Assert.That(BoxForgeProfile.Default.GetPlatform(platform), Is.SameAs(original));
+        });
+        using var resolved = JsonDocument.Parse(profile.ToResolvedJson(new TailscaleOptions(), new SingboxApiOptions()));
+        Assert.That(resolved.RootElement.GetProperty("platforms").GetProperty(platform.ToString())
+            .GetProperty("address_family").GetString(), Is.EqualTo("DualStack"));
+    }
+
+    [TestCase(TargetPlatform.Android)]
+    [TestCase(TargetPlatform.Linux)]
+    [TestCase(TargetPlatform.Windows)]
+    public async Task InjectedMobileClassificationKeepsTailscaleEndpointDnsAndRouteTogether(TargetPlatform platform)
+    {
+        PlatformProfile original = BoxForgeProfile.Default.GetPlatform(platform);
+        PlatformProfile settings = original with { IsMobile = !original.IsMobile };
+        var profile = new BoxForgeProfile(BuiltInProfile.Default with
+        { Platforms = BuiltInProfile.Default.Platforms.SetItem(platform, settings) });
+        foreach (bool desktopEnabled in new[] { false, true })
+        {
+            var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Tailscale:Enabled"] = desktopEnabled.ToString(),
+                ["Tailscale:AndroidEnabled"] = (!desktopEnabled).ToString()
+            }).Build();
+            using var provider = new ServiceCollection().AddLogging()
+                .AddBoxForgeCore(configuration).AddSingleton(profile).BuildServiceProvider();
+            var bundle = await provider.GetRequiredService<IBoxForgeEngine>().ConvertAsync(
+                new ConversionRequest("tailscale", Yaml("US01"), [platform]));
+            using var document = JsonDocument.Parse(bundle.Artifacts.Single().Content);
+            JsonElement root = document.RootElement;
+            bool enabled = settings.IsMobile ? !desktopEnabled : desktopEnabled;
+            Assert.Multiple(() =>
+            {
+                Assert.That(root.TryGetProperty("endpoints", out _), Is.EqualTo(enabled));
+                Assert.That(root.GetProperty("dns").GetProperty("servers").EnumerateArray()
+                    .Any(server => server.GetProperty("tag").GetString() == SingboxTags.TailscaleDns), Is.EqualTo(enabled));
+                Assert.That(root.GetProperty("dns").GetProperty("rules").EnumerateArray()
+                    .Any(rule => rule.TryGetProperty("server", out var server) && server.GetString() == SingboxTags.TailscaleDns),
+                    Is.EqualTo(enabled));
+                Assert.That(root.GetProperty("route").GetProperty("rules").EnumerateArray()
+                    .Any(rule => rule.TryGetProperty("outbound", out var outbound) && outbound.GetString() == SingboxTags.TailscaleEndpoint),
+                    Is.EqualTo(enabled));
+            });
+        }
+        Assert.That(BoxForgeProfile.Default.GetPlatform(platform), Is.SameAs(original));
     }
 
     private static BoxForgeProfile Load(string json)

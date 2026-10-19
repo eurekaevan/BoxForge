@@ -1,4 +1,7 @@
+using BoxForge.Builders;
 using BoxForge.Builders.Components;
+using BoxForge.Models.Intermediate;
+using System.Text.Json;
 using BoxForge.Configuration;
 using BoxForge.Models;
 using BoxForge.Models.Singbox;
@@ -21,6 +24,84 @@ public sealed class RouteProfileBuilderTests
         RuleSetTags.Cn,
         RuleSetTags.CnIp
     ];
+
+    [TestCase(TargetPlatform.Android, AddressFamilyPolicy.Ipv4Only)]
+    [TestCase(TargetPlatform.Linux, AddressFamilyPolicy.Ipv4Only)]
+    [TestCase(TargetPlatform.Windows, AddressFamilyPolicy.Ipv4Only)]
+    [TestCase(TargetPlatform.Android, AddressFamilyPolicy.DualStack)]
+    [TestCase(TargetPlatform.Linux, AddressFamilyPolicy.DualStack)]
+    [TestCase(TargetPlatform.Windows, AddressFamilyPolicy.DualStack)]
+    public void RoutePlanSnapshotsPolicyAndEmitsIndependentConfigurations(TargetPlatform platform, AddressFamilyPolicy addressFamily)
+    {
+        var settings = BoxForgeProfile.Default.GetPlatform(platform) with { AddressFamily = addressFamily };
+        var profile = new BoxForgeProfile(BuiltInProfile.Default with
+        { Platforms = BuiltInProfile.Default.Platforms.SetItem(platform, settings) });
+        var options = new TailscaleOptions { Enabled = true, AndroidEnabled = true };
+        var builder = new RouteProfileBuilder(Options.Create(options), profile);
+        var plan = builder.Plan(platform);
+        string expected = JsonSerializer.Serialize(builder.Build(platform));
+        var first = SingboxRouteEmitter.Emit(plan);
+        Assert.That(JsonSerializer.Serialize(first), Is.EqualTo(expected));
+        foreach (SingboxRuleSet source in first.RuleSet)
+            source.Tag!.Clear();
+        first.RuleSet.Clear();
+        foreach (RouteRule rule in first.Rules)
+            ClearMatchers(rule);
+        first.Rules.Clear();
+        options.Enabled = options.AndroidEnabled = false;
+        Assert.Multiple(() =>
+        {
+            Assert.That(JsonSerializer.Serialize(SingboxRouteEmitter.Emit(plan)), Is.EqualTo(expected));
+            Assert.That(plan.AddressFamily, Is.EqualTo(addressFamily));
+            Assert.That(plan.UseDirectForwarding, Is.EqualTo(settings.UseDirectForwarding));
+            Assert.That(plan.TailscaleEnabled, Is.True);
+            Assert.That(builder.Plan(platform).TailscaleEnabled, Is.False);
+            Assert.That(plan.PriorityServices, Is.EqualTo(profile.Services.Where(service => service.PrecedesDomesticRoutes)));
+            Assert.That(plan.OtherServices, Is.EqualTo(profile.Services.Where(service => !service.PrecedesDomesticRoutes)));
+            Assert.That(plan.RuleSets.SelectMany(source => source.Tags), Is.EqualTo(profile.RuleSets.SelectMany(source => source.Tags)));
+        });
+
+        static void ClearMatchers(RouteRule rule)
+        {
+            if (rule.Rules is { } children)
+            {
+                foreach (RouteRule child in children)
+                    ClearMatchers(child);
+                children.Clear();
+            }
+            rule.Inbound?.Clear();
+            rule.Protocol?.Clear();
+            rule.Port?.Clear();
+            rule.Network?.Clear();
+            rule.RuleSet?.Clear();
+            rule.IpCidr?.Clear();
+            rule.PreferredBy?.Clear();
+            rule.Sniffer?.Clear();
+        }
+    }
+
+    [TestCase("service_reference")]
+    [TestCase("service_priority")]
+    [TestCase("duplicate_service")]
+    [TestCase("duplicate_rule_set")]
+    [TestCase("missing_base_rule_set")]
+    public void InvalidRouteReferencesAndClassificationFailBeforeEmission(string fault)
+    {
+        var plan = CreateBuilder().Plan(TargetPlatform.Linux);
+        plan = fault switch
+        {
+            "service_reference" => plan with { PriorityServices = [plan.PriorityServices[0] with { RuleSets = ["missing"] }, .. plan.PriorityServices.Skip(1)] },
+            "service_priority" => plan with { PriorityServices = [plan.PriorityServices[0] with { PrecedesDomesticRoutes = false }, .. plan.PriorityServices.Skip(1)] },
+            "duplicate_service" => plan with { OtherServices = [.. plan.OtherServices, plan.PriorityServices[0]] },
+            "duplicate_rule_set" => plan with { RuleSets = [.. plan.RuleSets, plan.RuleSets[0]] },
+            _ => plan with
+            {
+                RuleSets = plan.RuleSets.Select(source => source with { Tags = [.. source.Tags.Where(tag => tag != RuleSetTags.Ads)] })
+                .Where(source => !source.Tags.IsEmpty).ToArray()
+            }
+        };
+        Assert.Throws<InvalidOperationException>(() => SingboxRouteEmitter.Emit(plan));
+    }
 
     [Test]
     public void DirectForwardingLayersRespectExplicitPreAndPostSniffPhases()
@@ -101,7 +182,7 @@ public sealed class RouteProfileBuilderTests
     [TestCase(TargetPlatform.Windows)]
     public void TunKeepsEarlyTailscaleGateWithoutMixedResolutionStages(TargetPlatform platform)
     {
-        RouteConfig route = new RouteProfileBuilder(Options.Create(new TailscaleOptions())).Build(platform);
+        RouteConfig route = new RouteProfileBuilder(Options.Create(new TailscaleOptions()), BoxForgeProfile.Default).Build(platform);
         RouteRule gate = route.Rules.Single(rule =>
             rule.PreferredBy?.Contains(SingboxTags.TailscaleEndpoint) == true);
         int privateDirectIndex = route.Rules.FindIndex(rule =>
@@ -461,13 +542,13 @@ public sealed class RouteProfileBuilderTests
     [TestCase("unknown")]
     public void RulePlanRejectsBrokenStageConstraints(string mutation)
     {
-        List<RouteProfileBuilder.RuleStage> stages = RouteProfileBuilder
-            .CreateRulePlan(AddressFamilyPolicy.Ipv4Only, tailscaleEnabled: true).ToList();
+        var plan = CreateBuilder().Plan(TargetPlatform.Linux);
+        List<RoutePhase> stages = plan.Phases.ToList();
         switch (mutation)
         {
             case "reordered":
-                int early = stages.FindIndex(stage => stage.Phase == RouteProfileBuilder.RoutePhase.EarlyIpv6Guard);
-                int direct = stages.FindIndex(stage => stage.Phase == RouteProfileBuilder.RoutePhase.PreSniffDirect);
+                int early = stages.FindIndex(stage => stage == RoutePhase.EarlyIpv6Guard);
+                int direct = stages.FindIndex(stage => stage == RoutePhase.PreSniffDirect);
                 (stages[early], stages[direct]) = (stages[direct], stages[early]);
                 break;
             case "missing":
@@ -477,11 +558,11 @@ public sealed class RouteProfileBuilderTests
                 stages.Add(stages[^1]);
                 break;
             case "unknown":
-                stages[^1] = stages[^1] with { Phase = (RouteProfileBuilder.RoutePhase)(-1) };
+                stages[^1] = (RoutePhase)(-1);
                 break;
         }
 
-        Assert.Throws<InvalidOperationException>(() => RouteProfileBuilder.ValidateRulePlan(stages));
+        Assert.Throws<InvalidOperationException>(() => SingboxRouteEmitter.Emit(plan with { Phases = stages }));
     }
 
     private static void AssertSniffRule(
@@ -508,7 +589,7 @@ public sealed class RouteProfileBuilderTests
             {
                 Enabled = false,
                 AndroidEnabled = false
-            }));
+            }), BoxForgeProfile.Default);
 
     private static List<RouteRule> DirectRules(RouteConfig route) =>
         route.Rules.Where(rule =>

@@ -1,5 +1,4 @@
 using System.Text.Json.Serialization;
-using BoxForge.Models;
 
 namespace BoxForge.Configuration;
 
@@ -19,9 +18,4 @@ public sealed record PlatformProfile
     public required string UrlTestInterval { get; init; }
     public required DnsResolverSelectionMode DnsSelectionMode { get; init; }
     public required string TaildropDirectory { get; init; }
-
-    public static PlatformProfile For(TargetPlatform platform) =>
-        BuiltInProfile.Default.Platforms.TryGetValue(platform, out var profile)
-            ? profile
-            : throw new ArgumentOutOfRangeException(nameof(platform), platform, null);
 }

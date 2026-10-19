@@ -1,34 +1,21 @@
 using BoxForge.Models.Clash;
 using BoxForge.Models.Singbox;
-using BoxForge.Helpers;
+using BoxForge.Models.Intermediate;
+using BoxForge.Builders;
+using BoxForge.Models;
 
 namespace BoxForge.Converters;
 
 public sealed class TrojanConverter()
-    : ProxyConverterBase("Trojan", "trojan")
+    : ProxyConverterBase("Trojan", "trojan"), INodeFrontend
 {
-    private static readonly SourceFieldSchema SourceFields = SourceFieldSchemas.Common()
-        .Include(SourceFieldSchemas.Tls(supportsReality: true, supportsUtls: true, forceTls: true))
-        .Include(SourceFieldSchemas.NativeTcp())
-        .Mapped("password")
-        .Unsupported("Trojan Shadowsocks 加密选项尚未映射", "ss-opts", "ss_opts");
+    NodeConversionResult INodeFrontend.Parse(ClashProxyNode proxy) => ParseForCatalog(proxy);
 
-    protected override SourceFieldSchema Schema => SourceFields;
+    protected override SourceFieldSchema Schema => TrojanFrontend.Schema;
 
-    protected override ProxyOutbound ConvertCore(
-        ClashProxyNode node,
-        string name)
-    {
-        string server = node.GetRequiredString("server");
-        OutboundTls? tls = TlsConfigHelper.Extract(node, server, forceTls: true);
+    protected override ProxyOutbound ConvertCore(ClashProxyNode node, string name) =>
+        SingboxNodeEmitter.Emit(ParseCore(node, name));
 
-        return new TrojanOutbound
-        {
-            Tag = name,
-            Server = server,
-            ServerPort = node.GetRequiredInt("port"),
-            Password = node.GetRequiredRawString("password"),
-            Tls = tls
-        };
-    }
+    internal override TrojanNode ParseCore(ClashProxyNode node, string name) =>
+        TrojanFrontend.ParseValidated(node, name);
 }

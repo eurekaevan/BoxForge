@@ -11,6 +11,9 @@ internal static class GoDurationHelper
         @"\G([0-9]+(?:\.[0-9]*)?|\.[0-9]+)(ns|us|µs|μs|ms|s|m|h|d)",
         RegexOptions.CultureInvariant);
 
+    internal static bool IsPositiveDuration(string value) =>
+        TryParseDuration(value, out long duration) && duration > 0;
+
     internal static bool TryNormalizePositiveExtendedDuration(string value, out string normalized)
     {
         normalized = value;

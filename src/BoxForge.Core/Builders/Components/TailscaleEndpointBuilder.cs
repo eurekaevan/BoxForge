@@ -5,13 +5,25 @@ using BoxForge.Models.Singbox;
 
 namespace BoxForge.Builders.Components;
 
-public sealed class TailscaleEndpointBuilder(IOptions<TailscaleOptions> options)
+public sealed class TailscaleEndpointBuilder(IOptions<TailscaleOptions> options, BoxForgeProfile profile)
 {
     private readonly TailscaleOptions tailscaleOptions = options.Value;
 
+    internal (bool Enabled, string TaildropDirectory) Plan(TargetPlatform platform)
+    {
+        PlatformProfile settings = profile.GetPlatform(platform);
+        return (tailscaleOptions.IsEnabled(settings), settings.TaildropDirectory);
+    }
+
     public List<Endpoint> Build(TargetPlatform platform)
     {
-        if (!tailscaleOptions.IsEnabled(platform))
+        var plan = Plan(platform);
+        return Build(plan.TaildropDirectory, plan.Enabled);
+    }
+
+    internal static List<Endpoint> Build(string taildropDirectory, bool enabled)
+    {
+        if (!enabled)
         {
             return [];
         }
@@ -24,7 +36,7 @@ public sealed class TailscaleEndpointBuilder(IOptions<TailscaleOptions> options)
                 StateDirectory = SingboxTags.TailscaleStateDirectory,
                 AcceptRoutes = true,
                 OnDemand = true,
-                TaildropDirectory = PlatformProfile.For(platform).TaildropDirectory
+                TaildropDirectory = taildropDirectory
             }
         ];
     }

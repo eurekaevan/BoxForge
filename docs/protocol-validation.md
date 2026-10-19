@@ -35,7 +35,9 @@ python3 scripts/verify-generated-configs.py src/BoxForge.Cli/bin/Debug/net10.0/B
 python3 scripts/verify-generated-configs.py src/BoxForge.Cli/bin/Debug/net10.0/BoxForge.dll --core /absolute/path/to/sing-box
 ```
 
-脚本检查 5 个 fixture × 3 平台 × Tailscale/API 开关组合的 60 份配置，并验证
+脚本检查 5 个 fixture × 3 平台 × Tailscale/API 开关组合的 60 份配置；在临时
+fixture 副本中追加 HY2 单端口、等端点范围、多标量、混合范围和重复/边界端口样本，
+断言目标端口表示并逐份交给官方核心，不修改仓库 fixture 或字节基线。另验证
 6 类核心反例会被拒绝。普通 CI 和发布前验证调用同一入口；生产 CLI 和 Server
 不下载或启动核心。输入字段合法性仍由解析器和转换器检查，官方 `check`
 不保证运行时可用性，例如空服务器地址和零端口并不一定在此阶段报错。

@@ -66,7 +66,7 @@ public sealed class SemanticCoverageTests
             [new VlessConverter(), new TrojanConverter(),
                 new ShadowsocksConverter(), new Hysteria2Converter(),
                 new AnyTlsConverter()],
-            new RecordingLogger<NodeCatalogBuilder>());
+            new RecordingLogger<NodeCatalogBuilder>(), BoxForgeProfile.Default);
         ClashConfig config = new()
         {
             Proxies =
@@ -115,7 +115,7 @@ public sealed class SemanticCoverageTests
     [TestCaseSource(nameof(RemovedTransports))]
     public void RemovedTransportsFailStrictAndSkipWholeNode(string protocol, string field, object value)
     {
-        var builder = new NodeCatalogBuilder([Converter(protocol)], new RecordingLogger<NodeCatalogBuilder>());
+        var builder = new NodeCatalogBuilder([Converter(protocol)], new RecordingLogger<NodeCatalogBuilder>(), BoxForgeProfile.Default);
         var config = new ClashConfig
         {
             Proxies = [CreateNode(protocol, new Hashtable { [field] = value }), CreateNode(protocol, new Hashtable { ["name"] = "safe" })]
@@ -220,7 +220,7 @@ public sealed class SemanticCoverageTests
         var fields = new Hashtable { ["plugin"] = "v2ray-plugin" };
         if (optionsKey is not null)
             fields[optionsKey] = new Hashtable { ["mode"] = "websocket", ["mux"] = false };
-        var builder = new NodeCatalogBuilder([new ShadowsocksConverter()], new RecordingLogger<NodeCatalogBuilder>());
+        var builder = new NodeCatalogBuilder([new ShadowsocksConverter()], new RecordingLogger<NodeCatalogBuilder>(), BoxForgeProfile.Default);
         var config = new ClashConfig { Proxies = [CreateNode("ss", fields), CreateNode("ss", new Hashtable { ["name"] = "safe" })] };
         NodeParseException? error = Assert.Throws<NodeParseException>(() => builder.Build(config, strictNodeValidation: true));
         Assert.That(error!.Message, Does.Contain("plugin"));
@@ -231,7 +231,7 @@ public sealed class SemanticCoverageTests
     public void StrictModeReportsProtocolNodeAndUnknownField()
     {
         var logger = new RecordingLogger<NodeCatalogBuilder>();
-        var builder = new NodeCatalogBuilder([new VlessConverter()], logger);
+        var builder = new NodeCatalogBuilder([new VlessConverter()], logger, BoxForgeProfile.Default);
         ClashConfig config = new()
         {
             Proxies = [CreateNode("vless", new Hashtable
@@ -256,7 +256,7 @@ public sealed class SemanticCoverageTests
     public void NonStrictModeSkipsUnsafeNodeAndKeepsValidNode()
     {
         var logger = new RecordingLogger<NodeCatalogBuilder>();
-        var builder = new NodeCatalogBuilder([new VlessConverter()], logger);
+        var builder = new NodeCatalogBuilder([new VlessConverter()], logger, BoxForgeProfile.Default);
         ClashConfig config = new()
         {
             Proxies =
@@ -379,9 +379,9 @@ public sealed class SemanticCoverageTests
             BbrProfile = "conservative"
         };
         var linux = (Hysteria2Outbound)OutboundTuningPolicy.Apply(
-            source, TargetPlatform.Linux);
+            source, BoxForgeProfile.Default.GetPlatform(TargetPlatform.Linux));
         var android = (Hysteria2Outbound)OutboundTuningPolicy.Apply(
-            source with { TcpKeepAlive = null }, TargetPlatform.Android);
+            source with { TcpKeepAlive = null }, BoxForgeProfile.Default.GetPlatform(TargetPlatform.Android));
 
         Assert.Multiple(() =>
         {
@@ -495,7 +495,7 @@ public sealed class SemanticCoverageTests
     public void Hysteria2BandwidthUsesExactUnits(string value, int expected)
     {
         var source = ConvertHysteria2(new Hashtable { ["up"] = value, ["down"] = value });
-        var tuned = (Hysteria2Outbound)OutboundTuningPolicy.Apply(source, TargetPlatform.Linux);
+        var tuned = (Hysteria2Outbound)OutboundTuningPolicy.Apply(source, BoxForgeProfile.Default.GetPlatform(TargetPlatform.Linux));
         Assert.That(tuned.UpMbps, Is.EqualTo(expected));
         Assert.That(tuned.DownMbps, Is.EqualTo(expected));
         Assert.That(tuned.BbrProfile, Is.Null, "Bandwidth must not acquire BBR tuning");
@@ -522,7 +522,7 @@ public sealed class SemanticCoverageTests
     public void Hysteria2HopIntervalPreservesFixedAndRangeSemantics(string value, string min, string? max)
     {
         var source = ConvertHysteria2(new Hashtable { ["ports"] = "4000-4001", ["hop-interval"] = value });
-        var tuned = (Hysteria2Outbound)OutboundTuningPolicy.Apply(source, TargetPlatform.Android);
+        var tuned = (Hysteria2Outbound)OutboundTuningPolicy.Apply(source, BoxForgeProfile.Default.GetPlatform(TargetPlatform.Android));
         Assert.That(tuned.HopInterval, Is.EqualTo(min));
         Assert.That(tuned.HopIntervalMax, Is.EqualTo(max));
     }
@@ -530,7 +530,7 @@ public sealed class SemanticCoverageTests
     [Test]
     public void Hysteria2AbsentSourceRetainsNamedTuning()
     {
-        var tuned = (Hysteria2Outbound)OutboundTuningPolicy.Apply(ConvertHysteria2(new Hashtable()), TargetPlatform.Linux);
+        var tuned = (Hysteria2Outbound)OutboundTuningPolicy.Apply(ConvertHysteria2(new Hashtable()), BoxForgeProfile.Default.GetPlatform(TargetPlatform.Linux));
         Assert.That(tuned.HopInterval, Is.EqualTo("30s"));
         Assert.That(tuned.HopIntervalMax, Is.EqualTo("60s"));
         Assert.That(tuned.BbrProfile, Is.EqualTo("standard"));
@@ -542,7 +542,7 @@ public sealed class SemanticCoverageTests
     public void Hysteria2ExplicitBbrWinsOverTuning(string profile)
     {
         var tuned = (Hysteria2Outbound)OutboundTuningPolicy.Apply(
-            ConvertHysteria2(new Hashtable { ["bbr_profile"] = profile }), TargetPlatform.Linux);
+            ConvertHysteria2(new Hashtable { ["bbr_profile"] = profile }), BoxForgeProfile.Default.GetPlatform(TargetPlatform.Linux));
         Assert.That(tuned.BbrProfile, Is.EqualTo(profile));
     }
 
@@ -716,7 +716,7 @@ public sealed class SemanticCoverageTests
     public void ShadowsocksInvalidVersionFailsStrictAndSkipsWholeNodeNonStrict()
     {
         var logger = new RecordingLogger<NodeCatalogBuilder>();
-        var builder = new NodeCatalogBuilder([new ShadowsocksConverter()], logger);
+        var builder = new NodeCatalogBuilder([new ShadowsocksConverter()], logger, BoxForgeProfile.Default);
         var config = new ClashConfig
         {
             Proxies =

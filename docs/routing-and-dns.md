@@ -5,7 +5,7 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
 
 ## 路由规则顺序
 
-以下按 `RouteProfileBuilder` 的阶段列出实际执行顺序。修改路由规则时，
+以下按 `RoutePlan` 的阶段列出实际执行顺序，由 `SingboxRouteEmitter` 展开为目标规则。修改路由规则时，
 需同步维护本节说明。IPv6 守卫仅在 `Ipv4Only` 下生成，Tailscale 阶段仅在
 对应平台启用 Tailscale 时生成规则；最终出口由 `route.final` 指定。
 
@@ -77,8 +77,8 @@ client DNS 依次分类：
 ## Resolver pool 响应语义
 
 DOMESTIC 的首选为直连 AliDNS、备用为直连 Tencent；GLOBAL 的首选为经主代理
-Cloudflare、备用为经主代理 Google。`DnsResolverSelectionPolicies` 按平台选择
-pool compiler：Android 使用 `SequentialFallback`，Linux/Windows 使用
+Cloudflare、备用为经主代理 Google。DNS 构建器从注入的 `BoxForgeProfile` 读取
+平台的 `DnsSelectionMode`：默认 Android 使用 `SequentialFallback`，Linux/Windows 使用
 `ParallelFastest`。
 
 Android 先 `evaluate` primary（`timeout: 2s`），随后按顺序判断 primary 的

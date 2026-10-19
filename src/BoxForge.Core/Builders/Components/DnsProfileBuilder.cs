@@ -1,232 +1,48 @@
 using BoxForge.Configuration;
 using BoxForge.Models;
+using BoxForge.Models.Intermediate;
 using BoxForge.Models.Singbox;
 using Microsoft.Extensions.Options;
 
 namespace BoxForge.Builders.Components;
 
-public sealed class DnsProfileBuilder(IOptions<TailscaleOptions> tailscaleOptions, BoxForgeProfile? profile = null)
+public sealed class DnsProfileBuilder(IOptions<TailscaleOptions> tailscaleOptions, BoxForgeProfile profile)
 {
-    private const string SequentialPrimaryTimeout = "2s";
     private readonly TailscaleOptions tailscale = tailscaleOptions.Value;
-    private readonly BoxForgeProfile effectiveProfile = profile ?? BoxForgeProfile.Default;
 
-    public DnsConfig Build(TargetPlatform platform) => Build(platform, AddressFamilyPolicies.For(platform));
+    public DnsConfig Build(TargetPlatform platform) => SingboxDnsEmitter.Emit(Plan(platform));
 
-    public DnsConfig Build(TargetPlatform platform, AddressFamilyPolicy addressFamily)
+    internal DnsPlan Plan(TargetPlatform platform)
     {
-        DnsResolverSelectionMode selectionMode =
-            DnsResolverSelectionPolicies.For(platform);
-        var dns = new DnsConfig { Strategy = addressFamily.ToDnsStrategy() };
-
-        dns.Servers.AddRange([
-            CreateHttpsServer(SingboxTags.DirectAliDns, effectiveProfile.GetResolver("alidns")),
-            CreateHttpsServer(SingboxTags.DirectTencentDns, effectiveProfile.GetResolver("tencent")),
-            CreateHttpsServer(SingboxTags.ProxyCloudflareDns, effectiveProfile.GetResolver("cloudflare"), SingboxTags.MainProxyGroup),
-            CreateHttpsServer(SingboxTags.ProxyGoogleDns, effectiveProfile.GetResolver("google"), SingboxTags.MainProxyGroup)
-        ]);
-
-        if (addressFamily == AddressFamilyPolicy.Ipv4Only)
-        {
-            dns.Rules.Add(new DnsRule
-            {
-                QueryType = ["AAAA"],
-                Action = DnsRuleAction.Predefined,
-                Rcode = DnsResponseCode.NoError
-            });
-        }
-
-        if (tailscale.IsEnabled(platform))
-        {
-            dns.Servers.Add(new TailscaleDnsServer
-            {
-                Tag = SingboxTags.TailscaleDns,
-                EndpointTag = SingboxTags.TailscaleEndpoint,
-                AcceptDefaultResolversValue = false
-            });
-            dns.Rules.Add(new DnsRule
-            {
-                PreferredBy = [SingboxTags.TailscaleDns],
-                Action = DnsRuleAction.Route,
-                Server = SingboxTags.TailscaleDns,
-                DisableOptimisticCache = true
-            });
-        }
-
-        dns.Rules.Add(new DnsRule
-        {
-            RuleSet = [RuleSetTags.Ads],
-            Action = DnsRuleAction.Predefined,
-            Rcode = DnsResponseCode.NameError
-        });
-
-        List<string> priorityRuleSets =
+        PlatformProfile settings = profile.GetPlatform(platform);
+        DnsHttpsResolverPlan[] resolvers =
         [
-            .. effectiveProfile.Services
-                .SelectMany(service => service.RuleSets)
-                .Distinct(StringComparer.Ordinal)
+            CreateResolver(SingboxTags.DirectAliDns, profile.GetResolver("alidns")),
+            CreateResolver(SingboxTags.DirectTencentDns, profile.GetResolver("tencent")),
+            CreateResolver(SingboxTags.ProxyCloudflareDns, profile.GetResolver("cloudflare"), SingboxTags.MainProxyGroup),
+            CreateResolver(SingboxTags.ProxyGoogleDns, profile.GetResolver("google"), SingboxTags.MainProxyGroup)
         ];
-        if (priorityRuleSets.Count > 0)
+        string[] priorityRuleSets = profile.Services
+            .SelectMany(service => service.RuleSets)
+            .Distinct(StringComparer.Ordinal).ToArray();
+        var pools = new List<DnsResolverPoolPlan>();
+        if (priorityRuleSets.Length > 0)
         {
-            CompilePool(dns.Rules, new ResolverPoolDefinition(
-                priorityRuleSets, SingboxTags.ProxyCloudflareDns, SingboxTags.ProxyGoogleDns,
-                DnsResponseTags.PriorityPrimary, DnsResponseTags.PrioritySecondary),
-                selectionMode);
+            pools.Add(new DnsResolverPoolPlan("priority", priorityRuleSets,
+                SingboxTags.ProxyCloudflareDns, SingboxTags.ProxyGoogleDns));
         }
-
-        CompilePool(dns.Rules, new ResolverPoolDefinition(
-            [RuleSetTags.Cn], SingboxTags.DirectAliDns, SingboxTags.DirectTencentDns,
-            DnsResponseTags.DomesticPrimary, DnsResponseTags.DomesticSecondary),
-            selectionMode);
-        CompilePool(dns.Rules, new ResolverPoolDefinition(
-            null, SingboxTags.ProxyCloudflareDns, SingboxTags.ProxyGoogleDns,
-            DnsResponseTags.GlobalPrimary, DnsResponseTags.GlobalSecondary),
-            selectionMode);
-        return dns;
+        pools.Add(new DnsResolverPoolPlan("domestic", [RuleSetTags.Cn],
+            SingboxTags.DirectAliDns, SingboxTags.DirectTencentDns));
+        pools.Add(new DnsResolverPoolPlan("global", null,
+            SingboxTags.ProxyCloudflareDns, SingboxTags.ProxyGoogleDns));
+        var plan = new DnsPlan(settings.AddressFamily, settings.DnsSelectionMode,
+            resolvers, tailscale.IsEnabled(settings), [RuleSetTags.Ads], pools,
+            SingboxTags.ProxyCloudflareDns);
+        plan.Validate();
+        return plan;
     }
 
-    private static HttpsDnsServer CreateHttpsServer(
-        string tag,
-        BuiltInProfile.Resolver resolver,
-        string? detour = null) => new()
-        {
-            Tag = tag,
-            ServerAddress = resolver.Server,
-            DetourTag = detour,
-            TlsConfig = new DnsTlsConfig { ServerName = resolver.ServerName }
-        };
-
-    private static void CompilePool(
-        List<DnsRule> rules,
-        ResolverPoolDefinition pool,
-        DnsResolverSelectionMode selectionMode)
-    {
-        switch (selectionMode)
-        {
-            case DnsResolverSelectionMode.SequentialFallback:
-                CompileSequentialFallback(rules, pool);
-                break;
-            case DnsResolverSelectionMode.ParallelFastest:
-                CompileParallelFastest(rules, pool);
-                break;
-            default:
-                throw new ArgumentOutOfRangeException(
-                    nameof(selectionMode), selectionMode, null);
-        }
-
-        AddTerminalServfail(rules, pool);
-    }
-
-    private static void AddTerminalServfail(List<DnsRule> rules, ResolverPoolDefinition pool) =>
-        rules.Add(new DnsRule
-        {
-            RuleSet = pool.RuleSets,
-            QueryType = pool.QueryType is null ? null : [pool.QueryType],
-            Action = DnsRuleAction.Predefined,
-            Rcode = DnsResponseCode.ServerFailure
-        });
-
-    private static void CompileSequentialFallback(
-        List<DnsRule> rules,
-        ResolverPoolDefinition pool)
-    {
-        AddEvaluate(rules, pool, primary: true, timeout: SequentialPrimaryTimeout);
-        AddAcceptedResponses(rules, pool, pool.PrimaryResponse);
-        AddEvaluate(rules, pool, primary: false);
-        AddAcceptedResponses(rules, pool, pool.SecondaryResponse);
-    }
-
-    private static void CompileParallelFastest(
-        List<DnsRule> rules,
-        ResolverPoolDefinition pool)
-    {
-        var addressPool = pool with
-        {
-            QueryType = "A",
-            PrimaryResponse = DnsResponseTags.ForAddressQuery(pool.PrimaryResponse),
-            SecondaryResponse = DnsResponseTags.ForAddressQuery(pool.SecondaryResponse)
-        };
-        AddEvaluate(rules, addressPool, primary: true);
-        AddEvaluate(rules, addressPool, primary: false);
-        AddResponse(rules, addressPool, addressPool.PrimaryResponse,
-            DnsResponseCode.NoError, race: true, requireIpv4: true);
-        AddResponse(rules, addressPool, addressPool.SecondaryResponse,
-            DnsResponseCode.NoError, race: true, requireIpv4: true);
-        // Empty answers and negative responses are fallbacks after both address races.
-        AddResponse(rules, addressPool, addressPool.PrimaryResponse, DnsResponseCode.NoError);
-        AddResponse(rules, addressPool, addressPool.SecondaryResponse, DnsResponseCode.NoError);
-        AddResponse(rules, addressPool, addressPool.PrimaryResponse, DnsResponseCode.NameError);
-        AddResponse(rules, addressPool, addressPool.SecondaryResponse, DnsResponseCode.NameError);
-        AddTerminalServfail(rules, addressPool);
-
-        // The scoped A terminal prevents A queries from entering this unchanged general pool.
-        AddEvaluate(rules, pool, primary: true);
-        AddEvaluate(rules, pool, primary: false);
-        AddResponse(rules, pool, pool.PrimaryResponse,
-            DnsResponseCode.NoError, race: true);
-        AddResponse(rules, pool, pool.SecondaryResponse,
-            DnsResponseCode.NoError, race: true);
-        AddResponse(rules, pool, pool.PrimaryResponse,
-            DnsResponseCode.NameError);
-        AddResponse(rules, pool, pool.SecondaryResponse,
-            DnsResponseCode.NameError);
-    }
-
-    private static void AddEvaluate(
-        List<DnsRule> rules,
-        ResolverPoolDefinition pool,
-        bool primary,
-        string? timeout = null)
-    {
-        rules.Add(new DnsRule
-        {
-            RuleSet = pool.RuleSets,
-            QueryType = pool.QueryType is null ? null : [pool.QueryType],
-            DisableOptimisticCache = pool.QueryType == "A" ? true : null,
-            Action = DnsRuleAction.Evaluate,
-            Server = primary ? pool.PrimaryServer : pool.SecondaryServer,
-            Tag = primary ? pool.PrimaryResponse : pool.SecondaryResponse,
-            Timeout = timeout
-        });
-    }
-
-    private static void AddAcceptedResponses(
-        List<DnsRule> rules,
-        ResolverPoolDefinition pool,
-        string responseTag)
-    {
-        foreach (DnsResponseCode rcode in new[]
-                 { DnsResponseCode.NoError, DnsResponseCode.NameError })
-        {
-            AddResponse(rules, pool, responseTag, rcode);
-        }
-    }
-
-    private static void AddResponse(
-        List<DnsRule> rules,
-        ResolverPoolDefinition pool,
-        string responseTag,
-        DnsResponseCode rcode,
-        bool race = false,
-        bool requireIpv4 = false) =>
-        rules.Add(new DnsRule
-        {
-            // Domain rule-sets and IP predicates share an OR group in sing-box.
-            // The unique evaluated-response tag already carries the pool's domain scope.
-            RuleSet = requireIpv4 ? null : pool.RuleSets,
-            QueryType = pool.QueryType is null ? null : [pool.QueryType],
-            IpCidr = requireIpv4 ? ["0.0.0.0/0"] : null,
-            MatchResponse = responseTag,
-            ResponseRcode = rcode,
-            Action = DnsRuleAction.Respond,
-            Race = race ? true : null
-        });
-
-    private sealed record ResolverPoolDefinition(
-        List<string>? RuleSets,
-        string PrimaryServer,
-        string SecondaryServer,
-        string PrimaryResponse,
-        string SecondaryResponse,
-        string? QueryType = null);
+    private static DnsHttpsResolverPlan CreateResolver(
+        string name, BuiltInProfile.Resolver resolver, string? detour = null) =>
+        new(name, resolver.Server, resolver.ServerName, detour);
 }

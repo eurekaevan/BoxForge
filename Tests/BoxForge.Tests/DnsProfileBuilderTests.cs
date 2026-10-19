@@ -1,4 +1,6 @@
+using BoxForge.Builders;
 using BoxForge.Builders.Components;
+using System.Text.Json;
 using BoxForge.Configuration;
 using BoxForge.Models;
 using BoxForge.Models.Singbox;
@@ -9,6 +11,75 @@ namespace BoxForge.Tests;
 [TestFixture]
 public sealed class DnsProfileBuilderTests
 {
+    [TestCase(TargetPlatform.Android, AddressFamilyPolicy.Ipv4Only)]
+    [TestCase(TargetPlatform.Linux, AddressFamilyPolicy.Ipv4Only)]
+    [TestCase(TargetPlatform.Windows, AddressFamilyPolicy.Ipv4Only)]
+    [TestCase(TargetPlatform.Android, AddressFamilyPolicy.DualStack)]
+    [TestCase(TargetPlatform.Linux, AddressFamilyPolicy.DualStack)]
+    [TestCase(TargetPlatform.Windows, AddressFamilyPolicy.DualStack)]
+    public void DnsPlanSnapshotsPolicyAndEmitsIndependentConfigurations(TargetPlatform platform, AddressFamilyPolicy addressFamily)
+    {
+        var settings = BoxForgeProfile.Default.GetPlatform(platform) with { AddressFamily = addressFamily };
+        var profile = new BoxForgeProfile(BuiltInProfile.Default with
+        { Platforms = BuiltInProfile.Default.Platforms.SetItem(platform, settings) });
+        var options = new TailscaleOptions { Enabled = true, AndroidEnabled = true };
+        var builder = new DnsProfileBuilder(Options.Create(options), profile);
+        var plan = builder.Plan(platform);
+        string expected = JsonSerializer.Serialize(builder.Build(platform));
+        var first = SingboxDnsEmitter.Emit(plan);
+        Assert.That(JsonSerializer.Serialize(first), Is.EqualTo(expected));
+        first.Servers.Clear();
+        foreach (DnsRule rule in first.Rules)
+        {
+            rule.RuleSet?.Clear();
+            rule.QueryType?.Clear();
+            rule.PreferredBy?.Clear();
+            rule.IpCidr?.Clear();
+        }
+        first.Rules.Clear();
+        options.Enabled = options.AndroidEnabled = false;
+        Assert.Multiple(() =>
+        {
+            Assert.That(JsonSerializer.Serialize(SingboxDnsEmitter.Emit(plan)), Is.EqualTo(expected));
+            Assert.That(plan.AddressFamily, Is.EqualTo(addressFamily));
+            Assert.That(plan.SelectionMode, Is.EqualTo(settings.DnsSelectionMode));
+            Assert.That(plan.TailscaleEnabled, Is.True);
+            Assert.That(builder.Plan(platform).TailscaleEnabled, Is.False);
+            Assert.That(plan.Pools.Select(pool => pool.Name), Is.EqualTo(new[] { "priority", "domestic", "global" }));
+            Assert.That(plan.Pools[0].RuleSets, Is.EqualTo(profile.Services.SelectMany(service => service.RuleSets).Distinct(StringComparer.Ordinal)));
+            Assert.That(plan.Pools[1].RuleSets, Is.EqualTo(new[] { RuleSetTags.Cn }));
+            Assert.That(plan.Pools[2].RuleSets, Is.Null);
+            Assert.That(plan.BlockedRuleSets, Is.EqualTo(new[] { RuleSetTags.Ads }));
+        });
+    }
+
+    [TestCase("final")]
+    [TestCase("pool_resolver")]
+    [TestCase("duplicate_resolver")]
+    [TestCase("duplicate_pool")]
+    [TestCase("early_global")]
+    [TestCase("no_global")]
+    [TestCase("empty_scope")]
+    [TestCase("empty_blocking")]
+    [TestCase("unknown_mode")]
+    public void InvalidDnsPlanFailsBeforeEmittingRules(string fault)
+    {
+        var plan = CreateBuilder().Plan(TargetPlatform.Linux);
+        plan = fault switch
+        {
+            "final" => plan with { FinalResolver = "missing" },
+            "pool_resolver" => plan with { Pools = [plan.Pools[0] with { SecondaryResolver = "missing" }, .. plan.Pools.Skip(1)] },
+            "duplicate_resolver" => plan with { Resolvers = [.. plan.Resolvers, plan.Resolvers[0]] },
+            "duplicate_pool" => plan with { Pools = [plan.Pools[0], .. plan.Pools] },
+            "early_global" => plan with { Pools = [plan.Pools[^1], .. plan.Pools] },
+            "no_global" => plan with { Pools = [plan.Pools[0]] },
+            "empty_scope" => plan with { Pools = [plan.Pools[0] with { RuleSets = [] }, .. plan.Pools.Skip(1)] },
+            "empty_blocking" => plan with { BlockedRuleSets = [] },
+            _ => plan with { SelectionMode = (DnsResolverSelectionMode)999 }
+        };
+        Assert.Throws<InvalidOperationException>(() => SingboxDnsEmitter.Emit(plan));
+    }
+
     [TestCase(TargetPlatform.Android, DnsResolverSelectionMode.SequentialFallback)]
     [TestCase(TargetPlatform.Linux, DnsResolverSelectionMode.ParallelFastest)]
     [TestCase(TargetPlatform.Windows, DnsResolverSelectionMode.ParallelFastest)]
@@ -16,7 +87,7 @@ public sealed class DnsProfileBuilderTests
         TargetPlatform platform,
         DnsResolverSelectionMode expected)
     {
-        Assert.That(DnsResolverSelectionPolicies.For(platform), Is.EqualTo(expected));
+        Assert.That(BoxForgeProfile.Default.GetPlatform(platform).DnsSelectionMode, Is.EqualTo(expected));
     }
 
     [TestCase(TargetPlatform.Android, DnsStrategy.Ipv4Only, true)]
@@ -72,7 +143,7 @@ public sealed class DnsProfileBuilderTests
     public void ServiceDnsClassificationMatchesRoutesBeforeDomesticPool(TargetPlatform platform)
     {
         DnsConfig dns = CreateBuilder().Build(platform);
-        RouteConfig route = new RouteProfileBuilder(Options.Create(new TailscaleOptions())).Build(platform);
+        RouteConfig route = new RouteProfileBuilder(Options.Create(new TailscaleOptions()), BoxForgeProfile.Default).Build(platform);
         string[] expectedRuleSets =
         [
             RuleSetTags.Ai, RuleSetTags.Google, RuleSetTags.Spotify,
@@ -273,10 +344,10 @@ public sealed class DnsProfileBuilderTests
     public void AddressFamilyPolicyAlsoControlsRouteIpv6Guards(TargetPlatform platform)
     {
         var options = Options.Create(new TailscaleOptions());
-        DnsConfig dns = new DnsProfileBuilder(options).Build(platform);
-        RouteConfig route = new RouteProfileBuilder(options).Build(platform);
+        DnsConfig dns = new DnsProfileBuilder(options, BoxForgeProfile.Default).Build(platform);
+        RouteConfig route = new RouteProfileBuilder(options, BoxForgeProfile.Default).Build(platform);
 
-        Assert.That(AddressFamilyPolicies.For(platform),
+        Assert.That(BoxForgeProfile.Default.GetPlatform(platform).AddressFamily,
             Is.EqualTo(AddressFamilyPolicy.Ipv4Only));
         Assert.That(dns.Strategy, Is.EqualTo(DnsStrategy.Ipv4Only));
         Assert.That(route.Rules.Count(rule =>
@@ -546,5 +617,5 @@ public sealed class DnsProfileBuilderTests
         {
             Enabled = tailscaleEnabled,
             AndroidEnabled = tailscaleEnabled
-        }));
+        }), BoxForgeProfile.Default);
 }
