@@ -1,6 +1,7 @@
 # 配置参考
 
-BoxForge 提供两个 Tailscale 运行时设置，并提供一个全平台 sing-box API 开关。
+BoxForge 使用统一 profile 保存运行时开关、全局策略、平台参数、地区、服务、rule-set 来源和 resolver。
+不提供覆盖时，生成内容与内置默认配置一致。
 使用分组键时，环境变量中的 `__` 对应配置路径中的 `:`。
 CLI 和 HTTP Server 都读取带 `BOXFORGE_` 前缀的环境变量，使用相同的开关和默认值；
 修改 Server 环境变量后需要重启进程，新值才会用于转换。
@@ -31,6 +32,75 @@ API 配置不开放监听地址、端口或远程访问，也不生成共享 sec
 loopback，同机进程仍可访问该控制面；不需要 Dashboard、远程控制或 Tailscale
 交互管理时应保持关闭。
 
+## 统一 profile
+
+CLI 使用 `generate --profile profile.json`，Server 使用 `--profile profile.json` 在启动时
+加载 UTF-8 JSON 文件；也可以使用 `BOXFORGE_Profile` 或宿主配置键 `Profile`。
+显式 `--profile` 优先选择文件，相对路径以进程工作目录为基准。Server 修改文件或
+环境变量后需重启。HTTP 请求只接受内联 JSON，不能指定服务器文件路径。
+
+配置按以下顺序应用，后者覆盖前者：内置默认值 → 文件 → 宿主环境配置 → 请求内联
+`profile`。宿主环境中的现有 Tailscale/API 开关继续有效；请求覆盖只影响当前请求，
+不会修改宿主快照或其他请求。
+
+文件和请求内联对象都必须提供 `version: 1`。顶层接受 `version`、`runtime`、
+`policies`、`platforms`、`regions`、`services`、`rule_sets`、`resolvers`。省略字段继承已有值；普通数组整体替换，不按索引或元素追加。
+地区和服务继续按 `id` 合并，rule-set 来源按 `tag` 合并，resolver 按固定 `id` 合并，
+具体规则见后文。未知键、重复 JSON 键、重复标识和无效值会被拒绝。
+只有明确可空的平台字段接受 `null`；其他字段不能使用 `null` 表示继承或删除。
+
+例如同时关闭桌面 Tailscale、调整 sniff 并替换 Linux TUN 地址：
+
+```json
+{
+  "version": 1,
+  "runtime": { "tailscale": { "enabled": false } },
+  "policies": { "sniff_timeout": "500ms", "sniff_excluded_ports": [22, 3306] },
+  "platforms": {
+    "Linux": { "connect_timeout": "8s", "tun_addresses": ["172.19.0.1/30", "fd00::1/126"] }
+  }
+}
+```
+
+### runtime 与 policies
+
+`runtime.tailscale.enabled`、`runtime.tailscale.android_enabled` 和
+`runtime.singbox_api.enabled` 分别对应上表三个开关，接受 JSON 布尔值。
+
+| `policies` 字段 | 默认值 | 用途 |
+| --- | --- | --- |
+| `main_default_region` | `us` | 主代理组偏好的地区 ID |
+| `sniff_timeout` | `300ms` | 路由 sniff 超时 |
+| `sniff_excluded_ports` | `[21, 22, 3306, 5900]` | TCP sniff 排除端口列表 |
+| `url_test_url` | `https://www.gstatic.com/generate_204` | AUTO 组探测 URL |
+| `url_test_tolerance` | `50` | AUTO 组延迟容差 |
+| `url_test_idle_timeout` | `30m` | AUTO 组空闲超时 |
+| `dns_timeout` | `5s` | DNS 查询超时 |
+| `dns_cache_capacity` | `4096` | DNS 缓存容量 |
+| `dns_optimistic_timeout` | `6h` | DNS 乐观缓存超时 |
+
+### platforms
+
+`platforms` 只接受 `Android`、`Linux`、`Windows`，每个平台只写需要覆盖的字段。
+`is_mobile`、`address_family`、`use_direct_forwarding`、`url_test_interval`、
+`dns_selection_mode`、`taildrop_directory`、`connect_timeout` 和 `tun_addresses`
+均不可为 `null`。`strict_route`、`auto_redirect`、`multi_queue`、`tcp_keep_alive`、
+`tcp_keep_alive_interval` 可设为 `null`，用于省略对应目标字段。
+地址族使用 `Ipv4Only` 或 `DualStack`；DNS 模式使用 `SequentialFallback` 或
+`ParallelFastest`。`tun_addresses` 是完整替换的 CIDR 地址数组，内置值为
+`["172.19.0.1/30", "fd00::1/126"]`；`connect_timeout` 内置值为 `5s`。
+`multi_queue: true` 仅支持 Linux。TUN 地址须同时包含一个 IPv4 和一个 IPv6 CIDR，
+IPv6 地址用于捕获并执行相应地址族策略。超时和间隔必须为正 Go duration；排除端口
+须在 1～65535 范围内且不重复，空数组表示不排除端口。探测 URL 只接受不含用户信息
+或片段的 HTTP(S) URL，tolerance 非负，DNS 缓存容量为正。其他平台差异可通过 resolved 输出查看。
+连接调优仍只补齐源节点未指定的字段；例如 `tcp_keep_alive: null` 取消平台默认值，
+不会清除源节点显式提供的 keepalive。
+
+`profile show --resolved --profile profile.json` 将最终不可变快照直接序列化为纯 JSON
+输出到 stdout，包含运行时、策略及全部平台，可重定向留档。不指定文件时也能查看
+默认值和环境配置合并后的结果。完整快照用于检查与追溯，不能直接作为差异覆盖文件
+重新加载（例如来源快照使用 `tags`，覆盖使用 `tag`）。本阶段没有 `profile diff` 或 JSON Schema。
+
 ## 地区 profile
 
 使用 UTF-8 JSON 文件，只写需要覆盖的地区字段。例如 `profile.json`：
@@ -51,10 +121,6 @@ dotnet run --project src/BoxForge.Cli -- profile show --resolved --profile profi
 dotnet run --project src/BoxForge.Server -- --profile profile.json
 ```
 
-CLI 和 Server 也可以使用 `BOXFORGE_Profile=profile.json`，或宿主配置键 `Profile`。
-显式 `--profile` 高于环境变量；没有指定文件时使用内置默认值。相对路径以进程工作
-目录为基准；Server 启动时加载一次，修改文件后需重启。HTTP 请求不能指定文件路径。
-
 默认地区 ID 为 `us`、`jp`、`hk`、`sg`。ID 区分大小写，接受以小写字母开头的
 1–32 位小写字母、数字或连字符。按 ID 合并：已有地区保留原位置，缺省字段继承；
 新地区按文件顺序追加，必须同时提供 `display_name` 和 `pattern`。`regions: []`
@@ -69,14 +135,7 @@ CLI 和 Server 也可以使用 `BOXFORGE_Profile=profile.json`，或宿主配置
 严格拒绝未知键、重复 JSON 键、重复 ID、显式 `null`、无效正则和缺失的新地区字段。
 地区显示名不能含控制字符、首尾空白，生成的 selector/AUTO tag 不能彼此冲突或
 占用固定保留 tag；订阅节点也不能使用有效 profile 中的地区 tag。
-覆盖文件当前只接受顶层 `version`、`regions`、`services`、`rule_sets`、`resolvers`，地区内只接受 `id`、
-`display_name`、`pattern`。服务、来源和 resolver 字段见下节；平台和隐私
-覆盖均会作为未知键拒绝。
-
-`profile show --resolved` 将完整有效默认数据、合并后的地区、服务、来源和 resolver，以及实际环境开关
-（`runtime`）作为纯 JSON 输出到 stdout，可重定向留档。不带 `--profile` 时也能查看
-默认配置或环境变量选定的配置。该完整输出用于检查和追溯，不能直接作为覆盖文件
-重新加载；覆盖文件只记录差异。本阶段没有 `profile diff` 或 JSON Schema。
+地区内只接受 `id`、`display_name`、`pattern`；其他 profile 分区见各节。
 
 ## 服务 profile
 
@@ -191,8 +250,7 @@ URL，全部覆盖时不留下空组。处理顺序固定为原来源顺序，�
 
 生成格式固定为 remote/binary，下载仍使用 `http-ruleset-proxy`，不开放 `format`、
 `type`、本地路径、HTTP client 或规则内容注入。路由阶段顺序和 IPv6 守卫保持不变。
-`profile show --resolved` 展示合并、拆组后的实际来源（`tags` 数组）；完整 resolved
-输出仍用于留档，不能直接当作只接受差异字段的覆盖文件重新加载。
+`profile show --resolved` 展示合并、拆组后的实际来源（`tags` 数组），用于检查与留档。
 生成过程不会下载来源文件，也不证明远端内容是有效 SRS 或来源实际可用。
 
 ## resolver profile

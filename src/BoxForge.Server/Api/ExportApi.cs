@@ -1,4 +1,6 @@
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using BoxForge.Engine;
 using BoxForge.Exceptions;
 using Microsoft.Net.Http.Headers;
@@ -51,7 +53,7 @@ internal static class ExportApi
             return ApiProblems.BadRequest("multipart 请求体无效。");
         }
 
-        if (form.Keys.Any(key => key is not ("name" or "platforms")))
+        if (form.Keys.Any(key => key is not ("name" or "platforms" or "profile")))
         {
             return ApiProblems.BadRequest("请求包含不支持的字段。");
         }
@@ -96,6 +98,29 @@ internal static class ExportApi
                 "平台必须非空、有效且不重复。");
         }
 
+        JsonObject? profile = null;
+        if (form.TryGetValue("profile", out var profileValues))
+        {
+            if (profileValues.Count != 1)
+            {
+                return ApiProblems.BadRequest("profile 必须且只能提供一个 JSON 对象。");
+            }
+
+            try
+            {
+                profile = JsonNode.Parse(profileValues[0] ?? string.Empty) as JsonObject;
+            }
+            catch (JsonException)
+            {
+                return ApiProblems.BadRequest("profile 必须是有效的 JSON 对象。");
+            }
+
+            if (profile is null)
+            {
+                return ApiProblems.BadRequest("profile 必须是有效的 JSON 对象。");
+            }
+        }
+
         byte[]? yamlBytes;
         await using (Stream upload = file.OpenReadStream())
         {
@@ -134,7 +159,7 @@ internal static class ExportApi
         try
         {
             ConversionBundle bundle = await engine.ConvertAsync(
-                new ConversionRequest(name, yaml, platforms),
+                new ConversionRequest(name, yaml, platforms) { Profile = profile },
                 cancellationToken);
             byte[] archive = await ConversionZipBuilder.BuildAsync(
                 bundle,
@@ -143,6 +168,10 @@ internal static class ExportApi
             context.Response.Headers.ContentDisposition =
                 "attachment; filename=\"boxforge-output.zip\"";
             return Results.File(archive, "application/zip");
+        }
+        catch (FormatException)
+        {
+            return ApiProblems.BadRequest("profile 必须是有效的配置覆盖对象。");
         }
         catch (BoxForgeConversionException)
         {

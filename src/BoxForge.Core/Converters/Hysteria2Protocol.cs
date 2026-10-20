@@ -8,12 +8,12 @@ using System.Collections.ObjectModel;
 
 namespace BoxForge.Converters;
 
-internal static class Hysteria2Frontend
+internal static class Hysteria2Protocol
 {
     internal static SourceFieldSchema Schema { get; } = SourceFieldSchemas.Common()
         .Include(SourceFieldSchemas.Tls(supportsReality: false, supportsUtls: false, forceTls: true))
-        .Mapped(Hysteria2Semantics.Ports.SourceField, "password")
-        .Conditional(Hysteria2Semantics.Obfuscation.SourceField, SourceFieldDisposition.Mapped,
+        .Mapped("ports", "password")
+        .Conditional("obfs", SourceFieldDisposition.Mapped,
             (_, value) => value is null or ""
                 || value?.ToString() is "salamander" or "gecko"
                     ? null
@@ -22,12 +22,12 @@ internal static class Hysteria2Frontend
             (node, _) => node.GetString("obfs") is null
                 ? "指定了混淆密码，但未启用混淆"
                 : null)
-        .Mapped(Hysteria2Semantics.Upload.SourceField, Hysteria2Semantics.Download.SourceField,
-            Hysteria2Semantics.HopInterval.SourceField, Hysteria2Semantics.BbrProfile.SourceField)
+        .Mapped("up", "down",
+            "hop-interval", "bbr-profile")
         .Alias("hop-interval", "hop_interval")
         .Alias("bbr-profile", "bbr_profile")
         .Unsupported("当前 Mihomo Hysteria2 不定义 network，不能生成目标网络限制", "network")
-        .Mapped(Hysteria2Semantics.MinimumPacketSize.SourceField, Hysteria2Semantics.MaximumPacketSize.SourceField)
+        .Mapped("obfs-min-packet-size", "obfs-max-packet-size")
         .Alias("obfs-min-packet-size", "obfs_min_packet_size")
         .Alias("obfs-max-packet-size", "obfs_max_packet_size")
         .Unsupported("QUIC 或 Realm 选项尚未映射",
@@ -35,7 +35,7 @@ internal static class Hysteria2Frontend
             "initial-stream-receive-window", "initial-connection-receive-window",
             "max-stream-receive-window", "max-connection-receive-window");
 
-    // The adapter validates the name and schema before source interpretation.
+    // The parser validates the name and schema before source interpretation.
     internal static Hysteria2Node ParseValidated(
         ClashProxyNode node,
         string name)
@@ -59,8 +59,8 @@ internal static class Hysteria2Frontend
                 obfsType == "gecko" ? Hysteria2ObfuscationKind.Gecko : Hysteria2ObfuscationKind.Salamander,
                 node.GetRawString("obfs-password") is { Length: > 0 } password
                     ? password : throw new NodeParseException("字段 'obfs-password' 不能为空"),
-                new(minPacketSize, node.GetPresentField("obfs-min-packet-size", "obfs_min_packet_size"), Hysteria2Semantics.MinimumPacketSize.Id),
-                new(maxPacketSize, node.GetPresentField("obfs-max-packet-size", "obfs_max_packet_size"), Hysteria2Semantics.MaximumPacketSize.Id));
+                new(minPacketSize, node.GetPresentField("obfs-min-packet-size", "obfs_min_packet_size") is not null),
+                new(maxPacketSize, node.GetPresentField("obfs-max-packet-size", "obfs_max_packet_size") is not null));
         }
 
         var hopInterval = ParseHopInterval(node);
@@ -80,13 +80,13 @@ internal static class Hysteria2Frontend
         var tls = TlsConfigHelper.ExtractSettings(node, server, forceTls: true, supportsUtls: false)
             ?? throw new InvalidOperationException("Hysteria2 interpretation unexpectedly returned no TLS settings.");
         return new Hysteria2Node(name, server,
-            new(ports, node.GetPresentField("ports") ?? "port", Hysteria2Semantics.Ports.Id), nodePassword,
-            new(up, node.GetPresentField("up"), Hysteria2Semantics.Upload.Id),
-            new(down, node.GetPresentField("down"), Hysteria2Semantics.Download.Id),
-            new(hopInterval, node.GetPresentField("hop-interval", "hop_interval"), Hysteria2Semantics.HopInterval.Id),
-            new(bbrProfile, node.GetPresentField("bbr-profile", "bbr_profile"), Hysteria2Semantics.BbrProfile.Id),
-            new(obfsConfig, node.GetPresentField("obfs"), Hysteria2Semantics.Obfuscation.Id),
-            new(node.GetNullableBool("tls"), node.GetPresentField("tls"), Hysteria2Semantics.Tls.Id), tls);
+            new(ports, true), nodePassword,
+            new(up, node.GetPresentField("up") is not null),
+            new(down, node.GetPresentField("down") is not null),
+            new(hopInterval, node.GetPresentField("hop-interval", "hop_interval") is not null),
+            new(bbrProfile, node.GetPresentField("bbr-profile", "bbr_profile") is not null),
+            new(obfsConfig, node.GetPresentField("obfs") is not null),
+            new(node.GetNullableBool("tls"), node.GetPresentField("tls") is not null), tls);
     }
 
     private static int? ReadPacketSize(ClashProxyNode node, string field, string alias)

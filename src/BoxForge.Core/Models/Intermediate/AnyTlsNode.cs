@@ -18,7 +18,7 @@ internal sealed record AnyTlsNode(
     internal override void Validate()
     {
         if (Tls is null || TlsEnabled.Value == false
-            || (TlsEnabled.Field is not null && TlsEnabled.Value != true))
+            || (TlsEnabled.IsSpecified && TlsEnabled.Value != true))
             throw new InvalidOperationException("AnyTLS requires TLS; an explicit TLS switch must be true.");
         if (Tls.Reality is not null)
             throw new InvalidOperationException("AnyTLS does not support Reality.");

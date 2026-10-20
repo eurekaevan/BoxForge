@@ -9,7 +9,10 @@ internal sealed record DnsPlan(
     bool TailscaleEnabled,
     IReadOnlyList<string> BlockedRuleSets,
     IReadOnlyList<DnsResolverPoolPlan> Pools,
-    string FinalResolver)
+    string FinalResolver,
+    string Timeout,
+    uint CacheCapacity,
+    string OptimisticTimeout)
 {
     internal void Validate()
     {

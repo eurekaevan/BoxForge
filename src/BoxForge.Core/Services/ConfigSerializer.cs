@@ -9,13 +9,13 @@ using BoxForge.Models.Singbox;
 
 namespace BoxForge.Services;
 
-public interface IConfigSerializer
+internal interface IConfigSerializer
 {
     string Serialize(SingboxConfig config);
     string GetContentHash(string content);
 }
 
-public sealed class ConfigSerializer : IConfigSerializer
+internal sealed class ConfigSerializer : IConfigSerializer
 {
     private readonly JsonSerializerOptions jsonOptions = new()
     {

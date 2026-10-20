@@ -1,27 +1,19 @@
-using Microsoft.Extensions.Options;
 using BoxForge.Configuration;
 using BoxForge.Models;
 using BoxForge.Models.Singbox;
 
 namespace BoxForge.Builders.Components;
 
-public sealed class TailscaleEndpointBuilder(IOptions<TailscaleOptions> options, BoxForgeProfile profile)
+internal sealed class TailscaleEndpointBuilder(BoxForgeProfile profile)
 {
-    private readonly TailscaleOptions tailscaleOptions = options.Value;
-
-    internal (bool Enabled, string TaildropDirectory) Plan(TargetPlatform platform)
+    internal (bool Enabled, string TaildropDirectory) Plan(TargetPlatform platform, BoxForgeProfile? effectiveProfile = null)
     {
-        PlatformProfile settings = profile.GetPlatform(platform);
-        return (tailscaleOptions.IsEnabled(settings), settings.TaildropDirectory);
+        BoxForgeProfile selected = effectiveProfile ?? profile;
+        PlatformProfile settings = selected.GetPlatform(platform);
+        return (selected.Runtime.Tailscale.IsEnabled(settings), settings.TaildropDirectory);
     }
 
-    public List<Endpoint> Build(TargetPlatform platform)
-    {
-        var plan = Plan(platform);
-        return Build(plan.TaildropDirectory, plan.Enabled);
-    }
-
-    internal static List<Endpoint> Build(string taildropDirectory, bool enabled)
+    internal static List<Endpoint> Emit(string taildropDirectory, bool enabled)
     {
         if (!enabled)
         {

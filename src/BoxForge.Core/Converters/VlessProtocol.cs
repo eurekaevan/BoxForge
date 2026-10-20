@@ -6,19 +6,19 @@ using BoxForge.Models.Intermediate;
 
 namespace BoxForge.Converters;
 
-internal static class VlessFrontend
+internal static class VlessProtocol
 {
     internal static SourceFieldSchema Schema { get; } = SourceFieldSchemas.Common()
         .Include(SourceFieldSchemas.Tls(supportsReality: true, supportsUtls: true, forceTls: false))
         .Include(SourceFieldSchemas.NativeTcp())
-        .Mapped("uuid", VlessSemantics.Flow.SourceField, VlessSemantics.DatagramEncoding.SourceField)
-        .Alias(VlessSemantics.DatagramEncoding.SourceField, "packet_encoding")
+        .Mapped("uuid", "flow", "packet-encoding")
+        .Alias("packet-encoding", "packet_encoding")
         .Conditional("encryption", SourceFieldDisposition.IgnoredByDesign,
             (_, value) => string.IsNullOrWhiteSpace(value?.ToString())
                 ? null
                 : "非空 VLESS encryption 尚未映射");
 
-    // ProxyConverterBase has already checked the name and Schema, preserving
+    // The parser has already checked the name and schema, preserving
     // the existing diagnostic order without validating the input twice.
     internal static VlessNode ParseValidated(ClashProxyNode node, string name)
     {
@@ -30,10 +30,10 @@ internal static class VlessFrontend
         string? encoding = node.GetRawString("packet-encoding") ?? node.GetRawString("packet_encoding");
 
         return new VlessNode(name, server, port, userId,
-            new(flow, node.GetPresentField("flow"), VlessSemantics.Flow.Id),
+            new(flow, node.GetPresentField("flow") is not null),
             new(encoding is "packetaddr" or "packet" ? DatagramEncoding.PacketAddress : DatagramEncoding.Xudp,
-                node.GetPresentField("packet-encoding", "packet_encoding"), VlessSemantics.DatagramEncoding.Id),
-            new(node.GetNullableBool("tls"), node.GetPresentField("tls"), VlessSemantics.Tls.Id),
+                node.GetPresentField("packet-encoding", "packet_encoding") is not null),
+            new(node.GetNullableBool("tls"), node.GetPresentField("tls") is not null),
             tls);
     }
 

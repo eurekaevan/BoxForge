@@ -5,23 +5,23 @@ using YamlDotNet.Serialization.NamingConventions;
 
 namespace BoxForge.Parsers;
 
-public interface IClashParser
+internal interface IClashParser
 {
     ClashConfig? Parse(string yamlContent);
 }
 
-public sealed class ClashParser : IClashParser
+internal sealed class ClashParser : IClashParser
 {
+    private static readonly IDeserializer Deserializer = new DeserializerBuilder()
+        .WithNamingConvention(HyphenatedNamingConvention.Instance)
+        .WithDuplicateKeyChecking()
+        .WithMaximumRecursion(ClashObject.MaximumDepth)
+        .IgnoreUnmatchedProperties()
+        .Build();
+
     public ClashConfig? Parse(string yamlContent)
     {
-        var deserializer = new DeserializerBuilder()
-            .WithNamingConvention(HyphenatedNamingConvention.Instance)
-            .WithDuplicateKeyChecking()
-            .WithMaximumRecursion(ClashObject.MaximumDepth)
-            .IgnoreUnmatchedProperties()
-            .Build();
-
-        var rawConfig = deserializer.Deserialize<RawClashConfig>(yamlContent);
+        var rawConfig = Deserializer.Deserialize<RawClashConfig>(yamlContent);
         if (rawConfig == null) return null;
         if (rawConfig.Proxies == null)
             throw new NodeParseException("proxies 必须是节点列表，不能为 null。");

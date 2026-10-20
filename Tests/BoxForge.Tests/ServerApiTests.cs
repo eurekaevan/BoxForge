@@ -9,7 +9,6 @@ using BoxForge.Engine;
 using BoxForge.Builders;
 using BoxForge.Builders.Components;
 using BoxForge.Configuration;
-using Microsoft.Extensions.Options;
 using BoxForge.Models.Singbox;
 using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
@@ -95,6 +94,151 @@ public sealed class ServerApiTests
         });
     }
 
+    [Test]
+    public async Task ConcurrentProfilesRemainRequestLocalAndLegacyRequestsKeepDefaults()
+    {
+        using HttpClient client = factory.CreateClient();
+        await Task.WhenAll(Enumerable.Range(0, 8).Select(async index =>
+        {
+            bool enabled = index % 2 == 0;
+            using HttpResponseMessage response = await client.PostAsJsonAsync("/api/v1/convert", new
+            {
+                name = $"profile-{index}",
+                yaml = ValidYaml,
+                platforms = new[] { "Linux", "Android" },
+                profile = new
+                {
+                    version = 1,
+                    runtime = new
+                    {
+                        singbox_api = new { enabled },
+                        tailscale = new { enabled, android_enabled = enabled }
+                    },
+                    platforms = new Dictionary<string, object>
+                    {
+                        ["Linux"] = new { multi_queue = enabled }
+                    }
+                }
+            });
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK),
+                await response.Content.ReadAsStringAsync());
+            ApiConvertResponse result = (await response.Content.ReadFromJsonAsync<ApiConvertResponse>())!;
+            Assert.That(result.Artifacts.Select(artifact => artifact.Platform),
+                Is.EqualTo(new[] { "Android", "Linux" }));
+            foreach (ApiArtifact artifact in result.Artifacts)
+            {
+                using JsonDocument config = JsonDocument.Parse(artifact.Content);
+                Assert.That(config.RootElement.TryGetProperty("services", out _), Is.EqualTo(enabled));
+                Assert.That(config.RootElement.TryGetProperty("endpoints", out _), Is.EqualTo(enabled));
+                if (artifact.Platform == "Linux")
+                    Assert.That(config.RootElement.GetProperty("inbounds")[0]
+                        .GetProperty("multi_queue").GetBoolean(), Is.EqualTo(enabled));
+            }
+        }));
+
+        using HttpResponseMessage baseline = await PostConversionAsync(client, "legacy", ValidYaml, ["Linux"]);
+        Assert.That(baseline.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        ApiConvertResponse original = (await baseline.Content.ReadFromJsonAsync<ApiConvertResponse>())!;
+        using JsonDocument defaults = JsonDocument.Parse(original.Artifacts.Single().Content);
+        Assert.Multiple(() =>
+        {
+            Assert.That(defaults.RootElement.TryGetProperty("services", out _), Is.False);
+            Assert.That(defaults.RootElement.TryGetProperty("endpoints", out _), Is.True);
+            Assert.That(defaults.RootElement.GetProperty("inbounds")[0]
+                .GetProperty("multi_queue").GetBoolean(), Is.True);
+        });
+    }
+
+    [TestCase("null")]
+    [TestCase("[]")]
+    [TestCase("true")]
+    [TestCase("{}")]
+    [TestCase("{\"version\":1,\"version\":1}")]
+    [TestCase("{\"version\":2}")]
+    [TestCase("{\"version\":1,\"runtime\":{\"singbox_api\":{\"enabled\":\"secret-profile-value\"}}}")]
+    [TestCase("{\"version\":1,\"platforms\":{\"Linux\":{\"multi_queue\":\"secret-profile-value\"}}}")]
+    [TestCase("{\"version\":1,\"unknown-secret-profile-value\":true}")]
+    public async Task RejectsInvalidProfileWithoutEchoingValues(string profileJson)
+    {
+        using HttpClient client = factory.CreateClient();
+        using JsonDocument profile = JsonDocument.Parse(profileJson);
+        using HttpResponseMessage response = await client.PostAsJsonAsync("/api/v1/convert", new
+        {
+            name = "invalid-profile",
+            yaml = ValidYaml,
+            platforms = new[] { "Linux" },
+            profile = profile.RootElement
+        });
+
+        await AssertProblemAsync(response, HttpStatusCode.BadRequest);
+        Assert.That(await response.Content.ReadAsStringAsync(), Does.Not.Contain("secret-profile-value"));
+    }
+
+    [TestCase("{\"version\":1,\"secret-profile-value-\\uD800\":true}")]
+    [TestCase("{\"version\":1,\"secret-profile-value-\\uDC00\":true}")]
+    [TestCase("{\"version\":1,\"policies\":{\"url_test_url\":\"secret-profile-value-\\uD800\"}}")]
+    [TestCase("{\"version\":1,\"policies\":{\"url_test_url\":\"secret-profile-value-\\uDC00\"}}")]
+    public async Task RejectsUnpairedSurrogatesInProfileWithoutInternalErrors(string profileJson)
+    {
+        using HttpClient client = factory.CreateClient();
+        string body = JsonSerializer.Serialize(new
+        {
+            name = "invalid-profile-unicode",
+            yaml = ValidYaml,
+            platforms = new[] { "Linux" }
+        });
+        using var content = new StringContent(
+            body[..^1] + ",\"profile\":" + profileJson + "}",
+            Encoding.UTF8, "application/json");
+        using HttpResponseMessage response = await client.PostAsync("/api/v1/convert", content);
+
+        await AssertProblemAsync(response, HttpStatusCode.BadRequest);
+        string problem = await response.Content.ReadAsStringAsync();
+        Assert.Multiple(() =>
+        {
+            Assert.That(problem, Does.Not.Contain("secret-profile-value"));
+            Assert.That(problem, Does.Not.Contain("InvalidOperationException"));
+            Assert.That(problem, Does.Not.Contain("服务器内部错误"));
+        });
+    }
+
+    [TestCase("\\uD800")]
+    [TestCase("\\uDC00")]
+    public async Task RejectsUnpairedSurrogatesInRequestPropertyNames(string escapedName)
+    {
+        using HttpClient client = factory.CreateClient();
+        string body = JsonSerializer.Serialize(new
+        {
+            name = "invalid-request-unicode",
+            yaml = ValidYaml,
+            platforms = new[] { "Linux" }
+        });
+        using var content = new StringContent(
+            body[..^1] + ",\"" + escapedName + "\":true}",
+            Encoding.UTF8, "application/json");
+        using HttpResponseMessage response = await client.PostAsync("/api/v1/convert", content);
+
+        await AssertProblemAsync(response, HttpStatusCode.BadRequest);
+    }
+
+    [Test]
+    public async Task RejectsDuplicateJsonProfileFields()
+    {
+        using HttpClient client = factory.CreateClient();
+        string body = JsonSerializer.Serialize(new
+        {
+            name = "duplicate-profile",
+            yaml = ValidYaml,
+            platforms = new[] { "Linux" }
+        });
+        using var content = new StringContent(
+            body[..^1] + ",\"profile\":{\"version\":1},\"Profile\":{\"version\":1}}",
+            Encoding.UTF8, "application/json");
+        using HttpResponseMessage response = await client.PostAsync("/api/v1/convert", content);
+
+        await AssertProblemAsync(response, HttpStatusCode.BadRequest);
+    }
+
     [TestCase("application/json", HttpStatusCode.OK)]
     [TestCase("application/vnd.boxforge+json", HttpStatusCode.OK)]
     [TestCase("text/json", HttpStatusCode.BadRequest)]
@@ -164,9 +308,13 @@ public sealed class ServerApiTests
         });
     }
 
-    [TestCase(false)]
-    [TestCase(true)]
-    public async Task KestrelHonorsPrefixedEnvironmentAndRejectsTruncatedMultipart(bool tailscaleEnabled)
+    [TestCase(false, null)]
+    [TestCase(true, null)]
+    [TestCase(true, "profile")]
+    [TestCase(true, "tailscale")]
+    [TestCase(true, "singbox_api")]
+    public async Task KestrelValidatesDeploymentConfigurationBeforeServingRequests(
+        bool tailscaleEnabled, string? invalidConfiguration)
     {
         string directory = Directory.CreateTempSubdirectory("boxforge-server-profile-").FullName;
         string profile = Path.Combine(directory, "profile.json");
@@ -178,6 +326,11 @@ public sealed class ServerApiTests
              "rule_sets":[{"tag":"ai","url":"https://rules.example.net/{tag}.srs","update_interval":"12h"}],
              "resolvers":[{"id":"alidns","server":"203.0.113.53","server_name":"dns.example.net"}]}
             """);
+        if (invalidConfiguration == "profile")
+        {
+            await File.WriteAllTextAsync(profile,
+                """{"version":1,"policies":{"dns_timeout":"invalid"}}""");
+        }
         // Keep environment changes in a child process; they must not race the in-process API fixtures.
         var startInfo = new ProcessStartInfo("dotnet")
         {
@@ -212,6 +365,10 @@ public sealed class ServerApiTests
             startInfo.ArgumentList.Add("--profile");
             startInfo.ArgumentList.Add(profile);
         }
+        if (invalidConfiguration == "tailscale")
+            startInfo.Environment["BOXFORGE_Tailscale__Enabled"] = "invalid";
+        if (invalidConfiguration == "singbox_api")
+            startInfo.Environment["BOXFORGE_SingboxApi__Enabled"] = "invalid";
         startInfo.Environment["Logging__LogLevel__Default"] = "Information";
         startInfo.Environment["Logging__LogLevel__Microsoft.Hosting.Lifetime"] = "Information";
         using var process = Process.Start(startInfo)!;
@@ -221,6 +378,27 @@ public sealed class ServerApiTests
         try
         {
             const string listeningPrefix = "Now listening on: ";
+            if (invalidConfiguration != null)
+            {
+                outputTask = process.StandardOutput.ReadToEndAsync(timeout.Token);
+                await process.WaitForExitAsync(timeout.Token);
+                string output = await outputTask;
+                string errors = await errorTask;
+                string expectedDiagnostic = invalidConfiguration switch
+                {
+                    "profile" => "dns_timeout",
+                    "tailscale" => "Tailscale:Enabled",
+                    _ => "SingboxApi:Enabled"
+                };
+                Assert.Multiple(() =>
+                {
+                    Assert.That(process.ExitCode, Is.Not.EqualTo(0));
+                    Assert.That(output, Does.Not.Contain(listeningPrefix));
+                    Assert.That(output + errors, Does.Contain(expectedDiagnostic));
+                });
+                return;
+            }
+
             string? line;
             Uri? address = null;
             while ((line = await process.StandardOutput.ReadLineAsync(timeout.Token)) != null)
@@ -572,9 +750,10 @@ public sealed class ServerApiTests
             {
                 var profile = provider.GetRequiredService<BoxForgeProfile>();
                 return new SingboxConfigBuilder(
-                    new TailscaleEndpointBuilder(Options.Create(new TailscaleOptions { Enabled = false, AndroidEnabled = true }), profile),
+                    new TailscaleEndpointBuilder(new BoxForgeProfile(BuiltInProfile.Default with
+                    { Runtime = profile.Runtime with { Tailscale = new(false, true) } })),
                     provider.GetRequiredService<DnsProfileBuilder>(), provider.GetRequiredService<RouteProfileBuilder>(),
-                    provider.GetRequiredService<SingboxApiServiceBuilder>(), profile);
+                    profile);
             });
         }));
         using HttpClient client = failingFactory.CreateClient();

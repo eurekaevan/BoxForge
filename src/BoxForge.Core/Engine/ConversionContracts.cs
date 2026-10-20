@@ -1,4 +1,5 @@
 using BoxForge.Models;
+using System.Text.Json.Nodes;
 
 namespace BoxForge.Engine;
 
@@ -12,7 +13,10 @@ public interface IBoxForgeEngine
 public sealed record ConversionRequest(
     string Name,
     string ClashYaml,
-    IReadOnlyList<TargetPlatform> Platforms);
+    IReadOnlyList<TargetPlatform> Platforms)
+{
+    public JsonObject? Profile { get; init; }
+}
 
 public sealed record ConversionArtifact(
     TargetPlatform Platform,

@@ -92,7 +92,9 @@ internal static class SingboxRouteEmitter
                 Rules =
                 [
                     new RouteRule { Inbound = [SingboxTags.TunInbound], Network = ["tcp"] },
-                    new RouteRule { Port = [21, 22, 3306, 5900], Invert = true }
+                    .. plan.SniffExcludedPorts.IsEmpty
+                        ? Array.Empty<RouteRule>()
+                        : [new RouteRule { Port = plan.SniffExcludedPorts.ToList(), Invert = true }]
                 ],
                 Action = RouteRuleAction.Sniff,
                 Sniffer = ["http", "tls"],

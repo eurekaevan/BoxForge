@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using BoxForge.Engine;
 using BoxForge.Models;
@@ -68,6 +69,116 @@ public sealed class ServerExportApiTests
                 entries.Select(entry => entry.Path),
                 Is.EqualTo(new[] { "single/Android/config.json" }));
         });
+    }
+
+    [Test]
+    public async Task ConcurrentExportProfilesRemainRequestLocalAndLegacyRequestsKeepDefaults()
+    {
+        using HttpClient client = factory.CreateClient();
+        await Task.WhenAll(Enumerable.Range(0, 8).Select(async index =>
+        {
+            bool enabled = index % 2 == 0;
+            using MultipartFormDataContent form = CreateExportForm(
+                Encoding.UTF8.GetBytes(ValidYaml), "profile.yaml", null, ["Linux", "Android"]);
+            form.Add(new StringContent(JsonSerializer.Serialize(new
+            {
+                version = 1,
+                runtime = new
+                {
+                    singbox_api = new { enabled },
+                    tailscale = new { enabled, android_enabled = enabled }
+                },
+                platforms = new { Linux = new { multi_queue = enabled } }
+            })), "profile");
+            using HttpResponseMessage response = await client.PostAsync("/api/v1/export", form);
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK),
+                await response.Content.ReadAsStringAsync());
+            IReadOnlyList<ArchiveContent> entries = await ReadArchiveAsync(response);
+            Assert.That(entries.Select(entry => entry.Path), Is.EqualTo(new[]
+            {
+                "profile/Android/config.json", "profile/Linux/config.json"
+            }));
+            foreach (ArchiveContent entry in entries)
+            {
+                using JsonDocument config = JsonDocument.Parse(entry.Bytes);
+                Assert.That(config.RootElement.TryGetProperty("services", out _), Is.EqualTo(enabled));
+                Assert.That(config.RootElement.TryGetProperty("endpoints", out _), Is.EqualTo(enabled));
+                if (entry.Path.Contains("/Linux/", StringComparison.Ordinal))
+                    Assert.That(config.RootElement.GetProperty("inbounds")[0]
+                        .GetProperty("multi_queue").GetBoolean(), Is.EqualTo(enabled));
+            }
+        }));
+
+        using HttpResponseMessage baseline = await PostExportAsync(
+            client, Encoding.UTF8.GetBytes(ValidYaml), "legacy.yaml", null, ["Linux"]);
+        Assert.That(baseline.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        IReadOnlyList<ArchiveContent> original = await ReadArchiveAsync(baseline);
+        using JsonDocument defaults = JsonDocument.Parse(original.Single().Bytes);
+        Assert.Multiple(() =>
+        {
+            Assert.That(defaults.RootElement.TryGetProperty("services", out _), Is.False);
+            Assert.That(defaults.RootElement.TryGetProperty("endpoints", out _), Is.True);
+            Assert.That(defaults.RootElement.GetProperty("inbounds")[0]
+                .GetProperty("multi_queue").GetBoolean(), Is.True);
+        });
+    }
+
+    [TestCase("")]
+    [TestCase("{")]
+    [TestCase("null")]
+    [TestCase("[]")]
+    [TestCase("true")]
+    [TestCase("{}")]
+    [TestCase("{\"version\":1,\"version\":1}")]
+    [TestCase("{\"version\":2}")]
+    [TestCase("{\"version\":1,\"runtime\":{\"singbox_api\":{\"enabled\":\"secret-profile-value\"}}}")]
+    [TestCase("{\"version\":1,\"platforms\":{\"Linux\":{\"multi_queue\":\"secret-profile-value\"}}}")]
+    [TestCase("{\"version\":1,\"unknown-secret-profile-value\":true}")]
+    public async Task RejectsInvalidExportProfileWithoutEchoingValues(string profileJson)
+    {
+        using HttpClient client = factory.CreateClient();
+        using MultipartFormDataContent form = CreateExportForm(
+            Encoding.UTF8.GetBytes(ValidYaml), "profile.yaml", null, ["Linux"]);
+        form.Add(new StringContent(profileJson), "profile");
+        using HttpResponseMessage response = await client.PostAsync("/api/v1/export", form);
+
+        await AssertProblemAsync(response, HttpStatusCode.BadRequest);
+        Assert.That(await response.Content.ReadAsStringAsync(), Does.Not.Contain("secret-profile-value"));
+    }
+
+    [TestCase("{\"version\":1,\"secret-profile-value-\\uD800\":true}")]
+    [TestCase("{\"version\":1,\"secret-profile-value-\\uDC00\":true}")]
+    [TestCase("{\"version\":1,\"policies\":{\"url_test_url\":\"secret-profile-value-\\uD800\"}}")]
+    [TestCase("{\"version\":1,\"policies\":{\"url_test_url\":\"secret-profile-value-\\uDC00\"}}")]
+    public async Task RejectsUnpairedSurrogatesInExportProfileWithoutInternalErrors(string profileJson)
+    {
+        using HttpClient client = factory.CreateClient();
+        using MultipartFormDataContent form = CreateExportForm(
+            Encoding.UTF8.GetBytes(ValidYaml), "profile.yaml", null, ["Linux"]);
+        form.Add(new StringContent(profileJson), "profile");
+        using HttpResponseMessage response = await client.PostAsync("/api/v1/export", form);
+
+        await AssertProblemAsync(response, HttpStatusCode.BadRequest);
+        string problem = await response.Content.ReadAsStringAsync();
+        Assert.Multiple(() =>
+        {
+            Assert.That(problem, Does.Not.Contain("secret-profile-value"));
+            Assert.That(problem, Does.Not.Contain("InvalidOperationException"));
+            Assert.That(problem, Does.Not.Contain("服务器内部错误"));
+        });
+    }
+
+    [Test]
+    public async Task RejectsDuplicateExportProfileFields()
+    {
+        using HttpClient client = factory.CreateClient();
+        using MultipartFormDataContent form = CreateExportForm(
+            Encoding.UTF8.GetBytes(ValidYaml), "profile.yaml", null, ["Linux"]);
+        form.Add(new StringContent("{\"version\":1}"), "profile");
+        form.Add(new StringContent("{\"version\":1}"), "profile");
+        using HttpResponseMessage response = await client.PostAsync("/api/v1/export", form);
+
+        await AssertProblemAsync(response, HttpStatusCode.BadRequest);
     }
 
     [Test]

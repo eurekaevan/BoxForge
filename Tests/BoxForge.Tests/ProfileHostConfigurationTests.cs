@@ -1,12 +1,11 @@
 using BoxForge.Configuration;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Options;
 
 namespace BoxForge.Tests;
 
 [TestFixture]
-public sealed class OptionsRegistrationTests
+public sealed class ProfileHostConfigurationTests
 {
     [Test]
     public void TailscaleIsEnabledByDefaultOnEveryPlatform()
@@ -14,9 +13,7 @@ public sealed class OptionsRegistrationTests
         using ServiceProvider provider = CreateProvider(
             new Dictionary<string, string?>());
 
-        TailscaleOptions tailscale = provider
-            .GetRequiredService<IOptions<TailscaleOptions>>()
-            .Value;
+        var tailscale = provider.GetRequiredService<BoxForgeProfile>().Runtime.Tailscale;
 
         Assert.Multiple(() =>
         {
@@ -34,9 +31,7 @@ public sealed class OptionsRegistrationTests
             ["Tailscale:AndroidEnabled"] = "false"
         });
 
-        TailscaleOptions tailscale = provider
-            .GetRequiredService<IOptions<TailscaleOptions>>()
-            .Value;
+        var tailscale = provider.GetRequiredService<BoxForgeProfile>().Runtime.Tailscale;
 
         Assert.Multiple(() =>
         {
@@ -51,9 +46,7 @@ public sealed class OptionsRegistrationTests
         using ServiceProvider provider = CreateProvider(
             new Dictionary<string, string?>());
 
-        SingboxApiOptions options = provider
-            .GetRequiredService<IOptions<SingboxApiOptions>>()
-            .Value;
+        var options = provider.GetRequiredService<BoxForgeProfile>().Runtime.SingboxApi;
 
         Assert.That(options.Enabled, Is.False);
     }
@@ -66,26 +59,22 @@ public sealed class OptionsRegistrationTests
             ["SingboxApi:Enabled"] = "true"
         });
 
-        SingboxApiOptions options = provider
-            .GetRequiredService<IOptions<SingboxApiOptions>>()
-            .Value;
+        var options = provider.GetRequiredService<BoxForgeProfile>().Runtime.SingboxApi;
 
         Assert.That(options.Enabled, Is.True);
     }
 
     [Test]
-    public void InvalidSingboxApiBooleanFailsWhenOptionsAreLoaded()
+    public void InvalidSingboxApiBooleanFailsDuringCoreRegistration()
     {
-        using ServiceProvider provider = CreateProvider(new Dictionary<string, string?>
+        Assert.That(() =>
         {
-            ["SingboxApi:Enabled"] = "yes"
-        });
-
-        Assert.That(
-            () => provider.GetRequiredService<IOptions<SingboxApiOptions>>().Value,
-            Throws.TypeOf<FormatException>()
-                .With.Message.EqualTo(
-                    "配置项 'SingboxApi:Enabled' 必须是 true 或 false。"));
+            using ServiceProvider provider = CreateProvider(new Dictionary<string, string?>
+            {
+                ["SingboxApi:Enabled"] = "yes"
+            });
+        }, Throws.TypeOf<FormatException>()
+            .With.Message.EqualTo("配置项 'SingboxApi:Enabled' 必须是 true 或 false。"));
     }
 
     [Test]
@@ -97,9 +86,7 @@ public sealed class OptionsRegistrationTests
             ["TailscaleEnabled"] = "false"
         });
 
-        TailscaleOptions tailscale = provider
-            .GetRequiredService<IOptions<TailscaleOptions>>()
-            .Value;
+        var tailscale = provider.GetRequiredService<BoxForgeProfile>().Runtime.Tailscale;
 
         Assert.That(tailscale.Enabled, Is.True);
     }
@@ -112,9 +99,7 @@ public sealed class OptionsRegistrationTests
             ["TailscaleEnabled"] = "true"
         });
 
-        TailscaleOptions tailscale = provider
-            .GetRequiredService<IOptions<TailscaleOptions>>()
-            .Value;
+        var tailscale = provider.GetRequiredService<BoxForgeProfile>().Runtime.Tailscale;
 
         Assert.That(tailscale.Enabled, Is.True);
     }
@@ -129,9 +114,7 @@ public sealed class OptionsRegistrationTests
             ["TailscaleAndroidEnabled"] = "true"
         });
 
-        TailscaleOptions tailscale = provider
-            .GetRequiredService<IOptions<TailscaleOptions>>()
-            .Value;
+        var tailscale = provider.GetRequiredService<BoxForgeProfile>().Runtime.Tailscale;
 
         Assert.Multiple(() =>
         {
@@ -141,18 +124,16 @@ public sealed class OptionsRegistrationTests
     }
 
     [Test]
-    public void InvalidBooleanValueFailsWhenOptionsAreLoaded()
+    public void InvalidBooleanValueFailsDuringCoreRegistration()
     {
-        using ServiceProvider provider = CreateProvider(new Dictionary<string, string?>
+        Assert.That(() =>
         {
-            ["Tailscale:Enabled"] = "yes"
-        });
-
-        Assert.That(
-            () => provider.GetRequiredService<IOptions<TailscaleOptions>>().Value,
-            Throws.TypeOf<FormatException>()
-                .With.Message.EqualTo(
-                    "配置项 'Tailscale:Enabled' 必须是 true 或 false。"));
+            using ServiceProvider provider = CreateProvider(new Dictionary<string, string?>
+            {
+                ["Tailscale:Enabled"] = "yes"
+            });
+        }, Throws.TypeOf<FormatException>()
+            .With.Message.EqualTo("配置项 'Tailscale:Enabled' 必须是 true 或 false。"));
     }
 
     private static ServiceProvider CreateProvider(
@@ -162,7 +143,7 @@ public sealed class OptionsRegistrationTests
             .AddInMemoryCollection(values)
             .Build();
         var services = new ServiceCollection();
-        services.AddBoxForgeOptions(configuration);
+        services.AddBoxForgeCore(configuration);
         return services.BuildServiceProvider();
     }
 }

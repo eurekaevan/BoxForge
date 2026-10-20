@@ -81,7 +81,12 @@
       "tcp_keep_alive_interval": null,
       "url_test_interval": "3m",
       "dns_selection_mode": "SequentialFallback",
-      "taildrop_directory": "Taildrop"
+      "taildrop_directory": "Taildrop",
+      "connect_timeout": "5s",
+      "tun_addresses": [
+        "172.19.0.1/30",
+        "fd00::1/126"
+      ]
     },
     "Linux": {
       "is_mobile": false,
@@ -94,7 +99,12 @@
       "tcp_keep_alive_interval": "30s",
       "url_test_interval": "1m",
       "dns_selection_mode": "ParallelFastest",
-      "taildrop_directory": "$HOME/Downloads/Taildrop"
+      "taildrop_directory": "$HOME/Downloads/Taildrop",
+      "connect_timeout": "5s",
+      "tun_addresses": [
+        "172.19.0.1/30",
+        "fd00::1/126"
+      ]
     },
     "Windows": {
       "is_mobile": false,
@@ -107,7 +117,12 @@
       "tcp_keep_alive_interval": "30s",
       "url_test_interval": "1m",
       "dns_selection_mode": "ParallelFastest",
-      "taildrop_directory": "$USERPROFILE\\Downloads\\Taildrop"
+      "taildrop_directory": "$USERPROFILE\\Downloads\\Taildrop",
+      "connect_timeout": "5s",
+      "tun_addresses": [
+        "172.19.0.1/30",
+        "fd00::1/126"
+      ]
     }
   },
   "rule_sets": [
@@ -165,5 +180,30 @@
       "server": "8.8.8.8",
       "server_name": "dns.google"
     }
-  ]
+  ],
+  "runtime": {
+    "tailscale": {
+      "enabled": true,
+      "android_enabled": true
+    },
+    "singbox_api": {
+      "enabled": false
+    }
+  },
+  "policies": {
+    "main_default_region": "us",
+    "sniff_timeout": "300ms",
+    "sniff_excluded_ports": [
+      21,
+      22,
+      3306,
+      5900
+    ],
+    "url_test_url": "https://www.gstatic.com/generate_204",
+    "url_test_tolerance": 50,
+    "url_test_idle_timeout": "30m",
+    "dns_timeout": "5s",
+    "dns_cache_capacity": 4096,
+    "dns_optimistic_timeout": "6h"
+  }
 }

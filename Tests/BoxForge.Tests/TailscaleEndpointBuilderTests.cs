@@ -3,7 +3,6 @@ using BoxForge.Configuration;
 using BoxForge.Models;
 using BoxForge.Models.Singbox;
 using BoxForge.Services;
-using Microsoft.Extensions.Options;
 
 namespace BoxForge.Tests;
 
@@ -17,7 +16,8 @@ public sealed class TailscaleEndpointBuilderTests
         TargetPlatform platform,
         string expectedDirectory)
     {
-        TailscaleEndpoint endpoint = BuildEndpoint(new TailscaleOptions(), platform);
+        var plan = new TailscaleEndpointBuilder(BoxForgeProfile.Default).Plan(platform);
+        var endpoint = (TailscaleEndpoint)TailscaleEndpointBuilder.Emit(plan.TaildropDirectory, plan.Enabled).Single();
 
         string json = new ConfigSerializer().Serialize(new SingboxConfig
         {
@@ -43,10 +43,4 @@ public sealed class TailscaleEndpointBuilderTests
         });
     }
 
-    private static TailscaleEndpoint BuildEndpoint(
-        TailscaleOptions options,
-        TargetPlatform platform) =>
-        (TailscaleEndpoint)new TailscaleEndpointBuilder(Options.Create(options), BoxForgeProfile.Default)
-            .Build(platform)
-            .Single();
 }

@@ -1,6 +1,8 @@
 using System.Collections;
 using System.Globalization;
+using System.Text;
 using BoxForge.Converters;
+using BoxForge.Exceptions;
 using BoxForge.Configuration;
 using BoxForge.Models;
 using BoxForge.Models.Clash;
@@ -12,7 +14,7 @@ using BoxForge.Models.Intermediate;
 namespace BoxForge.Tests;
 
 [TestFixture]
-public sealed class ProxyConverterTests
+public sealed class ProxyNodeParserTests
 {
     private const string RealityPublicKey =
         "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0";
@@ -23,7 +25,7 @@ public sealed class ProxyConverterTests
     [TestCase(TargetPlatform.Android, true)]
     [TestCase(TargetPlatform.Linux, true)]
     [TestCase(TargetPlatform.Windows, true)]
-    public void IrTuningMatchesLegacyOutputWithoutOverwritingSource(TargetPlatform platform, bool explicitConnection)
+    public void IrTuningPreservesExplicitSettingsWithoutOverwritingSource(TargetPlatform platform, bool explicitConnection)
     {
         ProxyNode[] nodes =
         [
@@ -42,21 +44,22 @@ public sealed class ProxyConverterTests
         {
             ProxyNode source = explicitConnection
                 ? original with { Connection = new ConnectionSettings("9s", "2m", "15s") } : original;
-            var legacy = OutboundTuningPolicy.Apply(SingboxNodeEmitter.Emit(source), profile);
             ProxyNode tuned = OutboundTuningPolicy.Apply(source, profile);
-            Assert.That(SerializeOutbound(SingboxNodeEmitter.Emit(tuned)), Is.EqualTo(SerializeOutbound(legacy)));
+            Assert.That(tuned.Connection.ConnectTimeout, Is.EqualTo(explicitConnection ? "9s" : profile.ConnectTimeout));
+            Assert.That(tuned.Connection.TcpKeepAlive, Is.EqualTo(explicitConnection ? "2m" : profile.TcpKeepAlive));
+            Assert.That(tuned.Connection.TcpKeepAliveInterval, Is.EqualTo(explicitConnection ? "15s" : profile.TcpKeepAliveInterval));
             Assert.That(tuned, Is.Not.SameAs(source));
             Assert.That(source.Connection.ConnectTimeout, Is.EqualTo(explicitConnection ? "9s" : null));
             if (source is Hysteria2Node hysteria2)
             {
                 var effective = (Hysteria2Node)tuned;
-                Assert.That(effective.HopInterval, Is.SameAs(hysteria2.HopInterval));
-                Assert.That(effective.BbrProfile, Is.SameAs(hysteria2.BbrProfile));
+                Assert.That(effective.HopInterval, Is.EqualTo(hysteria2.HopInterval));
+                Assert.That(effective.BbrProfile, Is.EqualTo(hysteria2.BbrProfile));
                 Assert.That(hysteria2.TuningHopInterval, Is.Null);
                 Assert.That(hysteria2.TuningBbrProfile, Is.Null);
             }
             Assert.That(SerializeOutbound(SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(tuned, profile))),
-                Is.EqualTo(SerializeOutbound(legacy)), "Applying tuning twice must be idempotent.");
+                Is.EqualTo(SerializeOutbound(SingboxNodeEmitter.Emit(tuned))), "Applying tuning twice must be idempotent.");
         }
     }
 
@@ -70,10 +73,9 @@ public sealed class ProxyConverterTests
             ["password"] = " test-only "
         }));
         Assert.That(node.Cipher.Value, Is.EqualTo("aes-128-gcm"));
-        Assert.That(node.Cipher.Field, Is.EqualTo(cipherField));
-        Assert.That(node.Cipher.RuleId, Is.EqualTo(ShadowsocksSemantics.Cipher.Id));
+        Assert.That(node.Cipher.IsSpecified, Is.True);
         Assert.That(SingboxNodeEmitter.Emit(node).Password, Is.EqualTo(" test-only "));
-        Assert.That(new ShadowsocksConverter().CanHandle(protocol), Is.True);
+        Assert.That(node, Is.TypeOf<ShadowsocksNode>());
     }
 
     [TestCase("omitted", "omitted", 1)]
@@ -92,11 +94,9 @@ public sealed class ProxyConverterTests
         if (versionInput != "omitted") fields["udp_over_tcp_version"] = versionInput == "null" ? null : versionInput;
         ShadowsocksNode node = ParseShadowsocks(CreateNode("ss", fields));
         Assert.That(node.UdpOverTcpEnabled.Value, Is.EqualTo(enabled));
-        Assert.That(node.UdpOverTcpEnabled.Field, Is.EqualTo(enabledInput == "omitted" ? null : "udp_over_tcp"));
-        Assert.That(node.UdpOverTcpEnabled.RuleId, Is.EqualTo(ShadowsocksSemantics.UotEnabled.Id));
+        Assert.That(node.UdpOverTcpEnabled.IsSpecified, Is.EqualTo(enabledInput != "omitted"));
         Assert.That((int)node.UdpOverTcpVersion.Value, Is.EqualTo(expected));
-        Assert.That(node.UdpOverTcpVersion.Field, Is.EqualTo(versionInput == "omitted" ? null : "udp_over_tcp_version"));
-        Assert.That(node.UdpOverTcpVersion.RuleId, Is.EqualTo(ShadowsocksSemantics.UotVersion.Id));
+        Assert.That(node.UdpOverTcpVersion.IsSpecified, Is.EqualTo(versionInput != "omitted"));
         var emitted = SingboxNodeEmitter.Emit(node);
         if (enabled == true)
             Assert.That(emitted.UdpOverTcp!.Version, Is.EqualTo(expected));
@@ -120,13 +120,10 @@ public sealed class ProxyConverterTests
             [parent] = options
         }));
         ShadowsocksObfs plugin = node.Plugin.Value!;
-        Assert.That(node.Plugin.Field, Is.EqualTo("plugin"));
-        Assert.That(node.Plugin.RuleId, Is.EqualTo(ShadowsocksSemantics.Plugin.Id));
-        Assert.That(plugin.Mode.Field, Is.EqualTo($"{parent}.mode"));
-        Assert.That(plugin.Mode.RuleId, Is.EqualTo(ShadowsocksSemantics.ObfsMode.Id));
+        Assert.That(node.Plugin.IsSpecified, Is.True);
+        Assert.That(plugin.Mode.IsSpecified, Is.True);
         Assert.That(plugin.Host.Value, Is.EqualTo(hostInput == "custom" ? "a;b=c\\d" : "bing.com"));
-        Assert.That(plugin.Host.Field, Is.EqualTo(hostInput == "omitted" ? null : $"{parent}.host"));
-        Assert.That(plugin.Host.RuleId, Is.EqualTo(ShadowsocksSemantics.ObfsHost.Id));
+        Assert.That(plugin.Host.IsSpecified, Is.EqualTo(hostInput != "omitted"));
         var emitted = SingboxNodeEmitter.Emit(node);
         Assert.That(emitted.Plugin, Is.EqualTo("obfs-local"));
         Assert.That(emitted.PluginOpts, Is.EqualTo($"obfs={mode};obfs-host="
@@ -143,7 +140,7 @@ public sealed class ProxyConverterTests
         if (input != "omitted") fields["plugin"] = input == "null" ? null : input;
         ShadowsocksNode node = ParseShadowsocks(CreateNode("ss", fields));
         Assert.That(node.Plugin.Value, Is.Null);
-        Assert.That(node.Plugin.Field, Is.EqualTo(input == "omitted" ? null : "plugin"));
+        Assert.That(node.Plugin.IsSpecified, Is.EqualTo(input != "omitted"));
         Assert.That(SingboxNodeEmitter.Emit(node).PluginOpts, Is.Null);
     }
 
@@ -196,13 +193,13 @@ public sealed class ProxyConverterTests
         ];
         foreach (var fix in fixes)
         {
-            var result = new ShadowsocksConverter().Convert(CreateNode("ss", fields));
-            Assert.That(result, Is.TypeOf<InvalidNode>());
-            Assert.That(((InvalidNode)result).ErrorMessage,
+            var result = Assert.Throws<NodeParseException>(() => ParseAndEmit(CreateNode("ss", fields)))!;
+
+            Assert.That(result.Message,
                 Does.StartWith("Shadowsocks 节点 'test-node' 解析失败 -> ").And.Contain(fix.Error));
             fix.Target[fix.Field] = fix.Value;
         }
-        Assert.That(new ShadowsocksConverter().Convert(CreateNode("ss", fields)), Is.TypeOf<ConvertedNode>());
+        Assert.That(ParseAndEmit(CreateNode("ss", fields)), Is.InstanceOf<ProxyOutbound>());
     }
 
     [TestCase("omitted", "443")]
@@ -221,8 +218,7 @@ public sealed class ProxyConverterTests
         if (input != "omitted") fields["ports"] = input == "null" ? null : input;
         Hysteria2Node node = ParseHysteria2(CreateNode("hysteria2", fields));
         Hysteria2Outbound outbound = SingboxNodeEmitter.Emit(node);
-        Assert.That(node.Ports.Field, Is.EqualTo(input == "omitted" ? "port" : "ports"));
-        Assert.That(node.Ports.RuleId, Is.EqualTo(Hysteria2Semantics.Ports.Id));
+        Assert.That(node.Ports.IsSpecified, Is.True);
         if (expected == "443")
         {
             Assert.That(node.Ports.Value[0].End, Is.Null);
@@ -250,14 +246,12 @@ public sealed class ProxyConverterTests
         var fields = new Hashtable { ["password"] = "test-only" };
         if (input != "omitted") fields["hop_interval"] = input == "null" ? null : input;
         Hysteria2Node node = ParseHysteria2(CreateNode("hysteria2", fields));
-        Assert.That(node.HopInterval.Field, Is.EqualTo(input == "omitted" ? null : "hop_interval"));
-        Assert.That(node.HopInterval.RuleId, Is.EqualTo(Hysteria2Semantics.HopInterval.Id));
+        Assert.That(node.HopInterval.IsSpecified, Is.EqualTo(input != "omitted"));
         Assert.That(node.HopInterval.Value?.MinimumSeconds, Is.EqualTo(minimum));
         Assert.That(node.HopInterval.Value?.MaximumSeconds, Is.EqualTo(maximum));
         foreach (TargetPlatform platform in Enum.GetValues<TargetPlatform>())
         {
-            var tuned = (Hysteria2Outbound)OutboundTuningPolicy.Apply(
-                SingboxNodeEmitter.Emit(node), BoxForgeProfile.Default.GetPlatform(platform));
+            var tuned = (Hysteria2Outbound)SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(node, BoxForgeProfile.Default.GetPlatform(platform)));
             Assert.That(tuned.HopInterval, Is.EqualTo(minimum is null ? "30s" : minimum + "s"));
             Assert.That(tuned.HopIntervalMax, Is.EqualTo(minimum is null ? "60s" : maximum is null ? null : maximum + "s"));
         }
@@ -273,12 +267,10 @@ public sealed class ProxyConverterTests
         if (input != "omitted") fields["up"] = input == "null" ? null : input;
         Hysteria2Node node = ParseHysteria2(CreateNode("hysteria2", fields));
         Assert.That(node.UploadMegabitsPerSecond.Value, Is.EqualTo(expected));
-        Assert.That(node.UploadMegabitsPerSecond.Field, Is.EqualTo(input == "omitted" ? null : "up"));
-        Assert.That(node.UploadMegabitsPerSecond.RuleId, Is.EqualTo(Hysteria2Semantics.Upload.Id));
-        Assert.That(node.DownloadMegabitsPerSecond.Field, Is.Null);
+        Assert.That(node.UploadMegabitsPerSecond.IsSpecified, Is.EqualTo(input != "omitted"));
+        Assert.That(node.DownloadMegabitsPerSecond.IsSpecified, Is.False);
         Assert.That(node.BbrProfile.Value, Is.Null);
-        var tuned = (Hysteria2Outbound)OutboundTuningPolicy.Apply(
-            SingboxNodeEmitter.Emit(node), BoxForgeProfile.Default.GetPlatform(TargetPlatform.Linux));
+        var tuned = (Hysteria2Outbound)SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(node, BoxForgeProfile.Default.GetPlatform(TargetPlatform.Linux)));
         Assert.That(tuned.UpMbps, Is.EqualTo(expected));
         Assert.That(tuned.BbrProfile, Is.EqualTo(expected > 0 ? null : "standard"));
     }
@@ -296,14 +288,11 @@ public sealed class ProxyConverterTests
             ["obfs_max_packet_size"] = 0
         }));
         var obfs = node.Obfuscation.Value!;
-        Assert.That(node.Obfuscation.RuleId, Is.EqualTo(Hysteria2Semantics.Obfuscation.Id));
         Assert.That(obfs.Kind, Is.EqualTo(Hysteria2ObfuscationKind.Gecko));
         Assert.That(obfs.MinimumPacketSize.Value, Is.EqualTo(minimum == 0 ? null : (int?)minimum));
-        Assert.That(obfs.MinimumPacketSize.Field, Is.EqualTo("obfs_min_packet_size"));
-        Assert.That(obfs.MinimumPacketSize.RuleId, Is.EqualTo(Hysteria2Semantics.MinimumPacketSize.Id));
+        Assert.That(obfs.MinimumPacketSize.IsSpecified, Is.True);
         Assert.That(obfs.MaximumPacketSize.Value, Is.Null);
-        Assert.That(obfs.MaximumPacketSize.Field, Is.EqualTo("obfs_max_packet_size"));
-        Assert.That(obfs.MaximumPacketSize.RuleId, Is.EqualTo(Hysteria2Semantics.MaximumPacketSize.Id));
+        Assert.That(obfs.MaximumPacketSize.IsSpecified, Is.True);
         Assert.That(SingboxNodeEmitter.Emit(node).Obfs!.Password, Is.EqualTo(" obfs-test-only "));
     }
 
@@ -320,7 +309,7 @@ public sealed class ProxyConverterTests
         [
             node with { Tls = null! },
             node with { TlsEnabled = node.TlsEnabled with { Value = false } },
-            node with { TlsEnabled = node.TlsEnabled with { Field = "tls", Value = null } },
+            node with { TlsEnabled = node.TlsEnabled with { IsSpecified = true, Value = null } },
             node with { Tls = node.Tls with { ClientFingerprint = node.Tls.ClientFingerprint with { Value = "chrome" } } },
             node with { Ports = node.Ports with { Value = [] } },
             node with { Ports = node.Ports with { Value = [new(0, null)] } },
@@ -348,7 +337,7 @@ public sealed class ProxyConverterTests
                     Value = node.Obfuscation.Value! with
                     {
                         Kind = Hysteria2ObfuscationKind.Salamander,
-                        MinimumPacketSize = node.Obfuscation.Value!.MinimumPacketSize with { Field = "obfs-min-packet-size" }
+                        MinimumPacketSize = node.Obfuscation.Value!.MinimumPacketSize with { IsSpecified = true }
                     }
                 }
             }
@@ -389,13 +378,13 @@ public sealed class ProxyConverterTests
         ];
         foreach (var fix in fixes)
         {
-            var result = new Hysteria2Converter().Convert(CreateNode("hysteria2", fields));
-            Assert.That(result, Is.TypeOf<InvalidNode>());
-            Assert.That(((InvalidNode)result).ErrorMessage,
+            var result = Assert.Throws<NodeParseException>(() => ParseAndEmit(CreateNode("hysteria2", fields)))!;
+
+            Assert.That(result.Message,
                 Does.StartWith("Hysteria2 节点 'test-node' 解析失败 -> ").And.Contain(fix.Error));
             fields[fix.Field] = fix.Value;
         }
-        Assert.That(new Hysteria2Converter().Convert(CreateNode("hysteria2", fields)), Is.TypeOf<ConvertedNode>());
+        Assert.That(ParseAndEmit(CreateNode("hysteria2", fields)), Is.InstanceOf<ProxyOutbound>());
     }
 
     [Test]
@@ -409,13 +398,10 @@ public sealed class ProxyConverterTests
             ["bbr_profile"] = "aggressive",
             ["alpn"] = new[] { "h3" }
         }));
-        Assert.That(node.BbrProfile.Field, Is.EqualTo("bbr_profile"));
-        Assert.That(node.BbrProfile.RuleId, Is.EqualTo(Hysteria2Semantics.BbrProfile.Id));
-        Assert.That(node.TlsEnabled.RuleId, Is.EqualTo(Hysteria2Semantics.Tls.Id));
+        Assert.That(node.BbrProfile.IsSpecified, Is.True);
         foreach (TargetPlatform platform in Enum.GetValues<TargetPlatform>())
         {
-            var outbound = (Hysteria2Outbound)OutboundTuningPolicy.Apply(
-                SingboxNodeEmitter.Emit(node), BoxForgeProfile.Default.GetPlatform(platform));
+            var outbound = (Hysteria2Outbound)SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(node, BoxForgeProfile.Default.GetPlatform(platform)));
             Assert.That(outbound.ServerPorts, Is.EqualTo(new[] { "443:444", "8443:8443" }));
             Assert.That(outbound.HopInterval, Is.EqualTo("20s"));
             Assert.That(outbound.HopIntervalMax, Is.Null);
@@ -445,8 +431,7 @@ public sealed class ProxyConverterTests
         bool isInterval = field.Contains("check", StringComparison.Ordinal);
         SourceValue<string?> duration = isInterval ? node.IdleCheckInterval : node.IdleTimeout;
         Assert.That(duration.Value, Is.EqualTo(expected));
-        Assert.That(duration.Field, Is.EqualTo(field));
-        Assert.That(duration.RuleId, Is.EqualTo(isInterval ? AnyTlsSemantics.IdleCheckInterval.Id : AnyTlsSemantics.IdleTimeout.Id));
+        Assert.That(duration.IsSpecified, Is.True);
     }
 
     [TestCase(false)]
@@ -465,13 +450,13 @@ public sealed class ProxyConverterTests
         Assert.Multiple(() =>
         {
             Assert.That(node.IdleTimeout.Value, Is.Null);
-            Assert.That(node.IdleTimeout.Field, Is.EqualTo(explicitNull ? "idle_timeout" : null));
+            Assert.That(node.IdleTimeout.IsSpecified, Is.EqualTo(explicitNull));
             Assert.That(node.IdleCheckInterval.Value, Is.Null);
-            Assert.That(node.IdleCheckInterval.Field, Is.EqualTo(explicitNull ? "idle_session_check_interval" : null));
+            Assert.That(node.IdleCheckInterval.IsSpecified, Is.EqualTo(explicitNull));
             Assert.That(node.MinimumIdleSessions.Value, Is.Null);
-            Assert.That(node.MinimumIdleSessions.Field, Is.EqualTo(explicitNull ? "min_idle_session" : null));
+            Assert.That(node.MinimumIdleSessions.IsSpecified, Is.EqualTo(explicitNull));
             Assert.That(node.ClientMetadata.Value, Is.Null);
-            Assert.That(node.ClientMetadata.Field, Is.EqualTo(explicitNull ? "client_metadata" : null));
+            Assert.That(node.ClientMetadata.IsSpecified, Is.EqualTo(explicitNull));
         });
         string json = SerializeOutbound(SingboxNodeEmitter.Emit(node));
         Assert.That(json, Does.Not.Contain("idle_session").And.Not.Contain("client_metadata"));
@@ -484,9 +469,8 @@ public sealed class ProxyConverterTests
         var fields = new Hashtable { ["password"] = "test-only" };
         if (explicitTls) fields["tls"] = true;
         AnyTlsNode node = ParseAnyTls(CreateNode("anytls", fields));
-        Assert.That(node.TlsEnabled.Field, Is.EqualTo(explicitTls ? "tls" : null));
+        Assert.That(node.TlsEnabled.IsSpecified, Is.EqualTo(explicitTls));
         Assert.That(node.TlsEnabled.Value, Is.EqualTo(explicitTls ? true : (bool?)null));
-        Assert.That(node.TlsEnabled.RuleId, Is.EqualTo(AnyTlsSemantics.Tls.Id));
         Assert.That(SingboxNodeEmitter.Emit(node).Tls!.Enabled, Is.True);
     }
 
@@ -495,14 +479,15 @@ public sealed class ProxyConverterTests
     public void AnyTlsMetadataKeepsItsUtf8FrameBoundary(int bytes, bool accepted)
     {
         string metadata = new string('中', 21826) + new string('x', bytes - 65478);
-        NodeConversionResult result = new AnyTlsConverter().Convert(CreateNode("anytls", new Hashtable
+        ClashProxyNode source = CreateNode("anytls", new Hashtable
         {
             ["password"] = "test-only",
             ["client_metadata"] = metadata
-        }));
-        Assert.That(result is ConvertedNode, Is.EqualTo(accepted));
-        if (result is ConvertedNode converted)
-            Assert.That(System.Text.Encoding.UTF8.GetByteCount(((AnyTlsOutbound)converted.Outbound).ClientMetadata!), Is.EqualTo(bytes));
+        });
+        if (!accepted)
+            Assert.Throws<NodeParseException>(() => ParseAndEmit(source));
+        else
+            Assert.That(Encoding.UTF8.GetByteCount(((AnyTlsOutbound)ParseAndEmit(source)).ClientMetadata!), Is.EqualTo(bytes));
     }
 
     [Test]
@@ -513,7 +498,7 @@ public sealed class ProxyConverterTests
         [
             node with { Tls = null! },
             node with { TlsEnabled = node.TlsEnabled with { Value = false } },
-            node with { TlsEnabled = node.TlsEnabled with { Field = "tls", Value = null } },
+            node with { TlsEnabled = node.TlsEnabled with { IsSpecified = true, Value = null } },
             node with { MinimumIdleSessions = node.MinimumIdleSessions with { Value = -1 } },
             node with { IdleTimeout = node.IdleTimeout with { Value = "0s" } },
             node with { IdleCheckInterval = node.IdleCheckInterval with { Value = "2562048h" } },
@@ -524,8 +509,8 @@ public sealed class ProxyConverterTests
                 Tls = node.Tls with
                 {
                     Reality = new RealitySettings(
-                        new(RealityPublicKey, "reality-opts.public-key", TlsSemantics.RealityPublicKey.Id),
-                        new("00", "reality-opts.short-id", TlsSemantics.RealityShortId.Id))
+                        new(RealityPublicKey, true),
+                        new("00", true))
                 }
             }
         ];
@@ -558,13 +543,13 @@ public sealed class ProxyConverterTests
         ];
         foreach (var fix in fixes)
         {
-            var result = new AnyTlsConverter().Convert(CreateNode("anytls", fields));
-            Assert.That(result, Is.TypeOf<InvalidNode>());
-            Assert.That(((InvalidNode)result).ErrorMessage,
+            var result = Assert.Throws<NodeParseException>(() => ParseAndEmit(CreateNode("anytls", fields)))!;
+
+            Assert.That(result.Message,
                 Does.StartWith("AnyTLS 节点 'test-node' 解析失败 -> ").And.Contain(fix.Error));
             fields[fix.Field] = fix.Value;
         }
-        Assert.That(new AnyTlsConverter().Convert(CreateNode("anytls", fields)), Is.TypeOf<ConvertedNode>());
+        Assert.That(ParseAndEmit(CreateNode("anytls", fields)), Is.InstanceOf<ProxyOutbound>());
     }
 
     [Test]
@@ -579,14 +564,11 @@ public sealed class ProxyConverterTests
             ["client_metadata"] = "",
             ["alpn"] = new[] { "h2" }
         }));
-        Assert.That(node.MinimumIdleSessions.Field, Is.EqualTo("min_idle_session"));
-        Assert.That(node.MinimumIdleSessions.RuleId, Is.EqualTo(AnyTlsSemantics.MinimumIdleSessions.Id));
-        Assert.That(node.ClientMetadata.Field, Is.EqualTo("client_metadata"));
-        Assert.That(node.ClientMetadata.RuleId, Is.EqualTo(AnyTlsSemantics.ClientMetadata.Id));
+        Assert.That(node.MinimumIdleSessions.IsSpecified, Is.True);
+        Assert.That(node.ClientMetadata.IsSpecified, Is.True);
         foreach (TargetPlatform platform in Enum.GetValues<TargetPlatform>())
         {
-            var outbound = (AnyTlsOutbound)OutboundTuningPolicy.Apply(
-                SingboxNodeEmitter.Emit(node), BoxForgeProfile.Default.GetPlatform(platform));
+            var outbound = (AnyTlsOutbound)SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(node, BoxForgeProfile.Default.GetPlatform(platform)));
             Assert.That(outbound.Password, Is.EqualTo(" test-only "));
             Assert.That(outbound.IdleSessionTimeout, Is.EqualTo("15s"));
             Assert.That(outbound.IdleSessionCheckInterval, Is.EqualTo(".5s"));
@@ -611,8 +593,7 @@ public sealed class ProxyConverterTests
         Assert.Multiple(() =>
         {
             Assert.That(node.TlsEnabled.Value, Is.EqualTo(explicitTls ? true : (bool?)null));
-            Assert.That(node.TlsEnabled.Field, Is.EqualTo(explicitTls ? "tls" : null));
-            Assert.That(node.TlsEnabled.RuleId, Is.EqualTo(TlsSemantics.TrojanActivation.Id));
+            Assert.That(node.TlsEnabled.IsSpecified, Is.EqualTo(explicitTls));
             Assert.That(outbound.Tls!.Enabled, Is.True);
             Assert.That(outbound.Password, Is.EqualTo(" test-only "));
         });
@@ -622,13 +603,13 @@ public sealed class ProxyConverterTests
     [TestCase(null)]
     public void TrojanStillRejectsExplicitDisabledOrNullTls(bool? value)
     {
-        NodeConversionResult result = new TrojanConverter().Convert(CreateNode("trojan", new Hashtable
+        var result = Assert.Throws<NodeParseException>(() => ParseAndEmit(CreateNode("trojan", new Hashtable
         {
             ["password"] = "test-only",
             ["tls"] = value
-        }));
-        Assert.That(result, Is.TypeOf<InvalidNode>());
-        Assert.That(((InvalidNode)result).ErrorMessage, Is.EqualTo(
+        })))!;
+
+        Assert.That(result.Message, Is.EqualTo(
             "Trojan 节点 'test-node' 解析失败 -> 字段 'tls' 为 false 与此协议要求的 TLS 连接冲突"));
     }
 
@@ -645,7 +626,7 @@ public sealed class ProxyConverterTests
             }));
             Assert.Throws<InvalidOperationException>(() => SingboxNodeEmitter.Emit(node with
             {
-                TlsEnabled = node.TlsEnabled with { Field = "tls", Value = null }
+                TlsEnabled = node.TlsEnabled with { IsSpecified = true, Value = null }
             }));
         });
     }
@@ -670,17 +651,13 @@ public sealed class ProxyConverterTests
         OutboundTls emitted = SingboxNodeEmitter.EmitTls(tls)!;
         Assert.Multiple(() =>
         {
-            Assert.That(tls.ServerName.Field, Is.EqualTo(nameField));
-            Assert.That(tls.ServerName.RuleId, Is.EqualTo(TlsSemantics.ServerName.Id));
+            Assert.That(tls.ServerName.IsSpecified, Is.EqualTo(nameField is not null));
             Assert.That(emitted.ServerName, Is.EqualTo("tls.example.com"));
-            Assert.That(tls.ClientFingerprint.Field, Is.EqualTo(fingerprintField));
-            Assert.That(tls.ClientFingerprint.RuleId, Is.EqualTo(TlsSemantics.ClientFingerprint.Id));
+            Assert.That(tls.ClientFingerprint.IsSpecified, Is.EqualTo(fingerprintField is not null));
             Assert.That(emitted.Utls!.Fingerprint, Is.EqualTo("chrome"));
-            Assert.That(tls.Reality!.PublicKey.Field, Is.EqualTo($"{realityField}.{keyField}"));
-            Assert.That(tls.Reality.PublicKey.RuleId, Is.EqualTo(TlsSemantics.RealityPublicKey.Id));
+            Assert.That(tls.Reality!.PublicKey.IsSpecified, Is.True);
             Assert.That(emitted.Reality!.PublicKey, Is.EqualTo(RealityPublicKey));
-            Assert.That(tls.Reality.ShortId.Field, Is.EqualTo($"{realityField}.{shortIdField}"));
-            Assert.That(tls.Reality.ShortId.RuleId, Is.EqualTo(TlsSemantics.RealityShortId.Id));
+            Assert.That(tls.Reality.ShortId.IsSpecified, Is.True);
             Assert.That(emitted.Reality.ShortId, Is.EqualTo("Aa00"));
         });
     }
@@ -697,7 +674,7 @@ public sealed class ProxyConverterTests
         if (input != "omitted") fields["servername"] = input == "null" ? null : " ";
         TlsSettings tls = ParseTls(protocol, fields);
         Assert.That(tls.ServerName.Value, Is.EqualTo("node.example.com"));
-        Assert.That(tls.ServerName.Field, Is.EqualTo(input == "omitted" ? null : "servername"));
+        Assert.That(tls.ServerName.IsSpecified, Is.EqualTo(input != "omitted"));
         Assert.That(SingboxNodeEmitter.EmitTls(tls)!.ServerName, Is.EqualTo("node.example.com"));
     }
 
@@ -715,8 +692,7 @@ public sealed class ProxyConverterTests
         if (input != "omitted") fields["skip-cert-verify"] = expected;
         TlsSettings tls = ParseTls(protocol, fields);
         Assert.That(tls.AllowInvalidCertificate.Value, Is.EqualTo(expected));
-        Assert.That(tls.AllowInvalidCertificate.Field, Is.EqualTo(input == "omitted" ? null : "skip-cert-verify"));
-        Assert.That(tls.AllowInvalidCertificate.RuleId, Is.EqualTo(TlsSemantics.CertificateValidation.Id));
+        Assert.That(tls.AllowInvalidCertificate.IsSpecified, Is.EqualTo(input != "omitted"));
         Assert.That(SingboxNodeEmitter.EmitTls(tls)!.Insecure, Is.EqualTo(expected));
     }
 
@@ -729,10 +705,9 @@ public sealed class ProxyConverterTests
         Assert.Multiple(() =>
         {
             Assert.That(absent.ApplicationProtocols.Value, Is.Null);
-            Assert.That(absent.ApplicationProtocols.Field, Is.Null);
+            Assert.That(absent.ApplicationProtocols.IsSpecified, Is.False);
             Assert.That(empty.ApplicationProtocols.Value, Is.Empty);
-            Assert.That(empty.ApplicationProtocols.Field, Is.EqualTo("alpn"));
-            Assert.That(empty.ApplicationProtocols.RuleId, Is.EqualTo(TlsSemantics.ApplicationProtocols.Id));
+            Assert.That(empty.ApplicationProtocols.IsSpecified, Is.True);
         });
     }
 
@@ -750,7 +725,7 @@ public sealed class ProxyConverterTests
         if (supplied) fields["client_fingerprint"] = value;
         TlsSettings tls = ParseTls(protocol, fields);
         Assert.That(tls.ClientFingerprint.Value, Is.Null);
-        Assert.That(tls.ClientFingerprint.Field, Is.EqualTo(supplied ? "client_fingerprint" : null));
+        Assert.That(tls.ClientFingerprint.IsSpecified, Is.EqualTo(supplied));
         Assert.That(SingboxNodeEmitter.EmitTls(tls)!.Utls, Is.Null);
     }
 
@@ -764,8 +739,7 @@ public sealed class ProxyConverterTests
         }));
         foreach (TargetPlatform platform in Enum.GetValues<TargetPlatform>())
         {
-            var outbound = (TrojanOutbound)OutboundTuningPolicy.Apply(
-                SingboxNodeEmitter.Emit(node), BoxForgeProfile.Default.GetPlatform(platform));
+            var outbound = (TrojanOutbound)SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(node, BoxForgeProfile.Default.GetPlatform(platform)));
             Assert.That(outbound.Tls!.Alpn, Is.EqualTo(new[] { "h2", "http/1.1", "h2" }));
             outbound.Tls.Alpn!.Clear();
         }
@@ -785,8 +759,7 @@ public sealed class ProxyConverterTests
         Assert.Multiple(() =>
         {
             Assert.That(node.TlsEnabled.Value, Is.EqualTo(expected));
-            Assert.That(node.TlsEnabled.Field, Is.EqualTo(input == "omitted" ? null : "tls"));
-            Assert.That(node.TlsEnabled.RuleId, Is.EqualTo(VlessSemantics.Tls.Id));
+            Assert.That(node.TlsEnabled.IsSpecified, Is.EqualTo(input != "omitted"));
             Assert.That(node.Tls is not null, Is.EqualTo(expected == true));
         });
         node.Validate();
@@ -806,10 +779,9 @@ public sealed class ProxyConverterTests
         Assert.Multiple(() =>
         {
             Assert.That(node.DatagramEncoding.Value.ToString(), Is.EqualTo(expected));
-            Assert.That(node.DatagramEncoding.Field, Is.EqualTo(field));
-            Assert.That(node.DatagramEncoding.RuleId, Is.EqualTo(VlessSemantics.DatagramEncoding.Id));
+            Assert.That(node.DatagramEncoding.IsSpecified, Is.EqualTo(field is not null));
             Assert.That(node.Flow.Value, Is.EqualTo(VlessFlow.None));
-            Assert.That(node.Flow.Field, Is.Null);
+            Assert.That(node.Flow.IsSpecified, Is.False);
         });
     }
 
@@ -823,8 +795,7 @@ public sealed class ProxyConverterTests
         }));
 
         Assert.That(node.Flow.Value, Is.EqualTo(VlessFlow.Vision));
-        Assert.That(node.Flow.Field, Is.EqualTo("flow"));
-        Assert.That(node.Flow.RuleId, Is.EqualTo(VlessSemantics.Flow.Id));
+        Assert.That(node.Flow.IsSpecified, Is.True);
     }
 
     [Test]
@@ -842,8 +813,8 @@ public sealed class ProxyConverterTests
             Tls = node.Tls! with
             {
                 Reality = new RealitySettings(
-                    new(RealityPublicKey, "reality-opts.public-key", TlsSemantics.RealityPublicKey.Id),
-                    new("00", "reality-opts.short-id", TlsSemantics.RealityShortId.Id))
+                    new(RealityPublicKey, true),
+                    new("00", true))
             }
         };
 
@@ -867,8 +838,8 @@ public sealed class ProxyConverterTests
         }));
         foreach (TargetPlatform platform in Enum.GetValues<TargetPlatform>())
         {
-            var outbound = (VlessOutbound)OutboundTuningPolicy.Apply(
-                SingboxNodeEmitter.Emit(node), BoxForgeProfile.Default.GetPlatform(platform));
+            var outbound = (VlessOutbound)SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(
+                node, BoxForgeProfile.Default.GetPlatform(platform)));
             Assert.That(outbound.Tls!.Insecure, Is.False);
             Assert.That(outbound.Tls.Alpn, Is.EqualTo(new[] { "h2", "http/1.1", "h2" }));
             outbound.Tls.Alpn!.Clear();
@@ -890,13 +861,6 @@ public sealed class ProxyConverterTests
         CultureInfo.CurrentCulture = culture;
         try
         {
-            IProxyConverter converter = protocol switch
-            {
-                "trojan" => new TrojanConverter(),
-                "anytls" => new AnyTlsConverter(),
-                "ss" => new ShadowsocksConverter(),
-                _ => new Hysteria2Converter()
-            };
             var fields = new Hashtable { ["password"] = "test-only" };
             if (protocol == "ss")
             {
@@ -910,9 +874,9 @@ public sealed class ProxyConverterTests
             }
 
             fields[field] = "+" + number;
-            Assert.That(converter.Convert(CreateNode(protocol, fields)), Is.TypeOf<ConvertedNode>());
+            Assert.That(ParseAndEmit(CreateNode(protocol, fields)), Is.InstanceOf<ProxyOutbound>());
             fields[field] = "^" + number;
-            Assert.That(converter.Convert(CreateNode(protocol, fields)), Is.TypeOf<InvalidNode>());
+            Assert.Throws<NodeParseException>(() => ParseAndEmit(CreateNode(protocol, fields)));
         }
         finally
         {
@@ -929,13 +893,11 @@ public sealed class ProxyConverterTests
         string inputValue,
         string expected)
     {
-        AnyTlsOutbound outbound = Convert<AnyTlsOutbound>(
-            new AnyTlsConverter(),
-            CreateNode("anytls", new Hashtable
-            {
-                ["password"] = "secret",
-                [inputKey] = inputValue
-            }));
+        AnyTlsOutbound outbound = Convert<AnyTlsOutbound>(CreateNode("anytls", new Hashtable
+        {
+            ["password"] = "secret",
+            [inputKey] = inputValue
+        }));
 
         string json = SerializeOutbound(outbound);
 
@@ -959,13 +921,11 @@ public sealed class ProxyConverterTests
         string inputValue,
         string expected)
     {
-        VlessOutbound outbound = Convert<VlessOutbound>(
-            new VlessConverter(),
-            CreateNode("vless", new Hashtable
-            {
-                ["uuid"] = "00000000-0000-4000-8000-000000000001",
-                [inputKey] = inputValue
-            }));
+        VlessOutbound outbound = Convert<VlessOutbound>(CreateNode("vless", new Hashtable
+        {
+            ["uuid"] = "00000000-0000-4000-8000-000000000001",
+            [inputKey] = inputValue
+        }));
 
         string json = SerializeOutbound(outbound);
         Assert.Multiple(() =>
@@ -983,12 +943,11 @@ public sealed class ProxyConverterTests
     [TestCase("xtls-rprx-vision任意后缀", "xtls-rprx-vision")]
     public void VlessMapsEffectiveSourceFlow(string? flow, string? expected)
     {
-        VlessOutbound outbound = Convert<VlessOutbound>(
-            new VlessConverter(), CreateNode("vless", new Hashtable
-            {
-                ["uuid"] = "00000000-0000-4000-8000-000000000001",
-                ["flow"] = flow
-            }));
+        VlessOutbound outbound = Convert<VlessOutbound>(CreateNode("vless", new Hashtable
+        {
+            ["uuid"] = "00000000-0000-4000-8000-000000000001",
+            ["flow"] = flow
+        }));
         Assert.That(outbound.Flow, Is.EqualTo(expected));
     }
 
@@ -997,13 +956,13 @@ public sealed class ProxyConverterTests
     [TestCase("不支持的流控制协议")]
     public void VlessRejectsUnsupportedSourceFlow(string flow)
     {
-        NodeConversionResult result = new VlessConverter().Convert(CreateNode("vless", new Hashtable
+        var result = Assert.Throws<NodeParseException>(() => ParseAndEmit(CreateNode("vless", new Hashtable
         {
             ["uuid"] = "00000000-0000-4000-8000-000000000001",
             ["flow"] = flow
-        }));
-        Assert.That(result, Is.TypeOf<InvalidNode>());
-        Assert.That(((InvalidNode)result).ErrorMessage, Does.Contain("flow"));
+        })))!;
+
+        Assert.That(result.Message, Does.Contain("flow"));
     }
 
     [TestCase("ss")]
@@ -1012,19 +971,12 @@ public sealed class ProxyConverterTests
     [TestCase("anytls")]
     public void PasswordPreservesWhitespaceThroughConversionAndSerialization(string protocol)
     {
-        IProxyConverter converter = protocol switch
-        {
-            "ss" => new ShadowsocksConverter(),
-            "trojan" => new TrojanConverter(),
-            "hysteria2" => new Hysteria2Converter(),
-            _ => new AnyTlsConverter()
-        };
         foreach (string password in new[] { " test-only ", "  " })
         {
             var extra = new Hashtable { ["password"] = password };
             if (protocol == "ss")
                 extra["cipher"] = "aes-128-gcm";
-            ProxyOutbound outbound = Convert<ProxyOutbound>(converter, CreateNode(protocol, extra));
+            ProxyOutbound outbound = Convert<ProxyOutbound>(CreateNode(protocol, extra));
             using var json = System.Text.Json.JsonDocument.Parse(SerializeOutbound(outbound));
             Assert.That(json.RootElement.GetProperty("outbounds")[0].GetProperty("password").GetString(),
                 Is.EqualTo(password), protocol);
@@ -1034,12 +986,10 @@ public sealed class ProxyConverterTests
     [Test]
     public void VlessKeepsXudpDefaultWhenSourceOmitsPacketEncoding()
     {
-        VlessOutbound outbound = Convert<VlessOutbound>(
-            new VlessConverter(),
-            CreateNode("vless", new Hashtable
-            {
-                ["uuid"] = "00000000-0000-4000-8000-000000000001"
-            }));
+        VlessOutbound outbound = Convert<VlessOutbound>(CreateNode("vless", new Hashtable
+        {
+            ["uuid"] = "00000000-0000-4000-8000-000000000001"
+        }));
 
         Assert.That(outbound.PacketEncoding, Is.EqualTo("xudp"));
     }
@@ -1064,17 +1014,16 @@ public sealed class ProxyConverterTests
             reality["short-id"] = shortId;
         }
 
-        NodeConversionResult result = new VlessConverter().Convert(
+        var result = Assert.Throws<NodeParseException>(() => ParseAndEmit(
             CreateNode("vless", new Hashtable
             {
                 ["uuid"] = "00000000-0000-4000-8000-000000000001",
                 ["tls"] = true,
                 ["client-fingerprint"] = "chrome",
                 ["reality-opts"] = reality
-            }));
+            })))!;
 
-        Assert.That(result, Is.TypeOf<InvalidNode>());
-        Assert.That(((InvalidNode)result).ErrorMessage, Does.Contain(expectedError));
+        Assert.That(result.Message, Does.Contain(expectedError));
     }
 
     [TestCase("")]
@@ -1082,19 +1031,17 @@ public sealed class ProxyConverterTests
     [TestCase("0011223344556677")]
     public void RealityAcceptsValidShortIds(string shortId)
     {
-        VlessOutbound outbound = Convert<VlessOutbound>(
-            new VlessConverter(),
-            CreateNode("vless", new Hashtable
+        VlessOutbound outbound = Convert<VlessOutbound>(CreateNode("vless", new Hashtable
+        {
+            ["uuid"] = "00000000-0000-4000-8000-000000000001",
+            ["tls"] = true,
+            ["client-fingerprint"] = "chrome",
+            ["reality-opts"] = new Hashtable
             {
-                ["uuid"] = "00000000-0000-4000-8000-000000000001",
-                ["tls"] = true,
-                ["client-fingerprint"] = "chrome",
-                ["reality-opts"] = new Hashtable
-                {
-                    ["public-key"] = RealityPublicKey,
-                    ["short-id"] = shortId
-                }
-            }));
+                ["public-key"] = RealityPublicKey,
+                ["short-id"] = shortId
+            }
+        }));
 
         Assert.That(outbound.Tls?.Reality?.ShortId, Is.EqualTo(shortId));
     }
@@ -1110,7 +1057,7 @@ public sealed class ProxyConverterTests
     [TestCase("randomized")]
     public void TlsPreservesSupportedFingerprintNames(string fingerprint)
     {
-        TrojanOutbound outbound = Convert<TrojanOutbound>(new TrojanConverter(), CreateNode("trojan", new Hashtable
+        TrojanOutbound outbound = Convert<TrojanOutbound>(CreateNode("trojan", new Hashtable
         {
             ["password"] = "test-only",
             ["client-fingerprint"] = fingerprint
@@ -1124,7 +1071,7 @@ public sealed class ProxyConverterTests
     [TestCase("client-fingerprint", "")]
     public void NativeTlsFingerprintDoesNotGenerateUtls(string field, string fingerprint)
     {
-        TrojanOutbound outbound = Convert<TrojanOutbound>(new TrojanConverter(), CreateNode("trojan", new Hashtable
+        TrojanOutbound outbound = Convert<TrojanOutbound>(CreateNode("trojan", new Hashtable
         {
             ["password"] = "test-only",
             [field] = fingerprint
@@ -1146,13 +1093,13 @@ public sealed class ProxyConverterTests
     [TestCase("CHROME")]
     public void TlsRejectsFingerprintsWithoutAnEquivalentTargetProfile(string fingerprint)
     {
-        NodeConversionResult result = new TrojanConverter().Convert(CreateNode("trojan", new Hashtable
+        var result = Assert.Throws<NodeParseException>(() => ParseAndEmit(CreateNode("trojan", new Hashtable
         {
             ["password"] = "test-only",
             ["client-fingerprint"] = fingerprint
-        }));
-        Assert.That(result, Is.TypeOf<InvalidNode>());
-        Assert.That(((InvalidNode)result).ErrorMessage, Does.Contain("client-fingerprint"));
+        })))!;
+
+        Assert.That(result.Message, Does.Contain("client-fingerprint"));
     }
 
     [TestCase(null)]
@@ -1160,15 +1107,15 @@ public sealed class ProxyConverterTests
     [TestCase("none")]
     public void RealityRequiresAnExplicitEffectiveUtlsFingerprint(string? fingerprint)
     {
-        NodeConversionResult result = new VlessConverter().Convert(CreateNode("vless", new Hashtable
+        var result = Assert.Throws<NodeParseException>(() => ParseAndEmit(CreateNode("vless", new Hashtable
         {
             ["uuid"] = "00000000-0000-4000-8000-000000000001",
             ["tls"] = true,
             ["client-fingerprint"] = fingerprint,
             ["reality-opts"] = new Hashtable { ["public-key"] = RealityPublicKey, ["short-id"] = "00" }
-        }));
-        Assert.That(result, Is.TypeOf<InvalidNode>());
-        Assert.That(((InvalidNode)result).ErrorMessage, Does.Contain("client-fingerprint"));
+        })))!;
+
+        Assert.That(result.Message, Does.Contain("client-fingerprint"));
     }
 
     [TestCase(null)]
@@ -1182,9 +1129,9 @@ public sealed class ProxyConverterTests
             ["reality-opts"] = new Hashtable { ["public-key"] = RealityPublicKey, ["short-id"] = "00" }
         };
         if (tls.HasValue) fields["tls"] = tls.Value;
-        NodeConversionResult result = new VlessConverter().Convert(CreateNode("vless", fields));
-        Assert.That(result, Is.TypeOf<InvalidNode>());
-        Assert.That(((InvalidNode)result).ErrorMessage, Does.Contain("显式启用 tls"));
+        var result = Assert.Throws<NodeParseException>(() => ParseAndEmit(CreateNode("vless", fields)))!;
+
+        Assert.That(result.Message, Does.Contain("显式启用 tls"));
     }
 
     [TestCase("invalid")]
@@ -1192,16 +1139,15 @@ public sealed class ProxyConverterTests
     [TestCase("0s")]
     public void AnyTlsRejectsInvalidTimeout(string timeout)
     {
-        NodeConversionResult result = new AnyTlsConverter().Convert(
+        var result = Assert.Throws<NodeParseException>(() => ParseAndEmit(
             CreateNode("anytls", new Hashtable
             {
                 ["password"] = "secret",
                 ["idle-session-timeout"] = timeout
-            }));
+            })))!;
 
-        Assert.That(result, Is.TypeOf<InvalidNode>());
         Assert.That(
-            ((InvalidNode)result).ErrorMessage,
+            result.Message,
             Does.Contain("AnyTLS").And.Contain("idle-session-timeout"));
     }
 
@@ -1209,7 +1155,6 @@ public sealed class ProxyConverterTests
     [TestCase("trojan")]
     public void NativeTcpAllowsMissingEmptyAndNormalizedNetwork(string protocol)
     {
-        IProxyConverter converter = protocol == "vless" ? new VlessConverter() : new TrojanConverter();
         foreach (string? network in new string?[] { null, "", " ", "tcp", " TCP " })
         {
             var fields = new Hashtable
@@ -1219,7 +1164,7 @@ public sealed class ProxyConverterTests
                 ["tls"] = true
             };
             if (network is not null) fields["network"] = network;
-            ProxyOutbound outbound = Convert<ProxyOutbound>(converter, CreateNode(protocol, fields));
+            ProxyOutbound outbound = Convert<ProxyOutbound>(CreateNode(protocol, fields));
             Assert.That(SerializeOutbound(outbound), Does.Not.Contain("\"transport\""));
         }
     }
@@ -1230,30 +1175,23 @@ public sealed class ProxyConverterTests
     [TestCase("hysteria2")]
     public void SharedTlsAlpnPreservesOrderDuplicatesAndAbsence(string protocol)
     {
-        IProxyConverter converter = protocol switch
-        {
-            "vless" => new VlessConverter(),
-            "trojan" => new TrojanConverter(),
-            "hysteria2" => new Hysteria2Converter(),
-            _ => new AnyTlsConverter()
-        };
         var fields = new Hashtable
         {
             [protocol == "vless" ? "uuid" : "password"] = protocol == "vless"
                 ? "00000000-0000-4000-8000-000000000001" : "test-only",
             ["tls"] = true
         };
-        ProxyOutbound absent = Convert<ProxyOutbound>(converter, CreateNode(protocol, fields));
+        ProxyOutbound absent = Convert<ProxyOutbound>(CreateNode(protocol, fields));
         fields["alpn"] = new[] { "h2", "http/1.1", "h2" };
-        ProxyOutbound present = Convert<ProxyOutbound>(converter, CreateNode(protocol, fields));
+        ProxyOutbound present = Convert<ProxyOutbound>(CreateNode(protocol, fields));
         Assert.That(GetTls(absent)!.Alpn, Is.Null);
         Assert.That(GetTls(present)!.Alpn, Is.EqualTo(new[] { "h2", "http/1.1", "h2" }));
         foreach (object malformed in new object[] { "h2", new object[] { 1 } })
         {
             fields["alpn"] = malformed;
-            NodeConversionResult result = converter.Convert(CreateNode(protocol, fields));
-            Assert.That(result, Is.TypeOf<InvalidNode>());
-            Assert.That(((InvalidNode)result).ErrorMessage, Does.Contain("alpn"));
+            var result = Assert.Throws<NodeParseException>(() => ParseAndEmit(CreateNode(protocol, fields)))!;
+
+            Assert.That(result.Message, Does.Contain("alpn"));
         }
     }
 
@@ -1261,8 +1199,7 @@ public sealed class ProxyConverterTests
     [TestCase("trojan")]
     public void TuningPreservesNativeRealityTlsAndExplicitConnectionSettings(string protocol)
     {
-        IProxyConverter converter = protocol == "vless" ? new VlessConverter() : new TrojanConverter();
-        ProxyOutbound source = Convert<ProxyOutbound>(converter, CreateNode(protocol, new Hashtable
+        ProxyNode source = ProxyNodeParser.Parse(CreateNode(protocol, new Hashtable
         {
             [protocol == "vless" ? "uuid" : "password"] = protocol == "vless"
                 ? "00000000-0000-4000-8000-000000000001" : "test-only",
@@ -1271,12 +1208,12 @@ public sealed class ProxyConverterTests
             ["client-fingerprint"] = "chrome",
             ["reality-opts"] = new Hashtable { ["public-key"] = RealityPublicKey, ["short-id"] = "00" }
         })) with
-        { ConnectTimeout = "9s", TcpKeepAlive = "2m", TcpKeepAliveInterval = "15s" };
+        { Connection = new ConnectionSettings("9s", "2m", "15s") };
         foreach (TargetPlatform platform in Enum.GetValues<TargetPlatform>())
         {
-            ProxyOutbound tuned = OutboundTuningPolicy.Apply(source, BoxForgeProfile.Default.GetPlatform(platform));
+            ProxyOutbound tuned = SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(source, BoxForgeProfile.Default.GetPlatform(platform)));
             OutboundTls tls = GetTls(tuned)!;
-            Assert.That(SerializeOutbound(tuned), Is.EqualTo(SerializeOutbound(source)));
+            Assert.That(SerializeOutbound(tuned), Is.EqualTo(SerializeOutbound(SingboxNodeEmitter.Emit(source))));
             Assert.That(tls.Alpn, Is.EqualTo(new[] { "h2" }));
             Assert.That(tls.Utls!.Fingerprint, Is.EqualTo("chrome"));
             Assert.That(tls.Reality!.PublicKey, Is.EqualTo(RealityPublicKey));
@@ -1286,40 +1223,20 @@ public sealed class ProxyConverterTests
         }
     }
 
-    private static ShadowsocksNode ParseShadowsocks(ClashProxyNode source)
-    {
-        string name = source.GetRequiredString("name");
-        ShadowsocksFrontend.Schema.Validate(source);
-        return ShadowsocksFrontend.ParseValidated(source, name);
-    }
+    private static ShadowsocksNode ParseShadowsocks(ClashProxyNode source) =>
+        (ShadowsocksNode)ProxyNodeParser.Parse(source);
 
-    private static Hysteria2Node ParseHysteria2(ClashProxyNode source)
-    {
-        string name = source.GetRequiredString("name");
-        Hysteria2Frontend.Schema.Validate(source);
-        return Hysteria2Frontend.ParseValidated(source, name);
-    }
+    private static Hysteria2Node ParseHysteria2(ClashProxyNode source) =>
+        (Hysteria2Node)ProxyNodeParser.Parse(source);
 
-    private static AnyTlsNode ParseAnyTls(ClashProxyNode source)
-    {
-        string name = source.GetRequiredString("name");
-        AnyTlsFrontend.Schema.Validate(source);
-        return AnyTlsFrontend.ParseValidated(source, name);
-    }
+    private static AnyTlsNode ParseAnyTls(ClashProxyNode source) =>
+        (AnyTlsNode)ProxyNodeParser.Parse(source);
 
-    private static VlessNode ParseVless(ClashProxyNode source)
-    {
-        string name = source.GetRequiredString("name");
-        VlessFrontend.Schema.Validate(source);
-        return VlessFrontend.ParseValidated(source, name);
-    }
+    private static VlessNode ParseVless(ClashProxyNode source) =>
+        (VlessNode)ProxyNodeParser.Parse(source);
 
-    private static TrojanNode ParseTrojan(ClashProxyNode source)
-    {
-        string name = source.GetRequiredString("name");
-        TrojanFrontend.Schema.Validate(source);
-        return TrojanFrontend.ParseValidated(source, name);
-    }
+    private static TrojanNode ParseTrojan(ClashProxyNode source) =>
+        (TrojanNode)ProxyNodeParser.Parse(source);
 
     private static TlsSettings ParseTls(string protocol, Hashtable extra)
     {
@@ -1358,15 +1275,11 @@ public sealed class ProxyConverterTests
         return new ClashProxyNode(values);
     }
 
-    private static TOutbound Convert<TOutbound>(
-        IProxyConverter converter,
-        ClashProxyNode node)
-        where TOutbound : ProxyOutbound
-    {
-        NodeConversionResult result = converter.Convert(node);
-        Assert.That(result, Is.TypeOf<ConvertedNode>());
-        return (TOutbound)((ConvertedNode)result).Outbound;
-    }
+    private static TOutbound Convert<TOutbound>(ClashProxyNode node) where TOutbound : ProxyOutbound =>
+        (TOutbound)ParseAndEmit(node);
+
+    private static ProxyOutbound ParseAndEmit(ClashProxyNode node) =>
+        SingboxNodeEmitter.Emit(ProxyNodeParser.Parse(node));
 
     private static string SerializeOutbound(Outbound outbound) =>
         new ConfigSerializer().Serialize(new SingboxConfig

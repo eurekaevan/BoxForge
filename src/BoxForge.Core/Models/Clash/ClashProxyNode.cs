@@ -104,8 +104,7 @@ public class ClashObject
         throw new NodeParseException($"缺失必填字段或端口格式无效: {key}");
     }
 
-    public bool GetBool(string key, bool defaultValue = false) =>
-        GetNullableBool(key) ?? defaultValue;
+    public bool GetBool(string key) => GetNullableBool(key) ?? false;
 
     public bool? GetNullableBool(string key)
     {

@@ -64,8 +64,9 @@ dotnet run --project src/BoxForge.Cli -- generate
 | `--output-dir` | `singboxConfigs` | 成功后替换的输出目录 |
 | `--platform` | `all` | `Android`、`Linux`、`Windows` 或 `all`，不区分大小写 |
 
-BoxForge 只接受 `generate` 子命令。缺少子命令、传入未知选项或重复
-选项时，程序会输出用法并立即结束，不会读取 stdin。
+BoxForge 支持 `generate` 和 `profile show --resolved`。后者可通过 `--profile`
+选择覆盖文件并输出最终快照。缺少子命令、传入未知选项或重复选项时，程序会输出
+用法并立即结束，不会读取 stdin。
 
 ## 无状态 HTTP API
 
@@ -99,7 +100,7 @@ curl --request POST http://127.0.0.1:5080/api/v1/convert \
   --data-binary @request.json
 ```
 
-API 只接收配置名、Clash YAML 原文和目标平台，不读写本地配置
+API 接收配置名、Clash YAML 原文、目标平台和可选的内联 profile，不读写本地配置
 目录，不接收订阅 URL，也不保存请求或结果。当前没有鉴权、限流
 和完整的公网部署防护，因此不应直接暴露到公网。
 
@@ -149,11 +150,12 @@ singboxConfigs/
 
 ## 运行时配置
 
-地区和服务可通过 `generate --profile profile.json` 覆盖或追加，既有 rule-set 的来源 URL
-及更新间隔、现有 DoH resolver 的 IP 和 TLS 名称也可覆盖，无需修改程序；使用
-`profile show --resolved --profile profile.json` 查看实际数据。格式及 Server 用法见
-[地区 profile](docs/configuration.md#地区-profile)、[服务 profile](docs/configuration.md#服务-profile)、
-[rule-set 来源](docs/configuration.md#rule-set-来源-profile)和[resolver](docs/configuration.md#resolver-profile)。
+统一 profile 支持运行时开关、全局策略、平台参数，以及地区、服务、rule-set 来源和
+resolver。CLI 使用 `generate --profile profile.json`，Server 可在启动时加载同一文件，
+HTTP 请求也可提交内联 `profile`。优先级从低到高为：内置默认值 → profile 文件 →
+宿主环境配置 → 请求内联 profile；请求覆盖仅作用于本次转换。
+`profile show --resolved --profile profile.json` 输出最终有效快照。格式与合并规则见
+[统一 profile](docs/configuration.md#统一-profile)，请求格式见 [HTTP API](docs/http-api.md)。
 
 以下 `BOXFORGE_` 环境开关同时适用于 CLI 和 HTTP Server；它们控制生成的
 sing-box 配置，不改变 BoxForge Server 自身的监听地址。
@@ -179,7 +181,7 @@ dotnet run --project src/BoxForge.Cli -- generate
 
 生成的 API 固定监听 `127.0.0.1:9090`，不接受远程监听配置。
 
-其余标签、目录及 endpoint 字段均由代码固定或按目标平台生成，见
+TUN 地址、探测、连接和 DNS 参数可通过 profile 调整；字段与默认值见
 [配置参考](docs/configuration.md)。
 
 ## 文档
@@ -189,6 +191,7 @@ dotnet run --project src/BoxForge.Cli -- generate
 - [HTTP API](docs/http-api.md)：JSON 转换、YAML/ZIP 导出、错误契约和安全边界
 - [配置参考](docs/configuration.md)：所有环境变量、默认值与 Tailscale 行为
 - [生成配置约定](docs/generated-config.md)：平台差异、缓存、节点和 rule-set 行为
+- [协议映射证据](docs/protocol-mappings.md)：数据表生成的来源/目标解释与固定源码证据
 - [DNS 与路由优先级](docs/routing-and-dns.md)：实际生成顺序和设计意图
 - [协议验证边界](docs/protocol-validation.md)：锁定核心、支持限制和可重复验证
 
@@ -199,6 +202,7 @@ dotnet format BoxForge.slnx --verify-no-changes
 dotnet build BoxForge.slnx --no-incremental --warnaserror
 dotnet test BoxForge.slnx --no-build
 node --test scripts/verification-process.test.mjs
+python3 scripts/generate-protocol-mappings.py --check
 python3 scripts/verify-generated-configs.py src/BoxForge.Cli/bin/Debug/net10.0/BoxForge.dll
 ```
 

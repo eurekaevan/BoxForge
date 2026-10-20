@@ -66,12 +66,24 @@ internal static class ConversionApi
         ConvertApiRequest? request;
         try
         {
-            request = JsonSerializer.Deserialize<ConvertApiRequest>(
-                body,
-                RequestJsonOptions);
+            using JsonDocument document = JsonDocument.Parse(body);
+            if (document.RootElement.ValueKind == JsonValueKind.Object)
+            {
+                bool hasProfile = false;
+                foreach (JsonProperty property in document.RootElement.EnumerateObject())
+                {
+                    if (!property.Name.Equals("profile", StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    if (hasProfile || property.Value.ValueKind != JsonValueKind.Object)
+                        return ApiProblems.BadRequest("profile 必须且只能提供一个 JSON 对象。");
+                    hasProfile = true;
+                }
+            }
+            request = document.RootElement.Deserialize<ConvertApiRequest>(RequestJsonOptions);
         }
-        catch (JsonException)
+        catch (Exception exception) when (exception is JsonException or InvalidOperationException)
         {
+            // JsonDocument decodes escaped property names lazily and can reject UTF-16 here.
             return ApiProblems.BadRequest(
                 "请求体必须是有效的 JSON。");
         }
@@ -108,7 +120,10 @@ internal static class ConversionApi
         try
         {
             ConversionBundle bundle = await engine.ConvertAsync(
-                new ConversionRequest(request.Name, request.Yaml, platforms),
+                new ConversionRequest(request.Name, request.Yaml, platforms)
+                {
+                    Profile = request.Profile
+                },
                 cancellationToken);
             return Results.Ok(new ConvertApiResponse(
                 bundle.Name,
@@ -120,6 +135,10 @@ internal static class ConversionApi
                             artifact.Sha256,
                             artifact.Content))
                 ]));
+        }
+        catch (FormatException)
+        {
+            return ApiProblems.BadRequest("profile 必须是有效的配置覆盖对象。");
         }
         catch (BoxForgeConversionException)
         {

@@ -4,11 +4,8 @@ using BoxForge.Models.Intermediate;
 
 namespace BoxForge.Builders.Components;
 
-public static class ProfilePlanner
+internal static class ProfilePlanner
 {
-    public static ProfilePlan Plan(NodeCatalog nodes, BoxForgeProfile profile)
-        => SingboxGroupEmitter.Emit(PlanGroups(nodes, profile, probeInterval: null));
-
     internal static ProfileGroupPlan PlanGroups(NodeCatalog nodes, BoxForgeProfile profile, string? probeInterval)
     {
         var inventory = profile.Regions.Select(definition => new RegionInventory(
@@ -16,7 +13,7 @@ public static class ProfilePlanner
         var probes = new List<ProbeGroupPlan>();
         var regions = BuildRegionGroups(
             inventory,
-            probes, probeInterval);
+            probes, probeInterval, profile.Policies);
         var main = BuildMainGroup(nodes, regions, profile);
         var services = BuildServiceGroups(nodes, inventory, regions, profile);
         var plan = new ProfileGroupPlan(
@@ -32,7 +29,7 @@ public static class ProfilePlanner
 
     private static List<SelectionGroupPlan> BuildRegionGroups(
         IReadOnlyList<RegionInventory> inventory,
-        List<ProbeGroupPlan> probes, string? probeInterval)
+        List<ProbeGroupPlan> probes, string? probeInterval, ProfilePolicies policies)
     {
         var groups = new List<SelectionGroupPlan>();
 
@@ -46,7 +43,7 @@ public static class ProfilePlanner
             string autoTag = $"{region.Definition.DisplayName} AUTO";
             probes.Add(new ProbeGroupPlan(
                 autoTag, region.Leaves.ToArray(),
-                "https://www.gstatic.com/generate_204", 50, "30m", probeInterval));
+                policies.UrlTestUrl, policies.UrlTestTolerance, policies.UrlTestIdleTimeout, probeInterval));
             groups.Add(new SelectionGroupPlan(
                 region.Definition.DisplayName, [autoTag, .. region.Leaves], autoTag));
         }
@@ -73,7 +70,7 @@ public static class ProfilePlanner
                 : SingboxTags.DirectOutbound;
         string? preferredRegionName = regions.Count == 0
             ? null
-            : profile.Regions.Single(region => region.Id == "us").DisplayName;
+            : profile.Regions.Single(region => region.Id == profile.Policies.MainDefaultRegion).DisplayName;
         string defaultSelection = regions.FirstOrDefault(group => group.Name == preferredRegionName)?.Name
             ?? fallbackSelection;
 

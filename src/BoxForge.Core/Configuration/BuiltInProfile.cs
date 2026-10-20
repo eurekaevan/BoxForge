@@ -11,7 +11,9 @@ internal sealed record BuiltInProfile(
     ImmutableArray<ServiceDefinition> Services,
     ImmutableDictionary<TargetPlatform, PlatformProfile> Platforms,
     ImmutableArray<BuiltInProfile.RuleSetSource> RuleSets,
-    ImmutableArray<BuiltInProfile.Resolver> Resolvers)
+    ImmutableArray<BuiltInProfile.Resolver> Resolvers,
+    RuntimeProfile Runtime,
+    ProfilePolicies Policies)
 {
     internal static readonly JsonSerializerOptions JsonOptions = new()
     {

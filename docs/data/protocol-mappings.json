@@ -1,0 +1,275 @@
+{
+  "version": 1,
+  "mappings": [
+    {
+      "id": "vless.flow",
+      "source_field": "flow",
+      "source_meaning": "UTF-8 shorter than 16 bytes disables flow; otherwise accept only the xtls-rprx-vision prefix.",
+      "target_meaning": "Omit flow when disabled; emit xtls-rprx-vision for Vision.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/vless.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/vless/outbound.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "vless.datagram-encoding",
+      "source_field": "packet-encoding",
+      "source_meaning": "With packet-addr absent, packet/packetaddr select packet addressing; all other values and omission select XUDP.",
+      "target_meaning": "Emit packetaddr or xudp explicitly; do not depend on target defaults.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/vless.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/vless/outbound.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "vless.tls",
+      "source_field": "tls",
+      "source_meaning": "The tls switch defaults to false; TLS and Reality options also influence connection setup.",
+      "target_meaning": "BoxForge requires explicit true and a supported fingerprint for Reality; otherwise reject. Emit TLS only when enabled.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/vless.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/vless/outbound.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "anytls.tls",
+      "source_field": "tls",
+      "source_meaning": "Native AnyTLS always uses TLS; tls is a BoxForge compatibility field, not a Mihomo AnyTLS switch.",
+      "target_meaning": "Emit enabled TLS on omission or true; reject explicit false/null and unsupported Reality.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/anytls.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/anytls/outbound.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "anytls.idle-timeout",
+      "source_field": "idle-session-timeout",
+      "source_meaning": "Mihomo declares integer seconds; BoxForge also accepts positive Go duration strings. Preserve existing rejection of zero/negative values.",
+      "target_meaning": "Emit explicit seconds with s, retain accepted duration text; omit absent/null values without inventing defaults.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/anytls.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/anytls/outbound.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "anytls.idle-check-interval",
+      "source_field": "idle-session-check-interval",
+      "source_meaning": "Mihomo declares integer seconds; BoxForge also accepts positive Go duration strings. Preserve existing rejection of zero/negative values.",
+      "target_meaning": "Emit idle_session_check_interval using the same positive-duration interpretation as idle timeout.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/anytls.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/anytls/outbound.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "anytls.minimum-idle-sessions",
+      "source_field": "min-idle-session",
+      "source_meaning": "Keep the accepted nonnegative int32 value, including zero; absence/null leaves runtime default handling unchanged.",
+      "target_meaning": "Emit min_idle_session when present and non-null, preserving zero.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/anytls.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/anytls/outbound.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "anytls.client-metadata",
+      "source_field": "client-metadata",
+      "source_meaning": "Keep explicit metadata including empty strings and whitespace; BoxForge rejects LF and UTF-8 values over 65479 bytes.",
+      "target_meaning": "Emit client_metadata verbatim; omit absence/null and never invent software, version, platform or identity metadata.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/anytls.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/anytls/outbound.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "hysteria2.tls",
+      "source_field": "tls",
+      "source_meaning": "QUIC requires TLS; tls is a BoxForge compatibility switch.",
+      "target_meaning": "Require TLS, reject explicit false/null, Reality and uTLS.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/hysteria2.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/hysteria2/outbound.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "hysteria2.ports",
+      "source_field": "ports",
+      "source_meaning": "Nonempty ports takes precedence over port; retain source order, scalar ports and explicit ranges.",
+      "target_meaning": "Emit server_port for one scalar; otherwise emit server_ports as start:end ranges, including equal-endpoint ranges for list scalars.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/hysteria2.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/hysteria2/outbound.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "hysteria2.upload",
+      "source_field": "up",
+      "source_meaning": "Interpret Mihomo integer bandwidth units; BoxForge additionally treats plain integers as Mbps.",
+      "target_meaning": "Keep only exact int32 Mbps values; reject rounding, truncation and source arithmetic overflow. Preserve zero and omission separately.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/hysteria2.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/hysteria2/outbound.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "hysteria2.download",
+      "source_field": "down",
+      "source_meaning": "Use the same exact bandwidth interpretation as up.",
+      "target_meaning": "Emit down_mbps without injecting a bandwidth default.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/hysteria2.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/hysteria2/outbound.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "hysteria2.hop-interval",
+      "source_field": "hop-interval",
+      "source_meaning": "Integer seconds or min-max; reorder bounds, use 30s for zero, and clamp positive minimum to 5s.",
+      "target_meaning": "Preserve fixed versus ranged intervals and int64 nanosecond bounds; leave omission to existing tuning.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/hysteria2.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/hysteria2/outbound.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "hysteria2.bbr-profile",
+      "source_field": "bbr-profile",
+      "source_meaning": "Accept standard, conservative and aggressive profiles; retain omission/null.",
+      "target_meaning": "Emit an explicit profile unchanged; existing tuning applies only when no profile and no positive bandwidth are supplied.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/hysteria2.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/hysteria2/outbound.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "hysteria2.obfuscation",
+      "source_field": "obfs",
+      "source_meaning": "Accept Salamander or Gecko and preserve the nonempty raw obfuscation password.",
+      "target_meaning": "Emit obfs only when enabled; empty/null disables it under the existing source schema.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/hysteria2.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/hysteria2/outbound.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "hysteria2.gecko-minimum-packet-size",
+      "source_field": "obfs-min-packet-size",
+      "source_meaning": "Gecko only; zero uses the core default, otherwise accept 1..2048.",
+      "target_meaning": "Keep explicit nonzero size and whether it was supplied; validate against maximum using existing 512/1200 defaults.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/hysteria2.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/hysteria2/outbound.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "hysteria2.gecko-maximum-packet-size",
+      "source_field": "obfs-max-packet-size",
+      "source_meaning": "Gecko only; use the same bounds and zero-default interpretation as minimum.",
+      "target_meaning": "Emit an explicit nonzero max_packet_size; retain whether the source supplied the field when null or zero selects defaults.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/hysteria2.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/hysteria2/outbound.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "shadowsocks.cipher",
+      "source_field": "cipher",
+      "source_meaning": "Keep the existing normalized cipher; BoxForge also accepts method as an exclusive alias.",
+      "target_meaning": "Emit method without adding a cipher allowlist; official check remains the target capability gate.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/shadowsocks.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/shadowsocks/outbound.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "shadowsocks.uot-enabled",
+      "source_field": "udp-over-tcp",
+      "source_meaning": "UoT is opt-in; retain omission, explicit null, false and true.",
+      "target_meaning": "Emit udp_over_tcp only when enabled; do not inject a disabled object.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/shadowsocks.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/shadowsocks/outbound.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "shadowsocks.uot-version",
+      "source_field": "udp-over-tcp-version",
+      "source_meaning": "Omission, null and zero select legacy v1; explicit 1/2 select the corresponding wire version.",
+      "target_meaning": "Emit version 1 or 2 explicitly when UoT is enabled; reject other source versions even when disabled.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/shadowsocks.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/shadowsocks/outbound.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "shadowsocks.plugin",
+      "source_field": "plugin",
+      "source_meaning": "BoxForge supports only obfs; omission, null and empty string disable it.",
+      "target_meaning": "Emit obfs-local with structured, validated options lowered to SIP003 text; v2ray-plugin remains rejected.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/shadowsocks.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/shadowsocks/outbound.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "shadowsocks.obfs-mode",
+      "source_field": "mode",
+      "source_meaning": "BoxForge requires an explicit http or tls obfs mode.",
+      "target_meaning": "Emit obfs=http or obfs=tls; do not store SIP003 text in the node IR.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/shadowsocks.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/shadowsocks/outbound.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "shadowsocks.obfs-host",
+      "source_field": "host",
+      "source_meaning": "Omission/null uses bing.com; keep explicit raw text and reject blank/control-character hosts.",
+      "target_meaning": "SIP003-escape backslash, semicolon and equals only during emission, preserving source text in IR.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/shadowsocks.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/shadowsocks/outbound.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "trojan.tls",
+      "source_field": "tls",
+      "source_meaning": "Native TCP Trojan always uses TLS; tls is a BoxForge compatibility field, not a Mihomo Trojan switch.",
+      "target_meaning": "Emit enabled TLS on omission or explicit true; BoxForge rejects explicit false or null.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/trojan.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/trojan/outbound.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "tls.server-name",
+      "source_field": "sni",
+      "source_meaning": "Use the supplied TLS name, falling back to server; BoxForge also accepts servername and preserves its existing trimming.",
+      "target_meaning": "Emit the interpreted name as server_name, including the server fallback.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/trojan.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/common/tls/std_client.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "tls.certificate-validation",
+      "source_field": "skip-cert-verify",
+      "source_meaning": "Explicit true disables certificate validation; false enables it. Preserve omission separately.",
+      "target_meaning": "Emit the explicit boolean as insecure; leave omitted/null values unset.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/trojan.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/common/tls/std_client.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "tls.application-protocols",
+      "source_field": "alpn",
+      "source_meaning": "Keep explicit protocol order and duplicates, and distinguish omission from an empty list.",
+      "target_meaning": "Preserve the existing alpn values and omission/empty-list serialization; this migration does not change defaults.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/trojan.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/common/tls/std_client.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "tls.client-fingerprint",
+      "source_field": "client-fingerprint",
+      "source_meaning": "BoxForge accepts its existing shared modern profiles; empty/none selects native TLS. Other profiles remain rejected.",
+      "target_meaning": "Emit supported uTLS profiles; omit utls for native TLS.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/component/tls/utls.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/common/tls/utls_client.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "tls.reality.public-key",
+      "source_field": "public-key",
+      "source_meaning": "BoxForge accepts a 32-byte Base64URL Reality public key; keep the accepted key unchanged.",
+      "target_meaning": "Emit the accepted key as reality.public_key.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/trojan.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/common/tls/reality_client.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "tls.reality.short-id",
+      "source_field": "short-id",
+      "source_meaning": "BoxForge accepts zero to eight bytes of even-length hexadecimal, preserving case after existing trimming.",
+      "target_meaning": "Emit the accepted value as reality.short_id, including an explicitly empty string.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/trojan.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/common/tls/reality_client.go",
+      "status": "Mapped"
+    }
+  ]
+}

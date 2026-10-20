@@ -1,28 +1,23 @@
 using BoxForge.Configuration;
 using BoxForge.Models;
 using BoxForge.Models.Intermediate;
-using BoxForge.Models.Singbox;
-using Microsoft.Extensions.Options;
 
 namespace BoxForge.Builders.Components;
 
-public sealed class DnsProfileBuilder(IOptions<TailscaleOptions> tailscaleOptions, BoxForgeProfile profile)
+internal sealed class DnsProfileBuilder(BoxForgeProfile profile)
 {
-    private readonly TailscaleOptions tailscale = tailscaleOptions.Value;
-
-    public DnsConfig Build(TargetPlatform platform) => SingboxDnsEmitter.Emit(Plan(platform));
-
-    internal DnsPlan Plan(TargetPlatform platform)
+    internal DnsPlan Plan(TargetPlatform platform, BoxForgeProfile? effectiveProfile = null)
     {
-        PlatformProfile settings = profile.GetPlatform(platform);
+        BoxForgeProfile settingsProfile = effectiveProfile ?? profile;
+        PlatformProfile settings = settingsProfile.GetPlatform(platform);
         DnsHttpsResolverPlan[] resolvers =
         [
-            CreateResolver(SingboxTags.DirectAliDns, profile.GetResolver("alidns")),
-            CreateResolver(SingboxTags.DirectTencentDns, profile.GetResolver("tencent")),
-            CreateResolver(SingboxTags.ProxyCloudflareDns, profile.GetResolver("cloudflare"), SingboxTags.MainProxyGroup),
-            CreateResolver(SingboxTags.ProxyGoogleDns, profile.GetResolver("google"), SingboxTags.MainProxyGroup)
+            CreateResolver(SingboxTags.DirectAliDns, settingsProfile.GetResolver("alidns")),
+            CreateResolver(SingboxTags.DirectTencentDns, settingsProfile.GetResolver("tencent")),
+            CreateResolver(SingboxTags.ProxyCloudflareDns, settingsProfile.GetResolver("cloudflare"), SingboxTags.MainProxyGroup),
+            CreateResolver(SingboxTags.ProxyGoogleDns, settingsProfile.GetResolver("google"), SingboxTags.MainProxyGroup)
         ];
-        string[] priorityRuleSets = profile.Services
+        string[] priorityRuleSets = settingsProfile.Services
             .SelectMany(service => service.RuleSets)
             .Distinct(StringComparer.Ordinal).ToArray();
         var pools = new List<DnsResolverPoolPlan>();
@@ -36,8 +31,11 @@ public sealed class DnsProfileBuilder(IOptions<TailscaleOptions> tailscaleOption
         pools.Add(new DnsResolverPoolPlan("global", null,
             SingboxTags.ProxyCloudflareDns, SingboxTags.ProxyGoogleDns));
         var plan = new DnsPlan(settings.AddressFamily, settings.DnsSelectionMode,
-            resolvers, tailscale.IsEnabled(settings), [RuleSetTags.Ads], pools,
-            SingboxTags.ProxyCloudflareDns);
+            resolvers, settingsProfile.Runtime.Tailscale.IsEnabled(settings),
+            [RuleSetTags.Ads], pools,
+            SingboxTags.ProxyCloudflareDns,
+            settingsProfile.Policies.DnsTimeout, settingsProfile.Policies.DnsCacheCapacity,
+            settingsProfile.Policies.DnsOptimisticTimeout);
         plan.Validate();
         return plan;
     }

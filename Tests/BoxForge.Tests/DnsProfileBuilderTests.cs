@@ -4,7 +4,6 @@ using System.Text.Json;
 using BoxForge.Configuration;
 using BoxForge.Models;
 using BoxForge.Models.Singbox;
-using Microsoft.Extensions.Options;
 
 namespace BoxForge.Tests;
 
@@ -22,10 +21,9 @@ public sealed class DnsProfileBuilderTests
         var settings = BoxForgeProfile.Default.GetPlatform(platform) with { AddressFamily = addressFamily };
         var profile = new BoxForgeProfile(BuiltInProfile.Default with
         { Platforms = BuiltInProfile.Default.Platforms.SetItem(platform, settings) });
-        var options = new TailscaleOptions { Enabled = true, AndroidEnabled = true };
-        var builder = new DnsProfileBuilder(Options.Create(options), profile);
+        var builder = new DnsProfileBuilder(profile);
         var plan = builder.Plan(platform);
-        string expected = JsonSerializer.Serialize(builder.Build(platform));
+        string expected = JsonSerializer.Serialize(SingboxDnsEmitter.Emit(builder.Plan(platform)));
         var first = SingboxDnsEmitter.Emit(plan);
         Assert.That(JsonSerializer.Serialize(first), Is.EqualTo(expected));
         first.Servers.Clear();
@@ -37,14 +35,19 @@ public sealed class DnsProfileBuilderTests
             rule.IpCidr?.Clear();
         }
         first.Rules.Clear();
-        options.Enabled = options.AndroidEnabled = false;
+        var changedProfile = new BoxForgeProfile(BuiltInProfile.Default with
+        {
+            Platforms = BuiltInProfile.Default.Platforms.SetItem(platform, settings),
+            Runtime = profile.Runtime with { Tailscale = new(false, false) }
+        });
         Assert.Multiple(() =>
         {
             Assert.That(JsonSerializer.Serialize(SingboxDnsEmitter.Emit(plan)), Is.EqualTo(expected));
             Assert.That(plan.AddressFamily, Is.EqualTo(addressFamily));
             Assert.That(plan.SelectionMode, Is.EqualTo(settings.DnsSelectionMode));
             Assert.That(plan.TailscaleEnabled, Is.True);
-            Assert.That(builder.Plan(platform).TailscaleEnabled, Is.False);
+            Assert.That(builder.Plan(platform).TailscaleEnabled, Is.True);
+            Assert.That(builder.Plan(platform, changedProfile).TailscaleEnabled, Is.False);
             Assert.That(plan.Pools.Select(pool => pool.Name), Is.EqualTo(new[] { "priority", "domestic", "global" }));
             Assert.That(plan.Pools[0].RuleSets, Is.EqualTo(profile.Services.SelectMany(service => service.RuleSets).Distinct(StringComparer.Ordinal)));
             Assert.That(plan.Pools[1].RuleSets, Is.EqualTo(new[] { RuleSetTags.Cn }));
@@ -98,7 +101,7 @@ public sealed class DnsProfileBuilderTests
         DnsStrategy? strategy,
         bool blocksAaaa)
     {
-        DnsConfig dns = CreateBuilder().Build(platform);
+        DnsConfig dns = SingboxDnsEmitter.Emit(CreateBuilder().Plan(platform));
         int aaaaIndex = dns.Rules.FindIndex(rule =>
             rule.QueryType?.Contains("AAAA") == true
             && rule.Action == DnsRuleAction.Predefined);
@@ -122,7 +125,7 @@ public sealed class DnsProfileBuilderTests
     [Test]
     public void TailscaleRoutePrecedesAdBlockingAndAdRuleReturnsNxDomain()
     {
-        DnsConfig dns = CreateBuilder(tailscaleEnabled: true).Build(TargetPlatform.Linux);
+        DnsConfig dns = SingboxDnsEmitter.Emit(CreateBuilder(tailscaleEnabled: true).Plan(TargetPlatform.Linux));
         int tailscaleIndex = dns.Rules.FindIndex(rule =>
             rule.PreferredBy?.Contains(SingboxTags.TailscaleDns) == true);
         int adsIndex = FindRuleSetIndex(dns.Rules, RuleSetTags.Ads);
@@ -142,8 +145,8 @@ public sealed class DnsProfileBuilderTests
     [TestCase(TargetPlatform.Windows)]
     public void ServiceDnsClassificationMatchesRoutesBeforeDomesticPool(TargetPlatform platform)
     {
-        DnsConfig dns = CreateBuilder().Build(platform);
-        RouteConfig route = new RouteProfileBuilder(Options.Create(new TailscaleOptions()), BoxForgeProfile.Default).Build(platform);
+        DnsConfig dns = SingboxDnsEmitter.Emit(CreateBuilder().Plan(platform));
+        RouteConfig route = SingboxRouteEmitter.Emit(new RouteProfileBuilder(BoxForgeProfile.Default).Plan(platform));
         string[] expectedRuleSets =
         [
             RuleSetTags.Ai, RuleSetTags.Google, RuleSetTags.Spotify,
@@ -183,8 +186,8 @@ public sealed class DnsProfileBuilderTests
     [Test]
     public void AndroidPoolsQuerySecondaryOnlyAfterPrimaryIsUnacceptable()
     {
-        DnsConfig dns = CreateBuilder().Build(TargetPlatform.Android);
-        List<string> priorityRuleSets = ProfileDefinitions.Services
+        DnsConfig dns = SingboxDnsEmitter.Emit(CreateBuilder().Plan(TargetPlatform.Android));
+        List<string> priorityRuleSets = BoxForgeProfile.Default.Services
             .SelectMany(service => service.RuleSets)
             .Distinct(StringComparer.Ordinal)
             .ToList();
@@ -217,8 +220,8 @@ public sealed class DnsProfileBuilderTests
     public void DesktopPoolsRaceOnlyNoErrorAndPreferPrimaryNxDomain(
         TargetPlatform platform)
     {
-        DnsConfig dns = CreateBuilder().Build(platform);
-        List<string> priorityRuleSets = ProfileDefinitions.Services
+        DnsConfig dns = SingboxDnsEmitter.Emit(CreateBuilder().Plan(platform));
+        List<string> priorityRuleSets = BoxForgeProfile.Default.Services
             .SelectMany(service => service.RuleSets)
             .Distinct(StringComparer.Ordinal)
             .ToList();
@@ -249,7 +252,7 @@ public sealed class DnsProfileBuilderTests
     [Test]
     public void DesktopPriorityRuleShapeEncodesPositiveRaceAndOrderedNxDomain()
     {
-        DnsConfig dns = CreateBuilder().Build(TargetPlatform.Linux);
+        DnsConfig dns = SingboxDnsEmitter.Emit(CreateBuilder().Plan(TargetPlatform.Linux));
         List<DnsRule> pool = GetPoolRules(
             dns.Rules,
             DnsResponseTags.PriorityPrimary);
@@ -307,7 +310,7 @@ public sealed class DnsProfileBuilderTests
     public void DesktopAddressPoolsPreferIpv4BeforeEmptyAnswersWithoutUsingExpiredCache(
         TargetPlatform platform, string primaryTag, string secondaryTag)
     {
-        DnsConfig dns = CreateBuilder().Build(platform);
+        DnsConfig dns = SingboxDnsEmitter.Emit(CreateBuilder().Plan(platform));
         List<DnsRule> pool = GetPoolRules(dns.Rules, primaryTag + "-a");
         DnsRule generalPrimary = dns.Rules.Single(rule => rule.Tag == primaryTag);
 
@@ -343,9 +346,8 @@ public sealed class DnsProfileBuilderTests
     [TestCase(TargetPlatform.Windows)]
     public void AddressFamilyPolicyAlsoControlsRouteIpv6Guards(TargetPlatform platform)
     {
-        var options = Options.Create(new TailscaleOptions());
-        DnsConfig dns = new DnsProfileBuilder(options, BoxForgeProfile.Default).Build(platform);
-        RouteConfig route = new RouteProfileBuilder(options, BoxForgeProfile.Default).Build(platform);
+        DnsConfig dns = SingboxDnsEmitter.Emit(new DnsProfileBuilder(BoxForgeProfile.Default).Plan(platform));
+        RouteConfig route = SingboxRouteEmitter.Emit(new RouteProfileBuilder(BoxForgeProfile.Default).Plan(platform));
 
         Assert.That(BoxForgeProfile.Default.GetPlatform(platform).AddressFamily,
             Is.EqualTo(AddressFamilyPolicy.Ipv4Only));
@@ -358,8 +360,8 @@ public sealed class DnsProfileBuilderTests
     [Test]
     public void PoolsEndWithScopedServfailAndDoNotFallThroughToAnotherPool()
     {
-        DnsConfig dns = CreateBuilder().Build(TargetPlatform.Linux);
-        List<string> priorityRuleSets = ProfileDefinitions.Services
+        DnsConfig dns = SingboxDnsEmitter.Emit(CreateBuilder().Plan(TargetPlatform.Linux));
+        List<string> priorityRuleSets = BoxForgeProfile.Default.Services
             .SelectMany(service => service.RuleSets)
             .Distinct(StringComparer.Ordinal)
             .ToList();
@@ -390,7 +392,7 @@ public sealed class DnsProfileBuilderTests
     [Test]
     public void ResolverServersHaveStableTransportIdentityAndCachePolicy()
     {
-        DnsConfig dns = CreateBuilder().Build(TargetPlatform.Linux);
+        DnsConfig dns = SingboxDnsEmitter.Emit(CreateBuilder().Plan(TargetPlatform.Linux));
         Dictionary<string, HttpsDnsServer> servers = dns.Servers
             .OfType<HttpsDnsServer>()
             .ToDictionary(server => server.Tag!, StringComparer.Ordinal);
@@ -425,7 +427,7 @@ public sealed class DnsProfileBuilderTests
     [Test]
     public void BuilderDoesNotEmitNodeDomainSpecificDnsRules()
     {
-        DnsConfig dns = CreateBuilder().Build(TargetPlatform.Linux);
+        DnsConfig dns = SingboxDnsEmitter.Emit(CreateBuilder().Plan(TargetPlatform.Linux));
 
         Assert.That(dns.Rules.Any(rule => rule.Domain is not null), Is.False);
     }
@@ -433,7 +435,7 @@ public sealed class DnsProfileBuilderTests
     [Test]
     public void TailscaleResolverDisablesOptimisticCache()
     {
-        DnsConfig dns = CreateBuilder(tailscaleEnabled: true).Build(TargetPlatform.Linux);
+        DnsConfig dns = SingboxDnsEmitter.Emit(CreateBuilder(tailscaleEnabled: true).Plan(TargetPlatform.Linux));
         DnsRule tailscaleRule = dns.Rules.Single(rule =>
             rule.PreferredBy?.Contains(SingboxTags.TailscaleDns) == true);
 
@@ -613,9 +615,8 @@ public sealed class DnsProfileBuilderTests
         rules.FindIndex(rule => rule.RuleSet?.Contains(ruleSet) == true);
 
     private static DnsProfileBuilder CreateBuilder(bool tailscaleEnabled = false) =>
-        new(Options.Create(new TailscaleOptions
+        new(new BoxForgeProfile(BuiltInProfile.Default with
         {
-            Enabled = tailscaleEnabled,
-            AndroidEnabled = tailscaleEnabled
-        }), BoxForgeProfile.Default);
+            Runtime = BuiltInProfile.Default.Runtime with { Tailscale = new(tailscaleEnabled, tailscaleEnabled) }
+        }));
 }

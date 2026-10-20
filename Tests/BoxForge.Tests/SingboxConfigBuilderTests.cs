@@ -6,12 +6,11 @@ using BoxForge.Models;
 using BoxForge.Models.Singbox;
 using BoxForge.Services;
 using BoxForge.Exceptions;
-using Microsoft.Extensions.Options;
+using System.Collections;
 using BoxForge.Converters;
 using BoxForge.Models.Clash;
 using BoxForge.Models.Intermediate;
 using BoxForge.Parsers;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace BoxForge.Tests;
 
@@ -39,7 +38,7 @@ public sealed class SingboxConfigBuilderTests
         var plan = CreateBuilder(apiEnabled: true).Plan(new SingboxBuildRequest(nodes, TargetPlatform.Linux, new string('a', 64)));
         plan = fault switch
         {
-            "leaf" => plan with { LeafTags = [] },
+            "leaf" => plan with { Nodes = [] },
             "dns_detour" => plan with { Dns = plan.Dns with { Resolvers = [plan.Dns.Resolvers[0] with { Detour = "missing" }, .. plan.Dns.Resolvers.Skip(1)] } },
             "dns_rule_set" => plan with { Dns = plan.Dns with { Pools = [plan.Dns.Pools[0] with { RuleSets = ["missing"] }, .. plan.Dns.Pools.Skip(1)] } },
             "service_selector" => plan with { Groups = plan.Groups with { Services = [] } },
@@ -95,7 +94,7 @@ public sealed class SingboxConfigBuilderTests
     }
 
     [Test]
-    public void BuildRejectsLegacyCatalogWithUndeclaredPlannedLeaves()
+    public void BuildRejectsCatalogWithUndeclaredPlannedLeaves()
     {
         var nodes = new NodeCatalog([CreateProxy("actual", "node.example.com")], ["invented"]);
         var exception = Assert.Throws<ConfigValidationException>(() => CreateBuilder().Build(
@@ -108,24 +107,6 @@ public sealed class SingboxConfigBuilderTests
     }
 
     [Test]
-    public void ConfigurationBindingsFollowAnExplicitlyModifiedCompatibilityView()
-    {
-        string yaml = File.ReadAllText(Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", "tls.yaml"));
-        var input = new ClashParser().Parse(yaml)!;
-        var catalog = new NodeCatalogBuilder([new VlessConverter(), new TrojanConverter()],
-            NullLogger<NodeCatalogBuilder>.Instance, BoxForgeProfile.Default).Build(input, strictNodeValidation: true);
-        var view = (IList<ProxyOutbound>)catalog.Outbounds;
-        int index = view.ToList().FindIndex(node => node is TrojanOutbound);
-        string originalName = view[index].Tag;
-        view[index] = ((TrojanOutbound)view[index]) with { Tag = "renamed" };
-        catalog = catalog with { Names = [.. catalog.Names.Select(name => name == originalName ? "renamed" : name)] };
-        var config = CreateBuilder().Build(new SingboxBuildRequest(catalog, TargetPlatform.Linux, new string('a', 64)));
-        Assert.That(config.Outbounds.OfType<TrojanOutbound>().Single().Tag, Is.EqualTo("renamed"));
-        Assert.That(config.Outbounds.OfType<SelectorOutbound>().First().Outbounds, Does.Contain("renamed"));
-        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Ipv4Only));
-    }
-
-    [Test]
     public void EndpointSnapshotPreservesItsConfiguredTaildropDirectory()
     {
         var profile = BoxForgeProfile.Default;
@@ -134,10 +115,9 @@ public sealed class SingboxConfigBuilderTests
             Platforms = BuiltInProfile.Default.Platforms.SetItem(TargetPlatform.Linux,
                 profile.GetPlatform(TargetPlatform.Linux) with { TaildropDirectory = "EndpointTaildrop" })
         });
-        var options = Options.Create(new TailscaleOptions());
-        var builder = new SingboxConfigBuilder(new TailscaleEndpointBuilder(options, endpointProfile),
-            new DnsProfileBuilder(options, profile), new RouteProfileBuilder(options, profile),
-            new SingboxApiServiceBuilder(Options.Create(new SingboxApiOptions())), profile);
+        var builder = new SingboxConfigBuilder(new TailscaleEndpointBuilder(endpointProfile),
+            new DnsProfileBuilder(profile), new RouteProfileBuilder(profile),
+            profile);
         var config = builder.Build(new SingboxBuildRequest(new NodeCatalog([], []), TargetPlatform.Linux, new string('a', 64)));
         Assert.That(config.Endpoints!.OfType<TailscaleEndpoint>().Single().TaildropDirectory, Is.EqualTo("EndpointTaildrop"));
     }
@@ -145,35 +125,35 @@ public sealed class SingboxConfigBuilderTests
     [Test]
     public void PeripheralEmissionUsesTheValidatedFeatureSnapshot()
     {
-        var tailscale = new TailscaleOptions { Enabled = true, AndroidEnabled = true };
-        var api = new SingboxApiOptions { Enabled = true };
-        var options = Options.Create(tailscale);
-        var profile = BoxForgeProfile.Default;
-        var builder = new SingboxConfigBuilder(new TailscaleEndpointBuilder(options, profile),
-            new DnsProfileBuilder(options, profile), new RouteProfileBuilder(options, profile),
-            new SingboxApiServiceBuilder(Options.Create(api)), profile);
+        var enabled = BoxForgeProfile.Default.ApplyOverrides(JsonSerializer.SerializeToNode(new
+        {
+            version = 1,
+            runtime = new { tailscale = new { enabled = true, android_enabled = true }, singbox_api = new { enabled = true } }
+        })!.AsObject());
+        var disabled = enabled.ApplyOverrides(JsonSerializer.SerializeToNode(new
+        {
+            version = 1,
+            runtime = new { tailscale = new { enabled = false, android_enabled = false }, singbox_api = new { enabled = false } }
+        })!.AsObject());
         var request = new SingboxBuildRequest(new NodeCatalog([], []), TargetPlatform.Linux, new string('a', 64));
-        var plan = builder.Plan(request);
-        tailscale.Enabled = tailscale.AndroidEnabled = api.Enabled = false;
-        var endpoints = TailscaleEndpointBuilder.Build(plan.TaildropDirectory, plan.TailscaleEndpointEnabled);
-        var services = SingboxApiServiceBuilder.Build(plan.ApiServiceEnabled);
+        var plan = CreateBuilder(profile: enabled).Plan(request);
+        var endpoints = TailscaleEndpointBuilder.Emit(plan.TaildropDirectory, plan.TailscaleEndpointEnabled);
+        var services = SingboxApiServiceBuilder.Emit(plan.ApiServiceEnabled);
         Assert.Multiple(() =>
         {
             Assert.That(endpoints.Single().Tag, Is.EqualTo(SingboxTags.TailscaleEndpoint));
             Assert.That(((ApiService)services.Single()).Dashboard!.HttpClient,
                 Is.EqualTo(plan.HttpClients.Single(client => client.Name == HttpClientTags.DashboardDirect).Name));
-            Assert.That(builder.Plan(request).TailscaleEndpointEnabled, Is.False);
-            Assert.That(builder.Plan(request).ApiServiceEnabled, Is.False);
+            Assert.That(CreateBuilder(profile: disabled).Plan(request).TailscaleEndpointEnabled, Is.False);
+            Assert.That(CreateBuilder(profile: disabled).Plan(request).ApiServiceEnabled, Is.False);
+            Assert.That(plan.TailscaleEndpointEnabled, Is.True);
         });
     }
 
     [TestCase("untouched")]
-    [TestCase("read")]
     [TestCase("hash")]
     [TestCase("equality")]
     [TestCase("copy-hash")]
-    [TestCase("legacy-constructor")]
-    [TestCase("converted-nodes")]
     public async Task SharedCatalogGeneratesIndependentPlatformConfigurationsConcurrently(string access)
     {
         var input = new ClashConfig { Proxies = [] };
@@ -185,9 +165,7 @@ public sealed class SingboxConfigBuilderTests
                 yaml = yaml.Replace("    password: test-only", "    password: test-only\n    alpn: [h2, http/1.1]", StringComparison.Ordinal);
             input.Proxies.AddRange(parser.Parse(yaml)!.Proxies);
         }
-        var catalog = new NodeCatalogBuilder(
-            [new VlessConverter(), new TrojanConverter(), new Hysteria2Converter(), new AnyTlsConverter(), new ShadowsocksConverter()],
-            NullLogger<NodeCatalogBuilder>.Instance, BoxForgeProfile.Default).Build(input, strictNodeValidation: true);
+        var catalog = new NodeCatalogBuilder(BoxForgeProfile.Default).Build(input);
         var builder = CreateBuilder();
         var serializer = new ConfigSerializer();
         TargetPlatform[] platforms = Enum.GetValues<TargetPlatform>();
@@ -195,9 +173,6 @@ public sealed class SingboxConfigBuilderTests
             platform => serializer.Serialize(builder.Build(new SingboxBuildRequest(catalog, platform, new string('a', 64)))));
         switch (access)
         {
-            case "read":
-                _ = catalog.Outbounds;
-                break;
             case "hash":
                 _ = catalog.GetHashCode();
                 break;
@@ -207,12 +182,7 @@ public sealed class SingboxConfigBuilderTests
             case "copy-hash":
                 _ = (catalog with { }).GetHashCode();
                 break;
-            case "legacy-constructor":
-                catalog = new NodeCatalog(catalog.Outbounds, catalog.Names);
-                break;
-            case "converted-nodes":
-                catalog = NodeCatalog.FromEntries(catalog.Outbounds.Select(NodeConversionResult.Success).ToArray(), catalog.Names);
-                break;
+
         }
         var generated = await Task.WhenAll(Enumerable.Range(0, 3).SelectMany(_ => platforms.Reverse().Select(platform =>
             Task.Run(() => (Platform: platform, Config: builder.Build(new SingboxBuildRequest(catalog, platform, new string('a', 64))))))));
@@ -236,10 +206,10 @@ public sealed class SingboxConfigBuilderTests
         foreach (TargetPlatform platform in platforms)
             Assert.That(serializer.Serialize(builder.Build(new SingboxBuildRequest(catalog, platform, new string('a', 64)))),
                 Is.EqualTo(expected[platform]));
-        foreach (ParsedNode entry in (catalog.Entries ?? []).OfType<ParsedNode>())
+        foreach (ProxyNode node in catalog.Nodes)
         {
-            Assert.That(entry.Node.Connection.ConnectTimeout, Is.Null);
-            if (entry.Node is Hysteria2Node hysteria2)
+            Assert.That(node.Connection.ConnectTimeout, Is.Null);
+            if (node is Hysteria2Node hysteria2)
             {
                 Assert.That(hysteria2.TuningHopInterval, Is.Null);
                 Assert.That(hysteria2.TuningBbrProfile, Is.Null);
@@ -344,17 +314,8 @@ public sealed class SingboxConfigBuilderTests
     [TestCase(TargetPlatform.Windows)]
     public void AllPlatformsCanDisableTailscaleExplicitly(TargetPlatform platform)
     {
-        var options = new TailscaleOptions();
-        if (platform == TargetPlatform.Android)
-        {
-            options.AndroidEnabled = false;
-        }
-        else
-        {
-            options.Enabled = false;
-        }
-
-        SingboxConfig config = CreateBuilder(options).Build(new SingboxBuildRequest(
+        SingboxConfig config = CreateBuilder(tailscaleEnabled: platform == TargetPlatform.Android,
+            androidEnabled: platform != TargetPlatform.Android).Build(new SingboxBuildRequest(
             new NodeCatalog([], []),
             platform,
             new string('c', 64)));
@@ -380,12 +341,12 @@ public sealed class SingboxConfigBuilderTests
     [TestCase(TargetPlatform.Windows)]
     public void RuleSetsUseAnIpv4OnlyProxyHttpClient(TargetPlatform platform)
     {
-        ProxyOutbound first = CreateProxy("美国 01", "us-1.example.com");
-        ProxyOutbound second = CreateProxy("美国 02", "us-2.example.com");
+        ProxyNode first = CreateProxy("美国 01", "us-1.example.com");
+        ProxyNode second = CreateProxy("美国 02", "us-2.example.com");
         SingboxConfig config = CreateBuilder().Build(new SingboxBuildRequest(
             new NodeCatalog(
                 [first, second],
-                [first.Tag, second.Tag]),
+                [first.Name, second.Name]),
             platform,
             new string('a', 64)));
 
@@ -409,7 +370,7 @@ public sealed class SingboxConfigBuilderTests
             Assert.That(proxyClient.Detour, Is.EqualTo(regionAuto.Tag));
             Assert.That(serializedClient.GetProperty("detour").GetString(),
                 Is.EqualTo(regionAuto.Tag));
-            Assert.That(regionAuto.Outbounds, Is.EqualTo(new[] { first.Tag, second.Tag }));
+            Assert.That(regionAuto.Outbounds, Is.EqualTo(new[] { first.Name, second.Name }));
             Assert.That(
                 proxyClient.DomainResolver?.Server,
                 Is.EqualTo(SingboxTags.DirectAliDns));
@@ -454,16 +415,16 @@ public sealed class SingboxConfigBuilderTests
     [Test]
     public void RuleSetDownloadsUseLeafNodeWhenRegionAutoIsUnavailable()
     {
-        ProxyOutbound node = CreateProxy("美国 01", "us-1.example.com");
+        ProxyNode node = CreateProxy("美国 01", "us-1.example.com");
         SingboxConfig config = CreateBuilder().Build(new SingboxBuildRequest(
-            new NodeCatalog([node], [node.Tag]),
+            new NodeCatalog([node], [node.Name]),
             TargetPlatform.Linux,
             new string('a', 64)));
 
         Assert.Multiple(() =>
         {
             Assert.That(config.Outbounds.OfType<UrlTestOutbound>(), Is.Empty);
-            Assert.That(config.HttpClients.Single().Detour, Is.EqualTo(node.Tag));
+            Assert.That(config.HttpClients.Single().Detour, Is.EqualTo(node.Name));
             Assert.That(config.Route.DefaultHttpClient,
                 Is.EqualTo(HttpClientTags.RuleSetProxy));
         });
@@ -557,15 +518,16 @@ public sealed class SingboxConfigBuilderTests
     [Test]
     public void ProxyDomainsInheritFreshIpv4OnlyControlPlaneResolver()
     {
-        var proxy = new VlessOutbound
+        var proxy = ProxyNodeParser.Parse(new ClashProxyNode(new Hashtable
         {
-            Tag = "美国 01",
-            Server = "node.example.com",
-            ServerPort = 443,
-            Uuid = "00000000-0000-4000-8000-000000000001"
-        };
+            ["name"] = "美国 01",
+            ["type"] = "vless",
+            ["server"] = "node.example.com",
+            ["port"] = 443,
+            ["uuid"] = "00000000-0000-4000-8000-000000000001"
+        }));
         SingboxConfig config = CreateBuilder().Build(new SingboxBuildRequest(
-            new NodeCatalog([proxy], [proxy.Tag]),
+            new NodeCatalog([proxy], [proxy.Name]),
             TargetPlatform.Linux,
             new string('b', 64)));
 
@@ -602,15 +564,16 @@ public sealed class SingboxConfigBuilderTests
         string? keepAlive,
         string? keepAliveInterval)
     {
-        var source = new Hysteria2Outbound
+        var source = (Hysteria2Node)ProxyNodeParser.Parse(new ClashProxyNode(new Hashtable
         {
-            Tag = "HY2 node",
-            Server = "node.example.com",
-            ServerPort = 443,
-            Password = "test-only"
-        };
+            ["name"] = "HY2 node",
+            ["type"] = "hysteria2",
+            ["server"] = "node.example.com",
+            ["port"] = 443,
+            ["password"] = "test-only"
+        }));
         SingboxConfig config = CreateBuilder().Build(new SingboxBuildRequest(
-            new NodeCatalog([source], [source.Tag]),
+            new NodeCatalog([source], [source.Name]),
             platform,
             new string('d', 64)));
         Hysteria2Outbound outbound = config.Outbounds
@@ -626,23 +589,23 @@ public sealed class SingboxConfigBuilderTests
             Assert.That(outbound.HopInterval, Is.EqualTo("30s"));
             Assert.That(outbound.HopIntervalMax, Is.EqualTo("60s"));
             Assert.That(outbound.BbrProfile, Is.EqualTo("standard"));
-            Assert.That(source.ConnectTimeout, Is.Null);
-            Assert.That(source.HopInterval, Is.Null);
+            Assert.That(source.Connection.ConnectTimeout, Is.Null);
+            Assert.That(source.HopInterval.Value, Is.Null);
         });
     }
 
     [Test]
     public void GoogleServiceDefaultsToUnitedStatesGroupWhenAvailable()
     {
-        ProxyOutbound first = CreateProxy("美国 01", "us-1.example.com");
-        ProxyOutbound second = CreateProxy("美国 02", "us-2.example.com");
-        ProfilePlan plan = ProfilePlanner.Plan(new NodeCatalog(
+        ProxyNode first = CreateProxy("美国 01", "us-1.example.com");
+        ProxyNode second = CreateProxy("美国 02", "us-2.example.com");
+        ProfilePlan plan = SingboxGroupEmitter.Emit(ProfilePlanner.PlanGroups(new NodeCatalog(
             [first, second],
-            ["美国 01", "美国 02"]), BoxForgeProfile.Default);
+            ["美国 01", "美国 02"]), BoxForgeProfile.Default, null));
 
         SelectorOutbound google = plan.ServiceOutbounds.Single(outbound =>
             outbound.Tag == ServiceGroupNames.Google);
-        string unitedStates = ProfileDefinitions.Regions.Single(region =>
+        string unitedStates = BoxForgeProfile.Default.Regions.Single(region =>
             region.Id == "us").DisplayName;
 
         Assert.Multiple(() =>
@@ -655,12 +618,12 @@ public sealed class SingboxConfigBuilderTests
     [Test]
     public void GamesServiceUsesDustinWinRuleSetAndDefaultsToHongKong()
     {
-        ProxyOutbound first = CreateProxy("香港 01", "hk-1.example.com");
-        ProxyOutbound second = CreateProxy("香港 02", "hk-2.example.com");
+        ProxyNode first = CreateProxy("香港 01", "hk-1.example.com");
+        ProxyNode second = CreateProxy("香港 02", "hk-2.example.com");
         var nodes = new NodeCatalog(
             [first, second],
-            [first.Tag, second.Tag]);
-        ProfilePlan plan = ProfilePlanner.Plan(nodes, BoxForgeProfile.Default);
+            [first.Name, second.Name]);
+        ProfilePlan plan = SingboxGroupEmitter.Emit(ProfilePlanner.PlanGroups(nodes, BoxForgeProfile.Default, null));
         SingboxConfig config = CreateBuilder().Build(new SingboxBuildRequest(
             nodes,
             TargetPlatform.Android,
@@ -668,7 +631,7 @@ public sealed class SingboxConfigBuilderTests
 
         SelectorOutbound games = plan.ServiceOutbounds.Single(outbound =>
             outbound.Tag == ServiceGroupNames.Games);
-        string hongKong = ProfileDefinitions.Regions.Single(region =>
+        string hongKong = BoxForgeProfile.Default.Regions.Single(region =>
             region.Id == "hk").DisplayName;
         RouteRule gamesRoute = config.Route.Rules.Single(rule =>
             rule.Outbound == ServiceGroupNames.Games);
@@ -694,13 +657,13 @@ public sealed class SingboxConfigBuilderTests
     [TestCase(TargetPlatform.Windows)]
     public void GeneratedUrlTestsContainOnlyLeafNodesAndUsePlatformProbeInterval(TargetPlatform platform)
     {
-        ProxyOutbound usFirst = CreateProxy("美国 01", "us-1.example.com");
-        ProxyOutbound usSecond = CreateProxy("美国 02", "us-2.example.com");
-        ProxyOutbound jpFirst = CreateProxy("日本 01", "jp-1.example.com");
-        ProxyOutbound jpSecond = CreateProxy("日本 02", "jp-2.example.com");
+        ProxyNode usFirst = CreateProxy("美国 01", "us-1.example.com");
+        ProxyNode usSecond = CreateProxy("美国 02", "us-2.example.com");
+        ProxyNode jpFirst = CreateProxy("日本 01", "jp-1.example.com");
+        ProxyNode jpSecond = CreateProxy("日本 02", "jp-2.example.com");
         var nodes = new NodeCatalog(
             [usFirst, usSecond, jpFirst, jpSecond],
-            [usFirst.Tag, usSecond.Tag, jpFirst.Tag, jpSecond.Tag]);
+            [usFirst.Name, usSecond.Name, jpFirst.Name, jpSecond.Name]);
 
         SingboxConfig config = CreateBuilder().Build(new SingboxBuildRequest(
             nodes,
@@ -772,29 +735,39 @@ public sealed class SingboxConfigBuilderTests
         Assert.Throws<Exceptions.ConfigValidationException>(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Ipv4Only));
     }
 
-    private static ShadowsocksOutbound CreateProxy(string tag, string server) =>
-        new()
+    private static ShadowsocksNode CreateProxy(string tag, string server) =>
+        (ShadowsocksNode)ProxyNodeParser.Parse(new ClashProxyNode(new Hashtable
         {
-            Tag = tag,
-            Server = server,
-            ServerPort = 443,
-            Method = "aes-128-gcm",
-            Password = "test-only"
-        };
+            ["name"] = tag,
+            ["type"] = "ss",
+            ["server"] = server,
+            ["port"] = 443,
+            ["cipher"] = "aes-128-gcm",
+            ["password"] = "test-only"
+        }));
 
     private static SingboxConfigBuilder CreateBuilder(
-        TailscaleOptions? options = null,
-        bool apiEnabled = false,
+        bool? tailscaleEnabled = null,
+        bool? androidEnabled = null,
+        bool? apiEnabled = null,
         BoxForgeProfile? profile = null)
     {
         profile ??= BoxForgeProfile.Default;
-        var tailscaleOptions = Options.Create(options ?? new TailscaleOptions());
-
-        return new SingboxConfigBuilder(
-            new TailscaleEndpointBuilder(tailscaleOptions, profile),
-            new DnsProfileBuilder(tailscaleOptions, profile),
-            new RouteProfileBuilder(tailscaleOptions, profile),
-            new SingboxApiServiceBuilder(Options.Create(
-                new SingboxApiOptions { Enabled = apiEnabled })), profile);
+        if (tailscaleEnabled is not null || androidEnabled is not null || apiEnabled is not null)
+            profile = profile.ApplyOverrides(JsonSerializer.SerializeToNode(new
+            {
+                version = 1,
+                runtime = new
+                {
+                    tailscale = new
+                    {
+                        enabled = tailscaleEnabled ?? profile.Runtime.Tailscale.Enabled,
+                        android_enabled = androidEnabled ?? profile.Runtime.Tailscale.AndroidEnabled
+                    },
+                    singbox_api = new { enabled = apiEnabled ?? profile.Runtime.SingboxApi.Enabled }
+                }
+            })!.AsObject());
+        return new SingboxConfigBuilder(new TailscaleEndpointBuilder(profile),
+            new DnsProfileBuilder(profile), new RouteProfileBuilder(profile), profile);
     }
 }

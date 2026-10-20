@@ -6,47 +6,47 @@ using BoxForge.Models.Intermediate;
 
 namespace BoxForge.Converters;
 
-internal static class AnyTlsFrontend
+internal static class AnyTlsProtocol
 {
     private static readonly string[] IdleTimeoutAliases = ["idle_session_timeout", "idle-timeout", "idle_timeout"];
     private static readonly string[] IdleCheckIntervalAliases = ["idle_session_check_interval"];
 
     internal static SourceFieldSchema Schema { get; } = SourceFieldSchemas.Common()
         .Include(SourceFieldSchemas.Tls(supportsReality: false, supportsUtls: true, forceTls: true))
-        .Mapped("password", AnyTlsSemantics.IdleTimeout.SourceField)
-        .Alias(AnyTlsSemantics.IdleTimeout.SourceField, IdleTimeoutAliases)
-        .Mapped(AnyTlsSemantics.IdleCheckInterval.SourceField,
-            AnyTlsSemantics.MinimumIdleSessions.SourceField, AnyTlsSemantics.ClientMetadata.SourceField)
-        .Alias(AnyTlsSemantics.IdleCheckInterval.SourceField, IdleCheckIntervalAliases)
-        .Alias(AnyTlsSemantics.MinimumIdleSessions.SourceField, "min_idle_session")
-        .Alias(AnyTlsSemantics.ClientMetadata.SourceField, "client_metadata")
+        .Mapped("password", "idle-session-timeout")
+        .Alias("idle-session-timeout", IdleTimeoutAliases)
+        .Mapped("idle-session-check-interval",
+            "min-idle-session", "client-metadata")
+        .Alias("idle-session-check-interval", IdleCheckIntervalAliases)
+        .Alias("min-idle-session", "min_idle_session")
+        .Alias("client-metadata", "client_metadata")
         .Unsupported("目标 outbound 未暴露 disable_reuse", "disable-reuse", "disable_reuse");
 
     // Preserve the original order: server, port, password, sessions, metadata, TLS.
-    // The adapter's base class has already checked the name and Schema.
+    // The parser has already checked the name and schema.
     internal static AnyTlsNode ParseValidated(ClashProxyNode node, string name)
     {
         string server = node.GetRequiredString("server");
         int port = node.GetRequiredInt("port");
         string password = node.GetRequiredRawString("password");
-        var timeout = ExtractDuration(node, AnyTlsSemantics.IdleTimeout, IdleTimeoutAliases);
-        var interval = ExtractDuration(node, AnyTlsSemantics.IdleCheckInterval, IdleCheckIntervalAliases);
+        var timeout = ExtractDuration(node, "idle-session-timeout", IdleTimeoutAliases);
+        var interval = ExtractDuration(node, "idle-session-check-interval", IdleCheckIntervalAliases);
         int? minimumIdle = ExtractMinIdleSession(node);
         string? metadata = ExtractMetadata(node);
         var tls = TlsConfigHelper.ExtractSettings(node, server, forceTls: true)
             ?? throw new InvalidOperationException("AnyTLS interpretation unexpectedly returned no TLS settings.");
         return new AnyTlsNode(name, server, port, password, timeout, interval,
-            new(minimumIdle, node.GetPresentField("min-idle-session", "min_idle_session"), AnyTlsSemantics.MinimumIdleSessions.Id),
-            new(metadata, node.GetPresentField("client-metadata", "client_metadata"), AnyTlsSemantics.ClientMetadata.Id),
-            new(node.GetNullableBool("tls"), node.GetPresentField("tls"), AnyTlsSemantics.Tls.Id), tls);
+            new(minimumIdle, node.GetPresentField("min-idle-session", "min_idle_session") is not null),
+            new(metadata, node.GetPresentField("client-metadata", "client_metadata") is not null),
+            new(node.GetNullableBool("tls"), node.GetPresentField("tls") is not null), tls);
     }
 
-    private static SourceValue<string?> ExtractDuration(ClashProxyNode node, SemanticMapping rule, string[] aliases)
+    private static SourceValue<string?> ExtractDuration(ClashProxyNode node, string name, string[] aliases)
     {
-        string? field = node.GetPresentField(rule.SourceField)
+        string? field = node.GetPresentField(name)
             ?? aliases.FirstOrDefault(alias => node.GetPresentField(alias) is not null);
         string? value = field is null ? null : node.GetRawString(field);
-        return new(value is null ? null : GoDurationHelper.ParsePositiveSecondsOrDuration(value, field!), field, rule.Id);
+        return new(value is null ? null : GoDurationHelper.ParsePositiveSecondsOrDuration(value, field!), field is not null);
     }
 
     private static int? ExtractMinIdleSession(ClashProxyNode node)

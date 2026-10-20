@@ -40,7 +40,11 @@ curl http://127.0.0.1:5080/healthz
 {
   "name": "example",
   "yaml": "proxies:\n  - name: test\n    type: ss\n    server: node.example.com\n    port: 443\n    cipher: aes-128-gcm\n    password: test-only",
-  "platforms": ["Android", "Linux", "Windows"]
+  "platforms": ["Android", "Linux", "Windows"],
+  "profile": {
+    "version": 1,
+    "runtime": { "tailscale": { "enabled": false } }
+  }
 }
 ```
 
@@ -53,6 +57,9 @@ curl http://127.0.0.1:5080/healthz
 - `yaml` 必须非空，UTF-8 大小不得超过 2 MiB。
 - `platforms` 至少包含一项，只允许 `Android`、`Linux` 和
   `Windows`，不区分大小写且不得重复；数字和逗号组合名称不被接受。
+- `profile` 为可选的内联 JSON 对象，提供时必须包含 `version: 1`；显式 `null` 无效。
+  字段与[统一 profile](configuration.md#统一-profile)相同，在宿主最终配置之上应用，
+  仅作用于当前请求。不能提供服务器路径或 URL。
 
 成功响应为 `application/json`：
 
@@ -82,6 +89,7 @@ UTF-8 字节计算。产物固定按 Android、Linux、Windows 排序。
 | `file` | 必须且只能有一个 `.yaml` 或 `.yml` 文件；不得为空，最大 2 MiB |
 | `name` | 可选；缺省时使用去掉扩展名的上传文件名 |
 | `platforms` | 必须至少重复提交一次；值的规则与 JSON 端点相同 |
+| `profile` | 可选且最多一次；内容为含 `version: 1` 的 JSON 对象文本，规则与 JSON 端点相同 |
 
 `name`（含缺省时的文件名主干）遵循 JSON 端点相同的跨平台名称限制。
 文件必须使用有效 UTF-8，可以包含开头的 UTF-8 BOM。
@@ -96,6 +104,7 @@ curl --request POST http://127.0.0.1:5080/api/v1/export \
   --form 'platforms=Android' \
   --form 'platforms=Linux' \
   --form 'platforms=Windows' \
+  --form 'profile={"version":1,"runtime":{"singbox_api":{"enabled":true}}}' \
   --output boxforge-output.zip
 ```
 
@@ -126,7 +135,7 @@ Windows。每个 `config.json` 与引擎产物的 UTF-8 字节完全一致。
 
 | 状态码 | 含义 |
 | --- | --- |
-| `400` | JSON、表单、名称、文件或平台参数无效 |
+| `400` | JSON、表单、名称、文件、平台或 profile 无效 |
 | `413` | 请求体超过 4 MiB，或 YAML 超过 2 MiB |
 | `422` | YAML 已接收，但无法解析或转换 |
 | `500` | 未预期的服务器错误 |
@@ -141,7 +150,10 @@ Server 支持通过 `--profile profile.json` 或 `BOXFORGE_Profile` 在启动时
 [地区覆盖](configuration.md#地区-profile)和[服务覆盖](configuration.md#服务-profile)。
 同一文件还支持[rule-set 来源覆盖](configuration.md#rule-set-来源-profile)和
 [resolver 地址和 TLS 名称覆盖](configuration.md#resolver-profile)，不改变既有 tag、主备关系或 detour。
-HTTP 请求不能改变 profile 或指定本地文件。
+HTTP 请求可通过内联 `profile` 覆盖运行时开关、策略、平台参数及上述数据，
+但不能指定服务器本地文件。文件与请求使用同一套合并和校验规则。
+优先级从低到高为内置默认值、启动 profile 文件、宿主环境配置、请求内联 profile；
+每个请求使用独立的最终快照，不会更改宿主默认值或影响并发请求。
 
 Server 读取与 CLI 相同的 `BOXFORGE_` 环境配置，包括 Tailscale 和可选 sing-box API
 开关；这是生成配置的开关，不改变 BoxForge HTTP Server 的监听地址。

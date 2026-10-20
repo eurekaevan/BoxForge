@@ -42,12 +42,12 @@ internal static class SourceFieldSchemas
                 (node, _) => forceTls && !node.GetBool("tls")
                     ? "为 false 与此协议要求的 TLS 连接冲突"
                     : null)
-            .Conditional(TlsSemantics.ServerName.SourceField, SourceFieldDisposition.Mapped,
+            .Conditional("sni", SourceFieldDisposition.Mapped,
                 (node, _) => RequireTlsActivation(node, forceTls))
-            .Alias(TlsSemantics.ServerName.SourceField, "servername")
-            .Conditional(TlsSemantics.CertificateValidation.SourceField, SourceFieldDisposition.Mapped,
+            .Alias("sni", "servername")
+            .Conditional("skip-cert-verify", SourceFieldDisposition.Mapped,
                 (node, _) => RequireTlsActivation(node, forceTls))
-            .Conditional(TlsSemantics.ApplicationProtocols.SourceField, SourceFieldDisposition.Mapped,
+            .Conditional("alpn", SourceFieldDisposition.Mapped,
                 (node, value) => RequireTlsActivation(node, forceTls)
                     ?? TlsConfigHelper.ValidateAlpn(value), SourceFieldValueKind.Sequence)
             .Unsupported("源指纹可匹配中间/根证书，但目标 certificate_sha256 仅匹配叶证书，无法保证等价", "fingerprint")
@@ -59,9 +59,9 @@ internal static class SourceFieldSchemas
 
         if (supportsUtls)
         {
-            schema.Conditional(TlsSemantics.ClientFingerprint.SourceField, SourceFieldDisposition.Mapped,
+            schema.Conditional("client-fingerprint", SourceFieldDisposition.Mapped,
                     (node, _) => RequireTlsActivation(node, forceTls))
-                .Alias(TlsSemantics.ClientFingerprint.SourceField, "client_fingerprint");
+                .Alias("client-fingerprint", "client_fingerprint");
         }
         else
         {
@@ -72,9 +72,9 @@ internal static class SourceFieldSchemas
         if (supportsReality)
         {
             var reality = new SourceFieldSchema()
-                .Mapped(TlsSemantics.RealityPublicKey.SourceField, TlsSemantics.RealityShortId.SourceField)
-                .Alias(TlsSemantics.RealityPublicKey.SourceField, "public_key")
-                .Alias(TlsSemantics.RealityShortId.SourceField, "short_id")
+                .Mapped("public-key", "short-id")
+                .Alias("public-key", "public_key")
+                .Alias("short-id", "short_id")
                 .Unsupported("Reality 混合密钥交换选项尚未映射",
                     "support-x25519mlkem768", "support_x25519mlkem768");
             schema.Nested("reality-opts", reality)

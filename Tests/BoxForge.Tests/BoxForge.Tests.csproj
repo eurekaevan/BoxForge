@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <None Update="Fixtures/*.yaml" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../docs/data/protocol-mappings.json" Link="protocol-mappings.json" CopyToOutputDirectory="PreserveNewest" />
     <None Update="Fixtures/default-profile-sha256.json" CopyToOutputDirectory="PreserveNewest" />
     <ProjectReference Include="../../src/BoxForge.Core/BoxForge.Core.csproj" />
     <ProjectReference Include="../../src/BoxForge.Cli/BoxForge.Cli.csproj" />

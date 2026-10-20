@@ -1,21 +1,11 @@
-using BoxForge.Models.Singbox;
 using BoxForge.Models.Clash;
 using BoxForge.Exceptions;
-using BoxForge.Builders;
 using BoxForge.Models.Intermediate;
-using BoxForge.Converters;
 
 namespace BoxForge.Helpers;
 
-public static class TlsConfigHelper
+internal static class TlsConfigHelper
 {
-    public static OutboundTls? Extract(
-        ClashProxyNode node,
-        string server,
-        bool forceTls = false,
-        bool supportsUtls = true) =>
-        SingboxNodeEmitter.EmitTls(ExtractSettings(node, server, forceTls, supportsUtls));
-
     internal static TlsSettings? ExtractSettings(
         ClashProxyNode node,
         string server,
@@ -61,12 +51,9 @@ public static class TlsConfigHelper
                     "Reality short-id 必须是 0 到 8 字节的偶数位十六进制字符串");
             }
 
-            string parentField = node.GetPresentField("reality-opts", "reality_opts")!;
             realityConfig = new RealitySettings(
-                new(publicKey, $"{parentField}.{realityOptions.GetPresentField("public-key", "public_key")}",
-                    TlsSemantics.RealityPublicKey.Id),
-                new(shortId, $"{parentField}.{realityOptions.GetPresentField("short-id", "short_id")}",
-                    TlsSemantics.RealityShortId.Id));
+                new(publicKey, true),
+                new(shortId, true));
         }
 
         string? fingerprint = supportsUtls
@@ -85,14 +72,13 @@ public static class TlsConfigHelper
 
         return new TlsSettings(
             new(node.GetString("sni") ?? node.GetString("servername") ?? server,
-                node.GetPresentField("sni", "servername"), TlsSemantics.ServerName.Id),
+                node.GetPresentField("sni", "servername") is not null),
             new(node.GetNullableBool("skip-cert-verify"),
-                node.GetPresentField("skip-cert-verify"), TlsSemantics.CertificateValidation.Id),
+                node.GetPresentField("skip-cert-verify") is not null),
             new(node.GetValue("alpn") is IEnumerable<object?> alpn
                 ? Array.AsReadOnly(alpn.Cast<string>().ToArray()) : null,
-                node.GetPresentField("alpn"), TlsSemantics.ApplicationProtocols.Id),
-            new(effectiveFingerprint, node.GetPresentField("client-fingerprint", "client_fingerprint"),
-                TlsSemantics.ClientFingerprint.Id),
+                node.GetPresentField("alpn") is not null),
+            new(effectiveFingerprint, node.GetPresentField("client-fingerprint", "client_fingerprint") is not null),
             realityConfig);
     }
 

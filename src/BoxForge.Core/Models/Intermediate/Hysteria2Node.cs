@@ -19,7 +19,7 @@ internal sealed record Hysteria2Node(
     internal override void Validate()
     {
         if (Tls is null || TlsEnabled.Value == false
-            || (TlsEnabled.Field is not null && TlsEnabled.Value != true))
+            || (TlsEnabled.IsSpecified && TlsEnabled.Value != true))
             throw new InvalidOperationException("Hysteria2 requires TLS; an explicit TLS switch must be true.");
         if (Tls.Reality is not null || Tls.ClientFingerprint.Value is not null)
             throw new InvalidOperationException("Hysteria2 QUIC TLS does not support Reality or uTLS.");
@@ -40,7 +40,7 @@ internal sealed record Hysteria2Node(
                 || (obfs.MinimumPacketSize.Value ?? 512) > (obfs.MaximumPacketSize.Value ?? 1200))
                 throw new InvalidOperationException("Hysteria2 Gecko packet sizes must be valid and ordered.");
             if (obfs.Kind != Hysteria2ObfuscationKind.Gecko
-                && (obfs.MinimumPacketSize.Field is not null || obfs.MaximumPacketSize.Field is not null
+                && (obfs.MinimumPacketSize.IsSpecified || obfs.MaximumPacketSize.IsSpecified
                     || obfs.MinimumPacketSize.Value is not null || obfs.MaximumPacketSize.Value is not null))
                 throw new InvalidOperationException("Hysteria2 packet sizes apply only to Gecko.");
         }

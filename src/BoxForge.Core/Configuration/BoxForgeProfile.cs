@@ -13,6 +13,12 @@ namespace BoxForge.Configuration;
 /// <summary>An immutable profile shared by node validation and configuration generation.</summary>
 public sealed class BoxForgeProfile
 {
+    private static readonly JsonSerializerOptions ResolvedJsonOptions = new(BuiltInProfile.JsonOptions)
+    {
+        WriteIndented = true,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
+
     private readonly BuiltInProfile data;
     private readonly HashSet<string> reservedTags;
 
@@ -99,11 +105,14 @@ public sealed class BoxForgeProfile
                 throw new FormatException("profile.services.rule_sets: 必须为非空、不重复且全部引用已声明 rule-set 的数组。");
         }
         Regions = regions.ToImmutable();
+        ValidateSettings();
     }
 
     public static BoxForgeProfile Default { get; } = new(BuiltInProfile.Default);
 
     public ImmutableArray<RegionDefinition> Regions { get; }
+    public RuntimeProfile Runtime => data.Runtime;
+    public ProfilePolicies Policies => data.Policies;
     public ImmutableArray<ServiceDefinition> Services => data.Services;
     public ImmutableDictionary<TargetPlatform, PlatformProfile> Platforms => data.Platforms;
 
@@ -135,164 +144,72 @@ public sealed class BoxForgeProfile
 
     internal static BoxForgeProfile Load(Stream source)
     {
+        try { return Default.ApplyOverrides(ProfileOverlay.Read(source)); }
+        catch (JsonException ex) { throw new FormatException("profile: 覆盖文件必须是有效 JSON。", ex); }
+    }
+
+    public BoxForgeProfile ApplyOverrides(JsonObject overlay)
+    {
+        ArgumentNullException.ThrowIfNull(overlay);
         try
         {
-            using var document = JsonDocument.Parse(source);
-            var root = document.RootElement;
-            ValidateKeys(root, "version", "regions", "services", "rule_sets", "resolvers");
-            if (!root.TryGetProperty("version", out var version) || version.ValueKind != JsonValueKind.Number
-                || !version.TryGetInt32(out int number) || number != 1)
-                throw new FormatException("profile.version: 必须为整数 1。");
-            var regions = BuiltInProfile.Default.Regions.ToList();
-            foreach (var (id, item) in ReadOverrides(root, "regions", "id", "display_name", "pattern"))
-            {
-                int index = regions.FindIndex(region => region.Id == id);
-                var original = index < 0 ? null : regions[index];
-                var region = new BuiltInProfile.Region(id,
-                    ReadString(item, "display_name") ?? original?.DisplayName
-                        ?? throw new FormatException("profile.regions.display_name: 新地区必填。"),
-                    ReadString(item, "pattern") ?? original?.Pattern
-                        ?? throw new FormatException("profile.regions.pattern: 新地区必填。"));
-                if (index < 0) regions.Add(region);
-                else regions[index] = region;
-            }
-            var services = BuiltInProfile.Default.Services.ToList();
-            foreach (var (id, item) in ReadOverrides(root, "services", "id", "name", "default_region", "rule_sets", "precedes_domestic_routes"))
-            {
-                int index = services.FindIndex(service => service.Id == id);
-                var original = index < 0 ? null : services[index];
-                ImmutableArray<string> ruleSets;
-                if (item.TryGetProperty("rule_sets", out var value))
-                {
-                    if (value.ValueKind != JsonValueKind.Array
-                        || value.EnumerateArray().Any(tag => tag.ValueKind != JsonValueKind.String))
-                        throw new FormatException("profile.services.rule_sets: 必须为字符串数组，不能为 null。");
-                    ruleSets = [.. value.EnumerateArray().Select(tag => tag.GetString()!)];
-                }
-                else ruleSets = original?.RuleSets ?? throw new FormatException("profile.services.rule_sets: 新服务必填。");
-                bool precedesDomestic = original?.PrecedesDomesticRoutes ?? false;
-                if (item.TryGetProperty("precedes_domestic_routes", out value))
-                {
-                    if (value.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
-                        throw new FormatException("profile.services.precedes_domestic_routes: 必须为布尔值。");
-                    precedesDomestic = value.GetBoolean();
-                }
-                var service = new ServiceDefinition(id,
-                    ReadString(item, "name") ?? original?.Name
-                        ?? throw new FormatException("profile.services.name: 新服务必填。"),
-                    ReadString(item, "default_region") ?? original?.DefaultRegion,
-                    ruleSets, precedesDomestic);
-                if (index < 0) services.Add(service);
-                else services[index] = service;
-            }
-            var ruleSetSources = BuiltInProfile.Default.RuleSets;
-            var originals = ruleSetSources.SelectMany(source => source.Tags.Select(tag => (tag, source)))
-                .ToDictionary(entry => entry.tag, entry => entry.source, StringComparer.Ordinal);
-            var replacements = new Dictionary<string, BuiltInProfile.RuleSetSource>(StringComparer.Ordinal);
-            var additions = new List<BuiltInProfile.RuleSetSource>();
-            foreach (var (tag, item) in ReadOverrides(root, "rule_sets", "tag", "url", "update_interval"))
-            {
-                originals.TryGetValue(tag, out var original);
-                string url = ReadString(item, "url") ?? original?.Url
-                    ?? throw new FormatException("profile.rule_sets.url: 新规则集必填。");
-                string interval = ReadString(item, "update_interval") ?? original?.UpdateInterval ?? "1d";
-                ValidateRuleSetUrl(url);
-                if (original is null || url != original.Url || interval != original.UpdateInterval)
-                {
-                    var replacement = new BuiltInProfile.RuleSetSource([tag],
-                        url.Replace("{tag}", tag, StringComparison.Ordinal), interval);
-                    if (original is null) additions.Add(replacement);
-                    else replacements.Add(tag, replacement);
-                }
-            }
-            if (replacements.Count > 0 || additions.Count > 0)
-            {
-                var sources = ImmutableArray.CreateBuilder<BuiltInProfile.RuleSetSource>();
-                foreach (var original in ruleSetSources)
-                {
-                    var remaining = original.Tags.Where(tag => !replacements.ContainsKey(tag)).ToImmutableArray();
-                    if (!remaining.IsEmpty)
-                        sources.Add(original with
-                        {
-                            Tags = remaining,
-                            Url = remaining.Length == 1 ? original.Url.Replace("{tag}", remaining[0], StringComparison.Ordinal) : original.Url
-                        });
-                    foreach (string tag in original.Tags)
-                        if (replacements.TryGetValue(tag, out var replacement)) sources.Add(replacement);
-                }
-                sources.AddRange(additions);
-                ruleSetSources = sources.ToImmutable();
-            }
-            var resolvers = BuiltInProfile.Default.Resolvers.ToList();
-            foreach (var (id, item) in ReadOverrides(root, "resolvers", "id", "server", "server_name"))
-            {
-                int index = resolvers.FindIndex(resolver => resolver.Id == id);
-                if (index < 0)
-                    throw new FormatException("profile.resolvers.id: 必须引用现有 resolver ID。");
-                var original = resolvers[index];
-                resolvers[index] = original with
-                {
-                    Server = ReadString(item, "server") ?? original.Server,
-                    ServerName = ReadString(item, "server_name") ?? original.ServerName
-                };
-            }
-            return new BoxForgeProfile(BuiltInProfile.Default with
-            { Regions = [.. regions], Services = [.. services], RuleSets = ruleSetSources, Resolvers = [.. resolvers] });
+            return new BoxForgeProfile(ProfileOverlay.Apply(data, overlay));
         }
-        catch (JsonException ex)
+        catch (JsonException ex) { throw new FormatException("profile: 字段类型无效、缺失必填字段或存在未知字段。", ex); }
+    }
+
+    public string ToResolvedJson() => JsonSerializer.Serialize(data, ResolvedJsonOptions);
+
+    private void ValidateSettings()
+    {
+        if (!data.Platforms.Keys.ToHashSet().SetEquals(Enum.GetValues<TargetPlatform>()))
+            throw new FormatException("profile.platforms: 必须保留所有目标平台。");
+        if (!data.Regions.Any(region => region.Id == Policies.MainDefaultRegion))
+            throw new FormatException("profile.policies.main_default_region: 必须引用已声明地区。");
+        foreach (var (platform, settings) in Platforms)
         {
-            throw new FormatException("profile: 覆盖文件必须是有效 JSON。", ex);
+            string path = $"profile.platforms.{platform}";
+            if (!Enum.IsDefined(settings.AddressFamily) || !Enum.IsDefined(settings.DnsSelectionMode))
+                throw new FormatException($"{path}: 无效的地址族或 DNS 模式。");
+            if (platform != TargetPlatform.Linux && settings.MultiQueue == true)
+                throw new FormatException($"{path}.multi_queue: 仅支持 Linux。");
+            Duration(settings.ConnectTimeout, path + ".connect_timeout");
+            Duration(settings.UrlTestInterval, path + ".url_test_interval");
+            if (settings.TcpKeepAlive is { } keepAlive) Duration(keepAlive, path + ".tcp_keep_alive");
+            if (settings.TcpKeepAliveInterval is { } interval) Duration(interval, path + ".tcp_keep_alive_interval");
+            if (string.IsNullOrWhiteSpace(settings.TaildropDirectory) || settings.TaildropDirectory.Any(char.IsControl))
+                throw new FormatException($"{path}.taildrop_directory: 不能为空或包含控制字符。");
+            var families = new HashSet<AddressFamily>();
+            foreach (string address in settings.TunAddresses)
+            {
+                string[] parts = address.Split('/');
+                if (parts.Length != 2 || !IPAddress.TryParse(parts[0], out var ip) || ip.ToString() != parts[0]
+                    || !int.TryParse(parts[1], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int prefix)
+                    || prefix < 1 || prefix > (ip.AddressFamily == AddressFamily.InterNetwork ? 32 : 128)
+                    || ip.IsIPv4MappedToIPv6 || !families.Add(ip.AddressFamily))
+                    throw new FormatException($"{path}.tun_addresses: 必须是规范且不重复地址族的 CIDR 地址。");
+            }
+            if (!families.SetEquals([AddressFamily.InterNetwork, AddressFamily.InterNetworkV6]))
+                throw new FormatException($"{path}.tun_addresses: 必须同时提供 IPv4 与 IPv6 捕获地址。");
         }
+        Duration(Policies.SniffTimeout, "profile.policies.sniff_timeout");
+        Duration(Policies.UrlTestIdleTimeout, "profile.policies.url_test_idle_timeout");
+        Duration(Policies.DnsTimeout, "profile.policies.dns_timeout");
+        Duration(Policies.DnsOptimisticTimeout, "profile.policies.dns_optimistic_timeout");
+        if (!Uri.TryCreate(Policies.UrlTestUrl, UriKind.Absolute, out var probe) || probe.Scheme is not ("http" or "https")
+            || string.IsNullOrEmpty(probe.Host) || !string.IsNullOrEmpty(probe.UserInfo) || !string.IsNullOrEmpty(probe.Fragment)
+            || Policies.UrlTestUrl.Any(char.IsWhiteSpace) || !probe.IsWellFormedOriginalString())
+            throw new FormatException("profile.policies.url_test_url: 必须是有效的 HTTP(S) URL，不含用户信息或片段。");
+        if (Policies.UrlTestTolerance < 0 || Policies.DnsCacheCapacity == 0
+            || Policies.SniffExcludedPorts.Any(port => port is < 1 or > 65535)
+            || Policies.SniffExcludedPorts.Distinct().Count() != Policies.SniffExcludedPorts.Length)
+            throw new FormatException("profile.policies: tolerance 必须非负，缓存容量必须为正，排除端口必须有效且唯一。");
     }
 
-    private static IEnumerable<(string Key, JsonElement Item)> ReadOverrides(
-        JsonElement root, string section, string key, params string[] fields)
+    private static void Duration(string value, string path)
     {
-        if (!root.TryGetProperty(section, out var overrides)) yield break;
-        if (overrides.ValueKind != JsonValueKind.Array)
-            throw new FormatException($"profile.{section}: 必须为数组。");
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var item in overrides.EnumerateArray())
-        {
-            ValidateKeys(item, [key, .. fields]);
-            string id = ReadString(item, key) ?? throw new FormatException($"profile.{section}.{key}: 必填。");
-            if (!seen.Add(id)) throw new FormatException($"profile.{section}.{key}: 覆盖文件中不能重复。");
-            yield return (id, item);
-        }
-    }
-
-    public string ToResolvedJson(TailscaleOptions tailscale, SingboxApiOptions api)
-    {
-        var options = new JsonSerializerOptions(BuiltInProfile.JsonOptions)
-        {
-            WriteIndented = true,
-            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
-        };
-        var root = JsonSerializer.SerializeToNode(data, options)!;
-        root["runtime"] = new JsonObject
-        {
-            ["tailscale"] = new JsonObject { ["enabled"] = tailscale.Enabled, ["android_enabled"] = tailscale.AndroidEnabled },
-            ["singbox_api"] = new JsonObject { ["enabled"] = api.Enabled }
-        };
-        return root.ToJsonString(options);
-    }
-
-    private static void ValidateKeys(JsonElement element, params string[] allowed)
-    {
-        if (element.ValueKind != JsonValueKind.Object)
-            throw new FormatException("profile: 根及覆盖条目必须是对象。");
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var property in element.EnumerateObject())
-            if (!seen.Add(property.Name) || !allowed.Contains(property.Name, StringComparer.Ordinal))
-                throw new FormatException($"profile: 存在未知或重复的键；此处只允许 {string.Join(", ", allowed)}。");
-    }
-
-    private static string? ReadString(JsonElement element, string key)
-    {
-        if (!element.TryGetProperty(key, out var value)) return null;
-        if (value.ValueKind != JsonValueKind.String)
-            throw new FormatException($"profile.{key}: 必须为字符串，不能为 null。");
-        return value.GetString();
+        if (!GoDurationHelper.IsPositiveDuration(value))
+            throw new FormatException($"{path}: 必须为有效的正 Go duration，且不能超出 int64 纳秒范围。");
     }
 
     private static void ValidateId(string id, HashSet<string> ids, string section)
@@ -308,7 +225,7 @@ public sealed class BoxForgeProfile
             throw new FormatException($"profile.{field}: 名称不能为空、含控制字符或首尾空白，也不能与其他地区、服务或保留 tag 冲突。");
     }
 
-    private static void ValidateRuleSetUrl(string url)
+    internal static void ValidateRuleSetUrl(string url)
     {
         string expanded = url.Replace("{tag}", "boxforge-tag", StringComparison.Ordinal);
         if (string.IsNullOrWhiteSpace(url) || url.Any(char.IsWhiteSpace) || url.Any(char.IsControl)

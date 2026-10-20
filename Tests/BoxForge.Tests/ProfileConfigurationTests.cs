@@ -11,7 +11,6 @@ using BoxForge.Models.Singbox;
 using BoxForge.Helpers;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Options;
 
 namespace BoxForge.Tests;
 
@@ -45,7 +44,7 @@ public sealed class ProfileConfigurationTests
         Assert.That(profile.Regions[1].DisplayName, Is.EqualTo("🇯🇵 JP"));
         Assert.That(profile.Regions[1].Pattern.IsMatch("日本"), Is.False);
         Assert.That(profile.Regions[1].Pattern.IsMatch("CUSTOM-JAPAN"), Is.True);
-        var plan = ProfilePlanner.Plan(new NodeCatalog([], ["US01", "US02"]), profile);
+        var plan = Plan(new NodeCatalog([], ["US01", "US02"]), profile);
         Assert.That(plan.MainOutbound.Default, Is.EqualTo("US custom"));
         Assert.That(plan.ServiceOutbounds.Single(service => service.Tag == ServiceGroupNames.Ai).Default, Is.EqualTo("US custom"));
         Assert.That(BoxForgeProfile.Default.Regions[0].DisplayName, Is.EqualTo("🇺🇸 US"));
@@ -56,11 +55,196 @@ public sealed class ProfileConfigurationTests
     [TestCase("{\"version\":1,\"services\":[]}")]
     [TestCase("{\"version\":1,\"rule_sets\":[]}")]
     [TestCase("{\"version\":1,\"resolvers\":[]}")]
+    [TestCase("{\"version\":1,\"platforms\":{}}")]
+    [TestCase("{\"version\":1,\"runtime\":{}}")]
+    [TestCase("{\"version\":1,\"policies\":{}}")]
     public void EmptyOverridePreservesDefaults(string json)
     {
         Assert.That(Load(json).Regions.Select(region => (region.Id, region.DisplayName, region.Pattern.ToString())),
             Is.EqualTo(BoxForgeProfile.Default.Regions.Select(region => (region.Id, region.DisplayName, region.Pattern.ToString()))));
         Assert.That(Load(json).Services, Is.EqualTo(BoxForgeProfile.Default.Services));
+        Assert.That(Load(json).ToResolvedJson(), Is.EqualTo(BoxForgeProfile.Default.ToResolvedJson()));
+    }
+
+    [Test]
+    public void PlatformOverridesInheritFieldsClearNullableValuesAndReplaceArrays()
+    {
+        var profile = Load("""
+            {"version":1,"platforms":{"Linux":{"strict_route":null,"auto_redirect":null,
+              "multi_queue":null,"tcp_keep_alive":null,"tcp_keep_alive_interval":null,
+              "connect_timeout":"8s","tun_addresses":["10.30.0.1/30","fd30::1/126"]}},
+             "policies":{"sniff_excluded_ports":[22]}}
+            """);
+        var linux = profile.GetPlatform(TargetPlatform.Linux);
+        var original = BoxForgeProfile.Default.GetPlatform(TargetPlatform.Linux);
+        var resolved = JsonNode.Parse(profile.ToResolvedJson())!;
+        var defaults = JsonNode.Parse(BoxForgeProfile.Default.ToResolvedJson())!;
+        Assert.Multiple(() =>
+        {
+            Assert.That(linux.StrictRoute, Is.Null);
+            Assert.That(linux.AutoRedirect, Is.Null);
+            Assert.That(linux.MultiQueue, Is.Null);
+            Assert.That(linux.TcpKeepAlive, Is.Null);
+            Assert.That(linux.TcpKeepAliveInterval, Is.Null);
+            Assert.That(linux.ConnectTimeout, Is.EqualTo("8s"));
+            Assert.That(linux.UrlTestInterval, Is.EqualTo(original.UrlTestInterval));
+            Assert.That(linux.DnsSelectionMode, Is.EqualTo(original.DnsSelectionMode));
+            Assert.That(linux.TunAddresses, Is.EqualTo(new[] { "10.30.0.1/30", "fd30::1/126" }));
+            Assert.That(profile.Policies.SniffExcludedPorts, Is.EqualTo(new[] { 22 }));
+            Assert.That(profile.Policies.SniffTimeout, Is.EqualTo(BoxForgeProfile.Default.Policies.SniffTimeout));
+            Assert.That(JsonNode.DeepEquals(resolved["platforms"]!["Android"], defaults["platforms"]!["Android"]), Is.True);
+            Assert.That(JsonNode.DeepEquals(resolved["platforms"]!["Windows"], defaults["platforms"]!["Windows"]), Is.True);
+            Assert.That(original.StrictRoute, Is.True);
+            Assert.That(original.TunAddresses, Is.EqualTo(new[] { "172.19.0.1/30", "fd00::1/126" }));
+        });
+    }
+
+    [TestCase(null, null, false)]
+    [TestCase(null, "true", true)]
+    [TestCase("false", "true", false)]
+    [TestCase("true", "false", true)]
+    public async Task RuntimeFileValuesAreOverriddenOnlyByPresentHostKeys(string? nested, string? legacy, bool expected)
+    {
+        string path = Path.Combine(directory, "runtime.json");
+        await File.WriteAllTextAsync(path, """
+            {"version":1,"runtime":{"tailscale":{"enabled":false,"android_enabled":false},
+             "singbox_api":{"enabled":true}}}
+            """);
+        var values = new Dictionary<string, string?>();
+        if (nested is not null) values["Tailscale:Enabled"] = nested;
+        if (legacy is not null) values["TailscaleEnabled"] = legacy;
+        using var provider = CreateProvider(path, values);
+        var profile = provider.GetRequiredService<BoxForgeProfile>();
+        Assert.Multiple(() =>
+        {
+            Assert.That(profile.Runtime.Tailscale.Enabled, Is.EqualTo(expected));
+            Assert.That(profile.Runtime.Tailscale.AndroidEnabled, Is.False);
+            Assert.That(profile.Runtime.SingboxApi.Enabled, Is.True);
+        });
+        var bundle = await provider.GetRequiredService<IBoxForgeEngine>().ConvertAsync(
+            new ConversionRequest("runtime", Yaml("US01"), Enum.GetValues<TargetPlatform>()));
+        foreach (var artifact in bundle.Artifacts)
+        {
+            using var json = JsonDocument.Parse(artifact.Content);
+            Assert.That(json.RootElement.TryGetProperty("endpoints", out _),
+                Is.EqualTo(artifact.Platform != TargetPlatform.Android && expected));
+            Assert.That(json.RootElement.GetProperty("services")[0].GetProperty("type").GetString(), Is.EqualTo("api"));
+        }
+    }
+
+    [Test]
+    public async Task AndroidAndApiHostKeysOverrideFileRuntimeIndependently()
+    {
+        string path = Path.Combine(directory, "runtime.json");
+        await File.WriteAllTextAsync(path, """
+            {"version":1,"runtime":{"tailscale":{"enabled":false,"android_enabled":false},
+             "singbox_api":{"enabled":true}}}
+            """);
+        using var provider = CreateProvider(path, new Dictionary<string, string?>
+        {
+            ["Tailscale:AndroidEnabled"] = "true",
+            ["TailscaleAndroidEnabled"] = "false",
+            ["SingboxApi:Enabled"] = "false"
+        });
+        var profile = provider.GetRequiredService<BoxForgeProfile>();
+        Assert.Multiple(() =>
+        {
+            Assert.That(profile.Runtime.Tailscale.Enabled, Is.False);
+            Assert.That(profile.Runtime.Tailscale.AndroidEnabled, Is.True);
+            Assert.That(profile.Runtime.SingboxApi.Enabled, Is.False);
+        });
+        var bundle = await provider.GetRequiredService<IBoxForgeEngine>().ConvertAsync(
+            new ConversionRequest("runtime", Yaml("US01"), Enum.GetValues<TargetPlatform>()));
+        foreach (var artifact in bundle.Artifacts)
+        {
+            using var json = JsonDocument.Parse(artifact.Content);
+            Assert.That(json.RootElement.TryGetProperty("endpoints", out _), Is.EqualTo(artifact.Platform == TargetPlatform.Android));
+            Assert.That(json.RootElement.TryGetProperty("services", out _), Is.False);
+        }
+    }
+
+    [Test]
+    public void RequestOverlayWinsOverHostWithoutMutatingAnySnapshotOrInput()
+    {
+        var host = BoxForgeProfile.Default.ApplyOverrides(JsonNode.Parse("""
+            {"version":1,"runtime":{"tailscale":{"enabled":false}},
+             "platforms":{"Linux":{"connect_timeout":"8s"}},"policies":{"sniff_excluded_ports":[22]}}
+            """)!.AsObject());
+        var request = JsonNode.Parse("""
+            {"version":1,"runtime":{"tailscale":{"enabled":true}},
+             "platforms":{"Linux":{"connect_timeout":"9s"}},"policies":{"sniff_excluded_ports":[443]}}
+            """)!.AsObject();
+        var first = host.ApplyOverrides(request);
+        request["policies"]!["sniff_excluded_ports"]![0] = 8443;
+        var second = host.ApplyOverrides(request);
+        Assert.Multiple(() =>
+        {
+            Assert.That(first.Runtime.Tailscale.Enabled, Is.True);
+            Assert.That(first.Runtime.Tailscale.AndroidEnabled, Is.EqualTo(host.Runtime.Tailscale.AndroidEnabled));
+            Assert.That(first.GetPlatform(TargetPlatform.Linux).ConnectTimeout, Is.EqualTo("9s"));
+            Assert.That(first.Policies.SniffExcludedPorts, Is.EqualTo(new[] { 443 }));
+            Assert.That(second.Policies.SniffExcludedPorts, Is.EqualTo(new[] { 8443 }));
+            Assert.That(host.Policies.SniffExcludedPorts, Is.EqualTo(new[] { 22 }));
+            Assert.That(host.Runtime.Tailscale.Enabled, Is.False);
+            Assert.That(host.GetPlatform(TargetPlatform.Linux).ConnectTimeout, Is.EqualTo("8s"));
+            Assert.That(BoxForgeProfile.Default.GetPlatform(TargetPlatform.Linux).ConnectTimeout, Is.EqualTo("5s"));
+            Assert.That(BoxForgeProfile.Default.Policies.SniffExcludedPorts, Is.EqualTo(new[] { 21, 22, 3306, 5900 }));
+        });
+    }
+
+    [TestCase("\"platforms\":{\"MacOS\":{}}")]
+    [TestCase("\"platforms\":{\"linux\":{}}")]
+    [TestCase("\"platforms\":{\"Linux\":{\"typo\":true}}")]
+    [TestCase("\"runtime\":{\"tailscale\":{\"typo\":true}}")]
+    [TestCase("\"runtime\":{\"singbox_api\":{\"port\":9090}}")]
+    [TestCase("\"policies\":{\"typo\":true}")]
+    [TestCase("\"runtime\":null")]
+    [TestCase("\"runtime\":{\"tailscale\":{\"enabled\":null}}")]
+    [TestCase("\"platforms\":{\"Linux\":{\"connect_timeout\":null}}")]
+    [TestCase("\"platforms\":{\"Linux\":{\"tun_addresses\":null}}")]
+    [TestCase("\"platforms\":{\"Linux\":{\"address_family\":null}}")]
+    [TestCase("\"policies\":{\"sniff_excluded_ports\":null}")]
+    [TestCase("\"policies\":{\"sniff_timeout\":\"0s\"}")]
+    [TestCase("\"policies\":{\"dns_timeout\":\"-1s\"}")]
+    [TestCase("\"policies\":{\"url_test_idle_timeout\":\"forever\"}")]
+    [TestCase("\"platforms\":{\"Linux\":{\"connect_timeout\":\"1w\"}}")]
+    [TestCase("\"platforms\":{\"Linux\":{\"tcp_keep_alive\":\"0s\"}}")]
+    [TestCase("\"platforms\":{\"Linux\":{\"tun_addresses\":[\"not-cidr\",\"fd00::1/126\"]}}")]
+    [TestCase("\"platforms\":{\"Linux\":{\"tun_addresses\":[\"172.19.0.1/33\",\"fd00::1/126\"]}}")]
+    [TestCase("\"platforms\":{\"Linux\":{\"tun_addresses\":[\"172.19.0.1/30\"]}}")]
+    [TestCase("\"platforms\":{\"Linux\":{\"tun_addresses\":[\"fd00::1/126\"]}}")]
+    [TestCase("\"platforms\":{\"Windows\":{\"multi_queue\":true}}")]
+    [TestCase("\"platforms\":{\"Android\":{\"multi_queue\":true}}")]
+    [TestCase("\"policies\":{\"url_test_url\":\"\"}")]
+    [TestCase("\"policies\":{\"url_test_url\":\"file:///tmp/probe\"}")]
+    [TestCase("\"policies\":{\"main_default_region\":\"missing\"}")]
+    [TestCase("\"policies\":{\"dns_cache_capacity\":0}")]
+    [TestCase("\"policies\":{\"url_test_tolerance\":-1}")]
+    [TestCase("\"policies\":{\"sniff_excluded_ports\":[0]}")]
+    [TestCase("\"policies\":{\"sniff_excluded_ports\":[22,22]}")]
+    public void RejectsInvalidLayeredSettings(string fields) =>
+        Assert.Throws<FormatException>(() => Load("{\"version\":1," + fields + "}"));
+
+    [Test]
+    public void ResolvedOutputSerializesTheEffectiveSnapshotDirectly()
+    {
+        var profile = Load("""
+            {"version":1,"runtime":{"tailscale":{"enabled":false},"singbox_api":{"enabled":true}},
+             "policies":{"sniff_timeout":"500ms","dns_cache_capacity":8192},
+             "platforms":{"Linux":{"connect_timeout":"8s","tcp_keep_alive":null}}}
+            """);
+        using var json = JsonDocument.Parse(profile.ToResolvedJson());
+        var root = json.RootElement;
+        Assert.Multiple(() =>
+        {
+            Assert.That(root.GetProperty("runtime").GetProperty("tailscale").GetProperty("enabled").GetBoolean(), Is.False);
+            Assert.That(root.GetProperty("runtime").GetProperty("tailscale").GetProperty("android_enabled").GetBoolean(), Is.True);
+            Assert.That(root.GetProperty("runtime").GetProperty("singbox_api").GetProperty("enabled").GetBoolean(), Is.True);
+            Assert.That(root.GetProperty("policies").GetProperty("sniff_timeout").GetString(), Is.EqualTo("500ms"));
+            Assert.That(root.GetProperty("policies").GetProperty("dns_cache_capacity").GetUInt32(), Is.EqualTo(8192));
+            Assert.That(root.GetProperty("platforms").GetProperty("Linux").GetProperty("connect_timeout").GetString(), Is.EqualTo("8s"));
+            Assert.That(root.GetProperty("platforms").GetProperty("Linux").GetProperty("tcp_keep_alive").ValueKind, Is.EqualTo(JsonValueKind.Null));
+        });
     }
 
     [TestCase("null")]
@@ -70,7 +254,6 @@ public sealed class ProfileConfigurationTests
     [TestCase("{\"version\":\"1\"}")]
     [TestCase("{\"version\":null}")]
     [TestCase("{\"version\":2}")]
-    [TestCase("{\"version\":1,\"platforms\":{}}")]
     [TestCase("{\"version\":1,\"version\":1}")]
     [TestCase("{\"version\":1,\"resolvers\":{}}")]
     [TestCase("{\"version\":1,\"services\":null}")]
@@ -80,6 +263,20 @@ public sealed class ProfileConfigurationTests
     [TestCase("{\"version\":1,\"regions\":{}}")]
     [TestCase("{\"version\":1,\"regions\":[null]}")]
     public void RejectsMalformedRoot(string json) => Assert.Throws<FormatException>(() => Load(json));
+
+    [TestCase("{\"version\":1,\"\\uD800\":true}")]
+    [TestCase("{\"version\":1,\"\\uDC00\":true}")]
+    [TestCase("{\"version\":1,\"policies\":{\"url_test_url\":\"\\uD800\"}}")]
+    [TestCase("{\"version\":1,\"policies\":{\"url_test_url\":\"\\uDC00\"}}")]
+    public void RejectsUnpairedSurrogatesInProfileFiles(string json) =>
+        Assert.Throws<FormatException>(() => Load(json));
+
+    [Test]
+    public void EscapedSurrogatePairsPreserveSupplementaryCharacters()
+    {
+        var profile = Load("""{"version":1,"regions":[{"id":"us","display_name":"\uD83D\uDE80 USA"}]}""");
+        Assert.That(profile.Regions.Single(region => region.Id == "us").DisplayName, Is.EqualTo("🚀 USA"));
+    }
 
     [TestCase("{}")]
     [TestCase("{\"id\":null}")]
@@ -178,7 +375,7 @@ public sealed class ProfileConfigurationTests
         Assert.That(outbounds["AI Taiwan"].GetProperty("default").GetString(), Is.EqualTo("🇹🇼 TW"));
         Assert.That(outbounds["Custom Games"].GetProperty("default").GetString(), Is.EqualTo("🇹🇼 TW"));
         Assert.That(outbounds.ContainsKey(ServiceGroupNames.Ai), Is.False);
-        var routePlan = new RouteProfileBuilder(Options.Create(new TailscaleOptions()), profile).Plan(platform);
+        var routePlan = new RouteProfileBuilder(profile).Plan(platform);
         Assert.That((precedesDomestic ? routePlan.PriorityServices : routePlan.OtherServices).Select(service => service.Name),
             Does.Contain("Custom Games"));
         Assert.That((precedesDomestic ? routePlan.OtherServices : routePlan.PriorityServices).Select(service => service.Name),
@@ -194,7 +391,7 @@ public sealed class ProfileConfigurationTests
         Assert.That(firstGamesRoute.GetProperty("outbound").GetString(),
             Is.EqualTo(precedesDomestic ? "Custom Games" : ServiceGroupNames.Games));
         Assert.That(rules.Count(rule => rule.TryGetProperty("ip_version", out var version) && version.GetInt32() == 6), Is.EqualTo(2));
-        using var resolved = JsonDocument.Parse(profile.ToResolvedJson(new TailscaleOptions(), new SingboxApiOptions()));
+        using var resolved = JsonDocument.Parse(profile.ToResolvedJson());
         Assert.That(resolved.RootElement.GetProperty("services")[0].GetProperty("default_region").GetString(), Is.EqualTo("tw"));
     }
 
@@ -202,15 +399,14 @@ public sealed class ProfileConfigurationTests
     public void ServiceRuleSetReplacementUpdatesDnsAndRouteTogether()
     {
         var profile = Load("""{"version":1,"services":[{"id":"ai","rule_sets":["cn"]}]}""");
-        var options = Options.Create(new TailscaleOptions());
-        var dns = new DnsProfileBuilder(options, profile).Build(TargetPlatform.Android);
-        var route = new RouteProfileBuilder(options, profile).Build(TargetPlatform.Android);
+        var dns = SingboxDnsEmitter.Emit(new DnsProfileBuilder(profile).Plan(TargetPlatform.Android));
+        var route = SingboxRouteEmitter.Emit(new RouteProfileBuilder(profile).Plan(TargetPlatform.Android));
         Assert.That(dns.Rules.First(rule => rule.Action == DnsRuleAction.Evaluate).RuleSet,
             Is.EqualTo(new[] { "cn", "google", "spotify", "games", "microsoft" }));
         Assert.That(route.Rules.Single(rule => rule.Outbound == ServiceGroupNames.Ai).RuleSet, Is.EqualTo(new[] { "cn" }));
         Assert.That(BoxForgeProfile.Default.Services[0].RuleSets, Is.EqualTo(new[] { "ai" }));
         var newService = Load("""{"version":1,"services":[{"id":"custom","name":"Custom","rule_sets":["games"]}]}""");
-        Assert.That(ProfilePlanner.Plan(new NodeCatalog([], []), newService).ServiceOutbounds.Last().Default,
+        Assert.That(Plan(new NodeCatalog([], []), newService).ServiceOutbounds.Last().Default,
             Is.EqualTo(SingboxTags.MainProxyGroup));
         Assert.That(newService.Services.Last().PrecedesDomesticRoutes, Is.False);
     }
@@ -271,7 +467,7 @@ public sealed class ProfileConfigurationTests
             Assert.That(JsonNode.DeepEquals(root, baseline), Is.True, "Only route.rule_set may change");
         }
         using var resolved = JsonDocument.Parse(custom.GetRequiredService<BoxForgeProfile>()
-            .ToResolvedJson(new TailscaleOptions(), new SingboxApiOptions()));
+            .ToResolvedJson());
         Assert.That(resolved.RootElement.GetProperty("rule_sets").EnumerateArray()
             .Single(source => source.GetProperty("tags").EnumerateArray().Any(value => value.GetString() == tag))
             .GetProperty("url").GetString(), Is.EqualTo($"https://rules.example.net/{tag}.srs"));
@@ -314,8 +510,8 @@ public sealed class ProfileConfigurationTests
         var reversed = Load(JsonSerializer.Serialize(new { version = 1, rule_sets = entries.Reverse() }));
         Assert.That(profile.RuleSets.Single(source => source.Tags.Contains("ai")).Url,
             Is.EqualTo("https://rules.example.net/ai.srs?copy=ai"));
-        Assert.That(profile.ToResolvedJson(new TailscaleOptions(), new SingboxApiOptions()),
-            Is.EqualTo(reversed.ToResolvedJson(new TailscaleOptions(), new SingboxApiOptions())));
+        Assert.That(profile.ToResolvedJson(),
+            Is.EqualTo(reversed.ToResolvedJson()));
     }
 
     [TestCase("{\"version\":1,\"rule_sets\":[]}")]
@@ -323,10 +519,9 @@ public sealed class ProfileConfigurationTests
     [TestCase("{\"version\":1,\"rule_sets\":[{\"tag\":\"ai\",\"update_interval\":\"1d\"}]}")]
     public void NoOpSourceOverridesPreserveGroupingAndSerializedOutput(string json)
     {
-        var options = Options.Create(new TailscaleOptions());
         var serializer = new BoxForge.Services.ConfigSerializer();
-        var baseline = new SingboxConfig { Route = new RouteProfileBuilder(options, BoxForgeProfile.Default).Build(TargetPlatform.Linux) };
-        var actual = new SingboxConfig { Route = new RouteProfileBuilder(options, Load(json)).Build(TargetPlatform.Linux) };
+        var baseline = new SingboxConfig { Route = SingboxRouteEmitter.Emit(new RouteProfileBuilder(BoxForgeProfile.Default).Plan(TargetPlatform.Linux)) };
+        var actual = new SingboxConfig { Route = SingboxRouteEmitter.Emit(new RouteProfileBuilder(Load(json)).Plan(TargetPlatform.Linux)) };
         Assert.That(serializer.Serialize(actual), Is.EqualTo(serializer.Serialize(baseline)));
     }
 
@@ -434,7 +629,7 @@ public sealed class ProfileConfigurationTests
                 Is.EqualTo(new[] { "netflix" }));
             Assert.That(root.GetProperty("dns").GetProperty("rules").EnumerateArray().Any(rule =>
                 rule.TryGetProperty("rule_set", out var tags) && tags.EnumerateArray().Any(tag => tag.GetString() == "netflix")), Is.True);
-            var routePlan = new RouteProfileBuilder(Options.Create(new TailscaleOptions()), profile).Plan(platform);
+            var routePlan = new RouteProfileBuilder(profile).Plan(platform);
             Assert.That((priority ? routePlan.PriorityServices : routePlan.OtherServices).Select(service => service.Name),
                 Does.Contain("Netflix"));
             Assert.That((priority ? routePlan.OtherServices : routePlan.PriorityServices).Select(service => service.Name),
@@ -444,7 +639,7 @@ public sealed class ProfileConfigurationTests
         });
         Assert.ThrowsAsync<BoxForgeConversionException>(() => provider.GetRequiredService<IBoxForgeEngine>().ConvertAsync(
             new ConversionRequest("collision", Yaml("netflix"), [platform])));
-        using var resolved = JsonDocument.Parse(profile.ToResolvedJson(new TailscaleOptions(), new SingboxApiOptions()));
+        using var resolved = JsonDocument.Parse(profile.ToResolvedJson());
         Assert.That(resolved.RootElement.GetProperty("rule_sets").EnumerateArray().Any(item =>
             item.GetProperty("tags").EnumerateArray().Any(tag => tag.GetString() == "netflix")), Is.True);
     }
@@ -552,7 +747,7 @@ public sealed class ProfileConfigurationTests
             Assert.That(client!["domain_resolver"]!["server"]!.GetValue<string>(), Is.EqualTo(SingboxTags.DirectAliDns));
         Assert.That(defaults.GetRequiredService<BoxForgeProfile>().GetResolver(id).Server, Is.Not.EqualTo(server));
         using var resolved = JsonDocument.Parse(custom.GetRequiredService<BoxForgeProfile>()
-            .ToResolvedJson(new TailscaleOptions(), new SingboxApiOptions()));
+            .ToResolvedJson());
         Assert.That(resolved.RootElement.GetProperty("resolvers").EnumerateArray()
             .Single(item => item.GetProperty("id").GetString() == id).GetProperty("server").GetString(), Is.EqualTo(server));
     }
@@ -566,7 +761,7 @@ public sealed class ProfileConfigurationTests
             """);
         Assert.That(profile.GetResolver("google").Server, Is.EqualTo("8.8.8.8"));
         Assert.That(profile.GetResolver("alidns").ServerName, Is.EqualTo("dns.alidns.com"));
-        using var resolved = JsonDocument.Parse(profile.ToResolvedJson(new TailscaleOptions(), new SingboxApiOptions()));
+        using var resolved = JsonDocument.Parse(profile.ToResolvedJson());
         Assert.That(resolved.RootElement.GetProperty("resolvers").EnumerateArray().Select(item => item.GetProperty("id").GetString()),
             Is.EqualTo(new[] { "alidns", "tencent", "cloudflare", "google" }));
     }
@@ -575,8 +770,8 @@ public sealed class ProfileConfigurationTests
     [TestCase("{\"version\":1,\"resolvers\":[{\"id\":\"alidns\"}]}")]
     [TestCase("{\"version\":1,\"resolvers\":[{\"id\":\"alidns\",\"server\":\"223.5.5.5\",\"server_name\":\"dns.alidns.com\"}]}")]
     public void NoOpResolverOverridesPreserveResolvedData(string json) => Assert.That(
-        Load(json).ToResolvedJson(new TailscaleOptions(), new SingboxApiOptions()),
-        Is.EqualTo(BoxForgeProfile.Default.ToResolvedJson(new TailscaleOptions(), new SingboxApiOptions())));
+        Load(json).ToResolvedJson(),
+        Is.EqualTo(BoxForgeProfile.Default.ToResolvedJson()));
 
     [TestCase("null")]
     [TestCase("{}")]
@@ -691,8 +886,10 @@ public sealed class ProfileConfigurationTests
     [Test]
     public void ResolvedOutputIncludesMergedDataAndEffectiveRuntimeSwitches()
     {
-        using var json = JsonDocument.Parse(Load(TaiwanProfile).ToResolvedJson(
-            new TailscaleOptions { Enabled = false, AndroidEnabled = true }, new SingboxApiOptions { Enabled = true }));
+        var profile = Load(TaiwanProfile).ApplyOverrides(JsonNode.Parse("""
+            {"version":1,"runtime":{"tailscale":{"enabled":false,"android_enabled":true},"singbox_api":{"enabled":true}}}
+            """)!.AsObject());
+        using var json = JsonDocument.Parse(profile.ToResolvedJson());
         Assert.That(json.RootElement.GetProperty("regions").GetArrayLength(), Is.EqualTo(5));
         Assert.That(json.RootElement.GetProperty("runtime").GetProperty("tailscale").GetProperty("enabled").GetBoolean(), Is.False);
         Assert.That(json.RootElement.GetProperty("runtime").GetProperty("singbox_api").GetProperty("enabled").GetBoolean(), Is.True);
@@ -776,7 +973,7 @@ public sealed class ProfileConfigurationTests
                 Is.EqualTo(settings.TaildropDirectory));
             Assert.That(BoxForgeProfile.Default.GetPlatform(platform), Is.SameAs(original));
         });
-        using var resolved = JsonDocument.Parse(profile.ToResolvedJson(new TailscaleOptions(), new SingboxApiOptions()));
+        using var resolved = JsonDocument.Parse(profile.ToResolvedJson());
         Assert.That(resolved.RootElement.GetProperty("platforms").GetProperty(platform.ToString())
             .GetProperty("address_family").GetString(), Is.EqualTo("DualStack"));
     }
@@ -788,17 +985,15 @@ public sealed class ProfileConfigurationTests
     {
         PlatformProfile original = BoxForgeProfile.Default.GetPlatform(platform);
         PlatformProfile settings = original with { IsMobile = !original.IsMobile };
-        var profile = new BoxForgeProfile(BuiltInProfile.Default with
-        { Platforms = BuiltInProfile.Default.Platforms.SetItem(platform, settings) });
         foreach (bool desktopEnabled in new[] { false, true })
         {
-            var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            var profile = new BoxForgeProfile(BuiltInProfile.Default with
             {
-                ["Tailscale:Enabled"] = desktopEnabled.ToString(),
-                ["Tailscale:AndroidEnabled"] = (!desktopEnabled).ToString()
-            }).Build();
+                Platforms = BuiltInProfile.Default.Platforms.SetItem(platform, settings),
+                Runtime = new(new(desktopEnabled, !desktopEnabled), new(false))
+            });
             using var provider = new ServiceCollection().AddLogging()
-                .AddBoxForgeCore(configuration).AddSingleton(profile).BuildServiceProvider();
+                .AddBoxForgeCore(new ConfigurationBuilder().Build()).AddSingleton(profile).BuildServiceProvider();
             var bundle = await provider.GetRequiredService<IBoxForgeEngine>().ConvertAsync(
                 new ConversionRequest("tailscale", Yaml("US01"), [platform]));
             using var document = JsonDocument.Parse(bundle.Artifacts.Single().Content);
@@ -820,15 +1015,49 @@ public sealed class ProfileConfigurationTests
         Assert.That(BoxForgeProfile.Default.GetPlatform(platform), Is.SameAs(original));
     }
 
+    [Test]
+    public async Task RequestProfileControlsNodeValidationAndEmissionWithoutChangingTheHost()
+    {
+        using var provider = CreateProvider(null);
+        var engine = provider.GetRequiredService<IBoxForgeEngine>();
+        var overlay = JsonNode.Parse("""
+            {"version":1,"regions":[{"id":"us","display_name":"Request US"}]}
+            """)!.AsObject();
+        Assert.ThrowsAsync<BoxForgeConversionException>(() => engine.ConvertAsync(
+            new ConversionRequest("reserved", Yaml("Request US"), [TargetPlatform.Linux]) { Profile = overlay }));
+
+        var request = new ConversionRequest("valid", Yaml("US01", "US02"), [TargetPlatform.Linux]);
+        var customized = await engine.ConvertAsync(request with { Profile = overlay });
+        var unchanged = await engine.ConvertAsync(request);
+        using var custom = JsonDocument.Parse(customized.Artifacts.Single().Content);
+        using var original = JsonDocument.Parse(unchanged.Artifacts.Single().Content);
+        Assert.Multiple(() =>
+        {
+            Assert.That(custom.RootElement.GetProperty("outbounds").EnumerateArray()
+                .Any(outbound => outbound.GetProperty("tag").GetString() == "Request US"), Is.True);
+            Assert.That(original.RootElement.GetProperty("outbounds").EnumerateArray()
+                .Any(outbound => outbound.GetProperty("tag").GetString() == "Request US"), Is.False);
+        });
+        Assert.DoesNotThrowAsync(() => engine.ConvertAsync(
+            new ConversionRequest("host", Yaml("Request US"), [TargetPlatform.Linux])));
+    }
+
+    private static ProfilePlan Plan(NodeCatalog nodes, BoxForgeProfile profile) =>
+        SingboxGroupEmitter.Emit(ProfilePlanner.PlanGroups(nodes, profile, probeInterval: null));
+
     private static BoxForgeProfile Load(string json)
     {
         using var source = new MemoryStream(Encoding.UTF8.GetBytes(json));
         return BoxForgeProfile.Load(source);
     }
 
-    private static ServiceProvider CreateProvider(string? path) => new ServiceCollection().AddLogging()
-        .AddBoxForgeCore(new ConfigurationBuilder().AddInMemoryCollection(
-            new Dictionary<string, string?> { ["Profile"] = path }).Build()).BuildServiceProvider();
+    private static ServiceProvider CreateProvider(string? path, Dictionary<string, string?>? values = null)
+    {
+        var settings = values is null ? new Dictionary<string, string?>() : new Dictionary<string, string?>(values);
+        settings["Profile"] = path;
+        return new ServiceCollection().AddLogging().AddBoxForgeCore(
+            new ConfigurationBuilder().AddInMemoryCollection(settings).Build()).BuildServiceProvider();
+    }
 
     internal static string Yaml(params string[] names) => "proxies:\n" + string.Concat(names.Select(name =>
         $"  - name: {JsonSerializer.Serialize(name)}\n    type: ss\n    server: node.example.com\n    port: 443\n    cipher: aes-128-gcm\n    password: test-only\n"));

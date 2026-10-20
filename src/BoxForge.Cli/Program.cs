@@ -7,7 +7,6 @@ using BoxForge.App;
 using BoxForge.Configuration;
 using BoxForge.Cli;
 using BoxForge.Workflows;
-using Microsoft.Extensions.Options;
 
 try
 {
@@ -47,9 +46,7 @@ try
 
     if (parsed.Options!.ShowResolved)
     {
-        Console.WriteLine(host.Services.GetRequiredService<BoxForgeProfile>().ToResolvedJson(
-            host.Services.GetRequiredService<IOptions<TailscaleOptions>>().Value,
-            host.Services.GetRequiredService<IOptions<SingboxApiOptions>>().Value));
+        Console.WriteLine(host.Services.GetRequiredService<BoxForgeProfile>().ToResolvedJson());
         return;
     }
 

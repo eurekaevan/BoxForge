@@ -5,7 +5,6 @@ using System.Text.Json;
 using BoxForge.Configuration;
 using BoxForge.Models;
 using BoxForge.Models.Singbox;
-using Microsoft.Extensions.Options;
 
 namespace BoxForge.Tests;
 
@@ -36,10 +35,9 @@ public sealed class RouteProfileBuilderTests
         var settings = BoxForgeProfile.Default.GetPlatform(platform) with { AddressFamily = addressFamily };
         var profile = new BoxForgeProfile(BuiltInProfile.Default with
         { Platforms = BuiltInProfile.Default.Platforms.SetItem(platform, settings) });
-        var options = new TailscaleOptions { Enabled = true, AndroidEnabled = true };
-        var builder = new RouteProfileBuilder(Options.Create(options), profile);
+        var builder = new RouteProfileBuilder(profile);
         var plan = builder.Plan(platform);
-        string expected = JsonSerializer.Serialize(builder.Build(platform));
+        string expected = JsonSerializer.Serialize(SingboxRouteEmitter.Emit(builder.Plan(platform)));
         var first = SingboxRouteEmitter.Emit(plan);
         Assert.That(JsonSerializer.Serialize(first), Is.EqualTo(expected));
         foreach (SingboxRuleSet source in first.RuleSet)
@@ -48,14 +46,19 @@ public sealed class RouteProfileBuilderTests
         foreach (RouteRule rule in first.Rules)
             ClearMatchers(rule);
         first.Rules.Clear();
-        options.Enabled = options.AndroidEnabled = false;
+        var changedProfile = new BoxForgeProfile(BuiltInProfile.Default with
+        {
+            Platforms = BuiltInProfile.Default.Platforms.SetItem(platform, settings),
+            Runtime = profile.Runtime with { Tailscale = new(false, false) }
+        });
         Assert.Multiple(() =>
         {
             Assert.That(JsonSerializer.Serialize(SingboxRouteEmitter.Emit(plan)), Is.EqualTo(expected));
             Assert.That(plan.AddressFamily, Is.EqualTo(addressFamily));
             Assert.That(plan.UseDirectForwarding, Is.EqualTo(settings.UseDirectForwarding));
             Assert.That(plan.TailscaleEnabled, Is.True);
-            Assert.That(builder.Plan(platform).TailscaleEnabled, Is.False);
+            Assert.That(builder.Plan(platform).TailscaleEnabled, Is.True);
+            Assert.That(builder.Plan(platform, changedProfile).TailscaleEnabled, Is.False);
             Assert.That(plan.PriorityServices, Is.EqualTo(profile.Services.Where(service => service.PrecedesDomesticRoutes)));
             Assert.That(plan.OtherServices, Is.EqualTo(profile.Services.Where(service => !service.PrecedesDomesticRoutes)));
             Assert.That(plan.RuleSets.SelectMany(source => source.Tags), Is.EqualTo(profile.RuleSets.SelectMany(source => source.Tags)));
@@ -106,9 +109,9 @@ public sealed class RouteProfileBuilderTests
     [Test]
     public void DirectForwardingLayersRespectExplicitPreAndPostSniffPhases()
     {
-        RouteConfig android = CreateBuilder().Build(TargetPlatform.Android);
-        RouteConfig windows = CreateBuilder().Build(TargetPlatform.Windows);
-        RouteConfig linux = CreateBuilder().Build(TargetPlatform.Linux);
+        RouteConfig android = SingboxRouteEmitter.Emit(CreateBuilder().Plan(TargetPlatform.Android));
+        RouteConfig windows = SingboxRouteEmitter.Emit(CreateBuilder().Plan(TargetPlatform.Windows));
+        RouteConfig linux = SingboxRouteEmitter.Emit(CreateBuilder().Plan(TargetPlatform.Linux));
 
         List<RouteRule> androidDirect = DirectRules(android);
         List<RouteRule> preSniffDirect = PreSniffDirectRules(android);
@@ -182,7 +185,7 @@ public sealed class RouteProfileBuilderTests
     [TestCase(TargetPlatform.Windows)]
     public void TunKeepsEarlyTailscaleGateWithoutMixedResolutionStages(TargetPlatform platform)
     {
-        RouteConfig route = new RouteProfileBuilder(Options.Create(new TailscaleOptions()), BoxForgeProfile.Default).Build(platform);
+        RouteConfig route = SingboxRouteEmitter.Emit(new RouteProfileBuilder(BoxForgeProfile.Default).Plan(platform));
         RouteRule gate = route.Rules.Single(rule =>
             rule.PreferredBy?.Contains(SingboxTags.TailscaleEndpoint) == true);
         int privateDirectIndex = route.Rules.FindIndex(rule =>
@@ -194,7 +197,7 @@ public sealed class RouteProfileBuilderTests
             Assert.That(gate.Outbound, Is.EqualTo(SingboxTags.TailscaleEndpoint));
             Assert.That(route.Rules.IndexOf(gate), Is.LessThan(privateDirectIndex));
             Assert.That(route.Rules.Any(rule => rule.Action == RouteRuleAction.Resolve), Is.False);
-            Assert.That(CreateBuilder().Build(platform).Rules.Any(rule =>
+            Assert.That(SingboxRouteEmitter.Emit(CreateBuilder().Plan(platform)).Rules.Any(rule =>
                 rule.PreferredBy?.Contains(SingboxTags.TailscaleEndpoint) == true), Is.False);
         });
     }
@@ -205,7 +208,7 @@ public sealed class RouteProfileBuilderTests
     public void AllIpv6IsRejectedBeforeSniffWithLateFallbackPreserved(
         TargetPlatform platform)
     {
-        RouteConfig route = CreateBuilder().Build(platform);
+        RouteConfig route = SingboxRouteEmitter.Emit(CreateBuilder().Plan(platform));
         List<RouteRule> ipv6Rejects = route.Rules.Where(rule =>
             rule.Action == RouteRuleAction.Reject
             && rule.IpVersion == 6).ToList();
@@ -243,7 +246,7 @@ public sealed class RouteProfileBuilderTests
     [TestCase(TargetPlatform.Windows)]
     public void RemoteRuleSetsMapSemanticTagsToDustinWinAndMetaCubeX(TargetPlatform platform)
     {
-        RouteConfig route = CreateBuilder().Build(platform);
+        RouteConfig route = SingboxRouteEmitter.Emit(CreateBuilder().Plan(platform));
         SingboxRuleSet dustinWinRuleSet = route.RuleSet.Single(ruleSet =>
             ruleSet.Tag?.Contains(RuleSetTags.Ai) == true);
         Dictionary<string, string?> metaCubeXUrls = route.RuleSet
@@ -289,7 +292,7 @@ public sealed class RouteProfileBuilderTests
     [Test]
     public void Ipv6GatePrecedesProxyServicesAndDomesticIpv4Fallback()
     {
-        RouteConfig route = CreateBuilder().Build(TargetPlatform.Linux);
+        RouteConfig route = SingboxRouteEmitter.Emit(CreateBuilder().Plan(TargetPlatform.Linux));
 
         SingboxRuleSet? googleRuleSet = route.RuleSet.SingleOrDefault(ruleSet =>
             ruleSet.Tag?.Contains("google") == true);
@@ -345,7 +348,7 @@ public sealed class RouteProfileBuilderTests
     [Test]
     public void Udp443PolicyAllowsDomesticBeforeTheGeneralForeignReject()
     {
-        RouteConfig route = CreateBuilder().Build(TargetPlatform.Linux);
+        RouteConfig route = SingboxRouteEmitter.Emit(CreateBuilder().Plan(TargetPlatform.Linux));
 
         List<(RouteRule Rule, int Index)> udp443Rejects = route.Rules
             .Select((rule, index) => (Rule: rule, Index: index))
@@ -397,7 +400,7 @@ public sealed class RouteProfileBuilderTests
     [Test]
     public void NoIpv6RouteCanReachDirectOrProxyOutbounds()
     {
-        RouteConfig route = CreateBuilder().Build(TargetPlatform.Linux);
+        RouteConfig route = SingboxRouteEmitter.Emit(CreateBuilder().Plan(TargetPlatform.Linux));
 
         List<int> ipv6RejectIndexes = route.Rules
             .Select((rule, index) => (Rule: rule, Index: index))
@@ -409,7 +412,7 @@ public sealed class RouteProfileBuilderTests
             .Select((rule, index) => (Rule: rule, Index: index))
             .Where(item => item.Rule.Action == RouteRuleAction.Route
                 && item.Rule.Outbound != null
-                && ProfileDefinitions.Services.Any(service =>
+                && BoxForgeProfile.Default.Services.Any(service =>
                     service.Name == item.Rule.Outbound))
             .Select(item => item.Index)
             .ToList();
@@ -435,7 +438,7 @@ public sealed class RouteProfileBuilderTests
     [TestCase(TargetPlatform.Windows)]
     public void TcpSniffSkipsCommonServerFirstPortsAndKeepsNonstandardWebPorts(TargetPlatform platform)
     {
-        RouteConfig route = CreateBuilder().Build(platform);
+        RouteConfig route = SingboxRouteEmitter.Emit(CreateBuilder().Plan(platform));
 
         List<RouteRule> sniffRules = route.Rules
             .Where(rule => rule.Action == RouteRuleAction.Sniff)
@@ -467,7 +470,7 @@ public sealed class RouteProfileBuilderTests
     [Test]
     public void StunProtocolRejectFollowsUdpSniffAndPrecedesPostSniffRouting()
     {
-        RouteConfig route = CreateBuilder().Build(TargetPlatform.Linux);
+        RouteConfig route = SingboxRouteEmitter.Emit(CreateBuilder().Plan(TargetPlatform.Linux));
 
         int stunProtocolRejectIndex = route.Rules.FindIndex(rule =>
             rule.Action == RouteRuleAction.Reject
@@ -584,12 +587,10 @@ public sealed class RouteProfileBuilderTests
     }
 
     private static RouteProfileBuilder CreateBuilder() =>
-        new(
-            Options.Create(new TailscaleOptions
-            {
-                Enabled = false,
-                AndroidEnabled = false
-            }), BoxForgeProfile.Default);
+        new(new BoxForgeProfile(BuiltInProfile.Default with
+        {
+            Runtime = BuiltInProfile.Default.Runtime with { Tailscale = new(false, false) }
+        }));
 
     private static List<RouteRule> DirectRules(RouteConfig route) =>
         route.Rules.Where(rule =>
@@ -719,7 +720,7 @@ public sealed class RouteProfileBuilderTests
     private static int FindFirstStandardServiceIndex(RouteConfig route) =>
         route.Rules.FindIndex(rule =>
             rule.Action == RouteRuleAction.Route
-            && ProfileDefinitions.Services
+            && BoxForgeProfile.Default.Services
                 .Where(service => !service.PrecedesDomesticRoutes)
                 .Any(service =>
                 rule.Outbound == service.Name));
@@ -740,7 +741,7 @@ public sealed class RouteProfileBuilderTests
         route.Rules.FindIndex(rule =>
             rule.Action == RouteRuleAction.Route
             && (rule.Outbound == SingboxTags.DirectOutbound
-                || ProfileDefinitions.Services.Any(service =>
+                || BoxForgeProfile.Default.Services.Any(service =>
                     service.Name == rule.Outbound))
             && !ContainsUdp443Condition(rule)
             && !ContainsIpv6Condition(rule)

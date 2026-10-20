@@ -11,7 +11,7 @@ internal sealed record TrojanNode(
     internal override void Validate()
     {
         if (Tls is null || TlsEnabled.Value == false
-            || (TlsEnabled.Field is not null && TlsEnabled.Value != true))
+            || (TlsEnabled.IsSpecified && TlsEnabled.Value != true))
             throw new InvalidOperationException("Trojan requires TLS; an explicit TLS switch must be true.");
         Tls?.Validate();
     }

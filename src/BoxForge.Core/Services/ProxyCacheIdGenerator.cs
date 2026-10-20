@@ -4,12 +4,12 @@ using BoxForge.Models.Clash;
 
 namespace BoxForge.Services;
 
-public interface IProxyCacheIdGenerator
+internal interface IProxyCacheIdGenerator
 {
     string Generate(IReadOnlyList<ClashProxyNode> proxies);
 }
 
-public sealed class ProxyCacheIdGenerator(
+internal sealed class ProxyCacheIdGenerator(
     IConfigSerializer configSerializer) : IProxyCacheIdGenerator
 {
     public string Generate(IReadOnlyList<ClashProxyNode> proxies)

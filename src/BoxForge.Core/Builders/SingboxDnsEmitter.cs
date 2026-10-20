@@ -13,6 +13,9 @@ internal static class SingboxDnsEmitter
         plan.Validate();
         var dns = new DnsConfig
         {
+            Timeout = plan.Timeout,
+            CacheCapacity = plan.CacheCapacity,
+            Optimistic = new DnsOptimisticConfig { Timeout = plan.OptimisticTimeout },
             Strategy = plan.AddressFamily.ToDnsStrategy(),
             Final = plan.FinalResolver
         };

@@ -1,4 +1,5 @@
 using BoxForge.Configuration;
+using System.Collections.Immutable;
 
 namespace BoxForge.Models.Intermediate;
 
@@ -9,10 +10,11 @@ internal sealed record RoutePlan(
     string DirectResolverAddress,
     string SniffTimeout,
     string FinalOutbound,
-    IReadOnlyList<BuiltInProfile.RuleSetSource> RuleSets,
+    IReadOnlyList<RuleSetPlan> RuleSets,
     IReadOnlyList<ServiceDefinition> PriorityServices,
     IReadOnlyList<ServiceDefinition> OtherServices,
-    IReadOnlyList<RoutePhase> Phases)
+    IReadOnlyList<RoutePhase> Phases,
+    ImmutableArray<int> SniffExcludedPorts)
 {
     internal void Validate()
     {
@@ -21,7 +23,7 @@ internal sealed record RoutePlan(
         if (!Enum.IsDefined(AddressFamily))
             throw new InvalidOperationException("路由计划的地址族无效。");
         var tags = new HashSet<string>(StringComparer.Ordinal);
-        foreach (BuiltInProfile.RuleSetSource source in RuleSets)
+        foreach (RuleSetPlan source in RuleSets)
         {
             if (source.Tags.IsDefaultOrEmpty || source.Tags.Any(tag => string.IsNullOrWhiteSpace(tag) || !tags.Add(tag)))
                 throw new InvalidOperationException("路由规则集标签必须非空且唯一。");
@@ -57,3 +59,5 @@ internal enum RoutePhase
     DomesticDirect,
     FinalOutbound
 }
+
+internal sealed record RuleSetPlan(ImmutableArray<string> Tags, string Url, string UpdateInterval);

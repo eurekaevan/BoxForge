@@ -1,9 +1,12 @@
+using System.Text.Json.Nodes;
+
 namespace BoxForge.Server.Api;
 
 internal sealed record ConvertApiRequest(
     string? Name,
     string? Yaml,
-    IReadOnlyList<string?>? Platforms);
+    IReadOnlyList<string?>? Platforms,
+    JsonObject? Profile = null);
 
 internal sealed record ConvertApiResponse(
     string Name,

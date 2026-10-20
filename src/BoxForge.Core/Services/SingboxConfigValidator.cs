@@ -8,7 +8,7 @@ using BoxForge.Helpers;
 
 namespace BoxForge.Services;
 
-public interface ISingboxConfigValidator
+internal interface ISingboxConfigValidator
 {
     void Validate(SingboxConfig config, AddressFamilyPolicy addressFamily);
 }
@@ -18,7 +18,7 @@ public interface ISingboxConfigValidator
 /// Target syntax and core defaults belong to the automated official <c>sing-box check</c>.
 /// Source-field validation remains in the parser and converters.
 /// </summary>
-public sealed class SingboxConfigValidator : ISingboxConfigValidator
+internal sealed class SingboxConfigValidator : ISingboxConfigValidator
 {
     public void Validate(SingboxConfig config, AddressFamilyPolicy addressFamily)
     {

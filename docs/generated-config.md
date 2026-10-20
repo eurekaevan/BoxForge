@@ -18,7 +18,7 @@
 共享 Windows/Linux 默认值，再覆盖 Linux 转发能力和各平台 Taildrop 路径。
 现有 `TargetPlatform` 调用入口不变，不新增 CLI 或环境变量选项。
 用户显式提供的节点参数优先于平台调优默认值，Tailscale 启用状态仍由
-`TailscaleOptions` 的桌面与 Android 独立开关控制；显式地址族请求也不会被预设覆盖。
+`profile.runtime.tailscale` 的桌面与 Android 独立开关控制；显式地址族请求也不会被预设覆盖。
 DNS 顺序回退的首选 `2s` 预算属于算法常量，不是 Mobile 的全局 DNS 超时。
 
 每个平台都只生成一个 TUN inbound，不再提供本地 SOCKS/HTTP mixed 入口。
@@ -215,6 +215,11 @@ CA/名称验证，而非叠加校验。但 Mihomo 还能匹配中间/根证书�
 
 ### 源码依据与验证边界
 
+各协议及共享 TLS 的来源/目标解释与固定 revision 链接保存在
+[协议映射数据表](data/protocol-mappings.json)，由脚本生成[证据参考](protocol-mappings.md)。
+表中 ID 仅用于文档和测试，内部 IR 保留实际来源字段路径，不携带规则 ID。
+五个协议统一通过 Schema 校验与协议解释钩子构建中立节点；目标发射不读取证据表。
+
 研究基线：Mihomo Meta `88dcbf7f1614a67c3b36b848ee3592dfa92ada36`，
 sing-box `1.15.0-alpha.8` / `b609f959f57ce34416c51c7b87ce4a76f2e1df56`。
 官方 Mihomo [TLS](https://wiki.metacubex.one/en/config/proxies/tls/) 文档与固定源码交叉核对：
@@ -253,7 +258,7 @@ origin 被限制为同端口的 `127.0.0.1` 与 `localhost`，
   没有节点则选择 `DIRECT`。
 - AI、Google、Spotify 和 Microsoft 服务组在美国地区组存在时默认选择它；
   Games 在香港地区组存在时默认选择它。偏好地区仅有一个 leaf 时直接选择该节点，
-  零个 leaf 才回退主代理组；偏好定义仅来自 `ProfileDefinitions.Services`。
+  零个 leaf 才回退主代理组；偏好定义仅来自 `profile.Services`。
   Service selector 不直接引用地区 AUTO，而由地区 selector 默认到 AUTO。
   主组仍保持上述“已生成地区组优先”的默认规则：单个 US 与多个 JP 并存时，
   主组默认 JP，偏好 US 的服务默认 US leaf；不新增单个 US 改写主组的策略。

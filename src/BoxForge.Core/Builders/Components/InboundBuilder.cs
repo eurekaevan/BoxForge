@@ -1,11 +1,12 @@
 using BoxForge.Models.Singbox;
 using BoxForge.Configuration;
+using BoxForge.Models.Intermediate;
 
 namespace BoxForge.Builders.Components;
 
-public static class InboundBuilder
+internal static class InboundBuilder
 {
-    public static List<Inbound> Build(PlatformProfile profile)
+    internal static List<Inbound> Emit(TunPlan plan)
     {
         return
         [
@@ -15,12 +16,12 @@ public static class InboundBuilder
                 Tag = SingboxTags.TunInbound,
                 // The IPv6 prefix is capture-only: auto_route needs an IPv6
                 // family on the TUN so IPv6 cannot bypass the global rejects.
-                Address = ["172.19.0.1/30", "fd00::1/126"],
+                Address = plan.Addresses.ToList(),
                 DnsMode = "hijack",
                 AutoRoute = true,
-                AutoRedirect = profile.AutoRedirect,
-                MultiQueue = profile.MultiQueue,
-                StrictRoute = profile.StrictRoute
+                AutoRedirect = plan.AutoRedirect,
+                MultiQueue = plan.MultiQueue,
+                StrictRoute = plan.StrictRoute
             }
         ];
     }

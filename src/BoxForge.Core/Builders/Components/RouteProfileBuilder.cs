@@ -1,29 +1,25 @@
 using BoxForge.Configuration;
 using BoxForge.Models;
 using BoxForge.Models.Intermediate;
-using BoxForge.Models.Singbox;
-using Microsoft.Extensions.Options;
 
 namespace BoxForge.Builders.Components;
 
-public sealed class RouteProfileBuilder(
-    IOptions<TailscaleOptions> tailscaleOptions,
-    BoxForgeProfile profile)
+internal sealed class RouteProfileBuilder(BoxForgeProfile profile)
 {
-    private readonly TailscaleOptions tailscale = tailscaleOptions.Value;
-
-    public RouteConfig Build(TargetPlatform platform) => SingboxRouteEmitter.Emit(Plan(platform));
-
-    internal RoutePlan Plan(TargetPlatform platform)
+    internal RoutePlan Plan(TargetPlatform platform, BoxForgeProfile? effectiveProfile = null)
     {
-        PlatformProfile settings = profile.GetPlatform(platform);
+        BoxForgeProfile settingsProfile = effectiveProfile ?? profile;
+        PlatformProfile settings = settingsProfile.GetPlatform(platform);
         var plan = new RoutePlan(
-            settings.AddressFamily, tailscale.IsEnabled(settings), settings.UseDirectForwarding,
-            profile.GetResolver("alidns").Server, RouteTuningPolicy.SniffTimeout,
-            SingboxTags.MainProxyGroup, profile.RuleSets,
-            profile.Services.Where(service => service.PrecedesDomesticRoutes).ToArray(),
-            profile.Services.Where(service => !service.PrecedesDomesticRoutes).ToArray(),
-            Enum.GetValues<RoutePhase>());
+            settings.AddressFamily,
+            settingsProfile.Runtime.Tailscale.IsEnabled(settings),
+            settings.UseDirectForwarding,
+            settingsProfile.GetResolver("alidns").Server, settingsProfile.Policies.SniffTimeout,
+            SingboxTags.MainProxyGroup, settingsProfile.RuleSets.Select(source =>
+                new RuleSetPlan(source.Tags, source.Url, source.UpdateInterval)).ToArray(),
+            settingsProfile.Services.Where(service => service.PrecedesDomesticRoutes).ToArray(),
+            settingsProfile.Services.Where(service => !service.PrecedesDomesticRoutes).ToArray(),
+            Enum.GetValues<RoutePhase>(), settingsProfile.Policies.SniffExcludedPorts);
         plan.Validate();
         return plan;
     }

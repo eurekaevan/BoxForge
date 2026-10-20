@@ -10,9 +10,9 @@ using BoxForge.Models.Singbox;
 using BoxForge.Services;
 using BoxForge.Parsers;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Options;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using YamlDotNet.Core;
 
 namespace BoxForge.Tests;
 
@@ -235,9 +235,7 @@ public sealed class BoxForgeEngineTests
         using ServiceProvider provider = CreateProvider();
         var engine = provider.GetRequiredService<IBoxForgeEngine>();
         var conversionService = provider.GetRequiredService<ConversionService>();
-        PreparedConversion prepared = conversionService.Prepare(
-            ValidYaml,
-            strictNodeValidation: true);
+        PreparedConversion prepared = conversionService.Prepare(ValidYaml);
 
         ConversionBundle bundle = await engine.ConvertAsync(
             new ConversionRequest(
@@ -408,9 +406,10 @@ public sealed class BoxForgeEngineTests
         {
             var profile = services.GetRequiredService<BoxForgeProfile>();
             return recording = new RecordingConfigBuilder(new SingboxConfigBuilder(
-                new TailscaleEndpointBuilder(Options.Create(new TailscaleOptions { Enabled = false, AndroidEnabled = true }), profile),
+                new TailscaleEndpointBuilder(new BoxForgeProfile(BuiltInProfile.Default with
+                { Runtime = profile.Runtime with { Tailscale = new(false, true) } })),
                 services.GetRequiredService<DnsProfileBuilder>(), services.GetRequiredService<RouteProfileBuilder>(),
-                services.GetRequiredService<SingboxApiServiceBuilder>(), profile));
+                profile));
         });
         var engine = provider.GetRequiredService<IBoxForgeEngine>();
         ConversionBundle? bundle = null;
@@ -445,6 +444,45 @@ public sealed class BoxForgeEngineTests
         Assert.That(wrapped!.InnerException, Is.TypeOf<NodeParseException>());
     }
 
+    [Test]
+    public async Task ConcurrentParserInstancesKeepAliasesAndFailuresLocalToEachDocument()
+    {
+        ClashParser[] parsers = [new(), new(), new(), new()];
+        var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task[] tasks = Enumerable.Range(0, 8).Select(worker => Task.Run(async () =>
+        {
+            await start.Task;
+            ClashParser parser = parsers[worker % parsers.Length];
+            for (int iteration = 0; iteration < 24; iteration++)
+            {
+                string marker = $"document-{worker}-{iteration}";
+                string yaml = $$"""
+                    proxies:
+                      - name: {{marker}}
+                        metadata:
+                          first: &shared {marker: {{marker}}}
+                          second: *shared
+                    """;
+                Assert.That(() => parser.Parse(yaml + "\n    name: duplicate"),
+                    Throws.InstanceOf<YamlException>().With.Message.Contains("duplicate key"));
+                Assert.That(() => parser.Parse("proxies:\n  - name: orphan\n    metadata: *shared"),
+                    Throws.InstanceOf<YamlException>());
+
+                var config = parser.Parse(yaml)!;
+                var node = config.Proxies.Single();
+                var metadata = node.GetObject("metadata")!;
+                Assert.Multiple(() =>
+                {
+                    Assert.That(node.Name, Is.EqualTo(marker));
+                    Assert.That(metadata.GetObject("first")!.GetString("marker"), Is.EqualTo(marker));
+                    Assert.That(metadata.GetObject("second")!.GetString("marker"), Is.EqualTo(marker));
+                });
+            }
+        })).ToArray();
+        start.SetResult();
+        await Task.WhenAll(tasks);
+    }
+
     private static ServiceProvider CreateProvider(
         Func<IServiceProvider, ISingboxConfigBuilder>? configBuilderFactory = null)
     {
@@ -468,7 +506,6 @@ public sealed class BoxForgeEngineTests
             serviceProvider.GetRequiredService<TailscaleEndpointBuilder>(),
             serviceProvider.GetRequiredService<DnsProfileBuilder>(),
             serviceProvider.GetRequiredService<RouteProfileBuilder>(),
-            serviceProvider.GetRequiredService<SingboxApiServiceBuilder>(),
             serviceProvider.GetRequiredService<BoxForgeProfile>());
 
     private sealed class RecordingConfigBuilder(

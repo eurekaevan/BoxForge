@@ -15,24 +15,17 @@ public static class CoreServiceRegistration
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        services.AddBoxForgeOptions(configuration);
-        services.AddSingleton(BoxForgeProfile.Load(configuration["Profile"]));
+        services.AddSingleton(ProfileConfiguration.ResolveProfile(configuration));
 
         services.AddSingleton<IClashParser, ClashParser>();
         services.AddSingleton<IConfigSerializer, ConfigSerializer>();
         services.AddSingleton<IProxyCacheIdGenerator, ProxyCacheIdGenerator>();
         services.AddSingleton<ISingboxConfigValidator, SingboxConfigValidator>();
-        services.AddTransient<IProxyConverter, TrojanConverter>();
-        services.AddTransient<IProxyConverter, VlessConverter>();
-        services.AddTransient<IProxyConverter, Hysteria2Converter>();
-        services.AddTransient<IProxyConverter, ShadowsocksConverter>();
-        services.AddTransient<IProxyConverter, AnyTlsConverter>();
 
         services.AddTransient<NodeCatalogBuilder>();
         services.AddTransient<TailscaleEndpointBuilder>();
         services.AddTransient<DnsProfileBuilder>();
         services.AddTransient<RouteProfileBuilder>();
-        services.AddTransient<SingboxApiServiceBuilder>();
 
         services.AddTransient<ISingboxConfigBuilder, SingboxConfigBuilder>();
         services.AddTransient<ConversionService>();

@@ -119,7 +119,7 @@ public sealed class ProtocolSourceMappingTests
             case "profiles":
                 Assert.That(outbounds[SingboxTags.MainProxyGroup].GetProperty("default").GetString(), Is.EqualTo("🇯🇵 JP"));
                 Assert.That(outbounds["🇯🇵 JP"].GetProperty("default").GetString(), Is.EqualTo("🇯🇵 JP AUTO"));
-                foreach (ServiceDefinition service in ProfileDefinitions.Services)
+                foreach (ServiceDefinition service in BoxForgeProfile.Default.Services)
                     Assert.That(outbounds[service.Name].GetProperty("default").GetString(),
                         Is.EqualTo(service.DefaultRegion switch
                         {

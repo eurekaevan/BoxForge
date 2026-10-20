@@ -1,12 +1,9 @@
-using BoxForge.Models.Singbox;
 using BoxForge.Models.Intermediate;
-using System.Globalization;
 
 namespace BoxForge.Configuration;
 
-public static class OutboundTuningPolicy
+internal static class OutboundTuningPolicy
 {
-    private const string ConnectTimeout = "5s";
     private static readonly Hysteria2HopInterval DefaultHysteria2Hop = new(30, 60);
     private const Hysteria2BbrProfile DefaultHysteria2Bbr = Hysteria2BbrProfile.Standard;
 
@@ -16,7 +13,7 @@ public static class OutboundTuningPolicy
         {
             Connection = node.Connection with
             {
-                ConnectTimeout = node.Connection.ConnectTimeout ?? ConnectTimeout,
+                ConnectTimeout = node.Connection.ConnectTimeout ?? profile.ConnectTimeout,
                 TcpKeepAlive = node.Connection.TcpKeepAlive ?? profile.TcpKeepAlive,
                 TcpKeepAliveInterval = node.Connection.TcpKeepAliveInterval ?? profile.TcpKeepAliveInterval
             }
@@ -35,39 +32,4 @@ public static class OutboundTuningPolicy
         return result;
     }
 
-    public static ProxyOutbound Apply(ProxyOutbound outbound, PlatformProfile profile)
-    {
-        ProxyOutbound tuned = outbound with
-        {
-            ConnectTimeout = outbound.ConnectTimeout ?? ConnectTimeout,
-            TcpKeepAlive = outbound.TcpKeepAlive
-                ?? profile.TcpKeepAlive,
-            TcpKeepAliveInterval = outbound.TcpKeepAliveInterval
-                ?? profile.TcpKeepAliveInterval
-        };
-
-        // Records copy references: each output must own its mutable collections.
-        return tuned switch
-        {
-            VlessOutbound vless => vless with { Tls = CopyTls(vless.Tls) },
-            TrojanOutbound trojan => trojan with { Tls = CopyTls(trojan.Tls) },
-            AnyTlsOutbound anyTls => anyTls with { Tls = CopyTls(anyTls.Tls) },
-            Hysteria2Outbound hysteria2 => hysteria2 with
-            {
-                Tls = CopyTls(hysteria2.Tls),
-                ServerPorts = hysteria2.ServerPorts is { } ports ? [.. ports] : null,
-                HopInterval = hysteria2.HopInterval ?? DefaultHysteria2Hop.MinimumSeconds.ToString(CultureInfo.InvariantCulture) + "s",
-                HopIntervalMax = hysteria2.HopIntervalMax
-                    ?? (hysteria2.HopInterval is null ? DefaultHysteria2Hop.MaximumSeconds?.ToString(CultureInfo.InvariantCulture) + "s" : null),
-                BbrProfile = hysteria2.BbrProfile
-                    ?? (hysteria2.UpMbps is > 0 || hysteria2.DownMbps is > 0
-                        ? null : DefaultHysteria2Bbr.ToString().ToLowerInvariant())
-            },
-            _ => tuned
-        };
-    }
-
-    private static OutboundTls? CopyTls(OutboundTls? tls) => tls is null
-        ? null
-        : tls with { Alpn = tls.Alpn is { } alpn ? [.. alpn] : null };
 }

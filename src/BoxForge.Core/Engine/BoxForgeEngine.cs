@@ -6,7 +6,7 @@ using System.Text.RegularExpressions;
 
 namespace BoxForge.Engine;
 
-public sealed class BoxForgeEngine(
+internal sealed class BoxForgeEngine(
     ConversionService conversionService,
     IConfigSerializer configSerializer) : IBoxForgeEngine
 {
@@ -24,12 +24,13 @@ public sealed class BoxForgeEngine(
         ValidateRequest(request);
         cancellationToken.ThrowIfCancellationRequested();
 
+        var effectiveProfile = request.Profile is { } overlay ? conversionService.ResolveProfile(overlay) : null;
         PreparedConversion prepared;
         try
         {
             prepared = conversionService.Prepare(
                 request.ClashYaml,
-                strictNodeValidation: true);
+                effectiveProfile);
         }
         catch (Exception ex) when (ex is NodeParseException or YamlException)
         {
@@ -50,7 +51,7 @@ public sealed class BoxForgeEngine(
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                string content = conversionService.Convert(prepared, platform);
+                string content = conversionService.Convert(prepared, platform, effectiveProfile);
                 artifacts.Add(new ConversionArtifact(
                     platform,
                     content,

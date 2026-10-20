@@ -105,7 +105,9 @@ def verify(cli, supplied_core):
         for tailscale in (False, True):
             for api in (False, True):
                 output = root / f"tailscale-{tailscale}-api-{api}"
-                environment = os.environ.copy()
+                # Verification must not inherit a user profile or host overrides.
+                environment = {key: value for key, value in os.environ.items()
+                               if not key.upper().startswith("BOXFORGE_")}
                 environment.update({
                     "BOXFORGE_Tailscale__Enabled": str(tailscale),
                     "BOXFORGE_Tailscale__AndroidEnabled": str(tailscale),

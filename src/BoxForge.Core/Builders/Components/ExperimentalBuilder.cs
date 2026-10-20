@@ -2,7 +2,7 @@ using BoxForge.Models.Singbox;
 
 namespace BoxForge.Builders.Components;
 
-public static class ExperimentalBuilder
+internal static class ExperimentalBuilder
 {
     public static ExperimentalConfig Build(string? cacheId)
     {

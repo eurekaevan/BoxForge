@@ -3,7 +3,7 @@ using BoxForge.Models.Clash;
 
 namespace BoxForge.Converters;
 
-public enum SourceFieldDisposition
+internal enum SourceFieldDisposition
 {
     Mapped,
     Alias,
@@ -11,7 +11,7 @@ public enum SourceFieldDisposition
     UnsupportedSemantic
 }
 
-public enum SourceFieldValueKind
+internal enum SourceFieldValueKind
 {
     Scalar,
     Mapping,
@@ -19,7 +19,7 @@ public enum SourceFieldValueKind
     Any
 }
 
-public sealed record SourceFieldDefinition(
+internal sealed record SourceFieldDefinition(
     string Name,
     SourceFieldDisposition Disposition,
     string? CanonicalName = null,
@@ -28,7 +28,7 @@ public sealed record SourceFieldDefinition(
     Func<ClashProxyNode, object?, string?>? ValidateValue = null,
     SourceFieldValueKind ValueKind = SourceFieldValueKind.Scalar);
 
-public sealed class SourceFieldSchema
+internal sealed class SourceFieldSchema
 {
     private readonly Dictionary<string, SourceFieldDefinition> fields =
         new(StringComparer.Ordinal);
@@ -122,22 +122,6 @@ public sealed class SourceFieldSchema
     {
         Add(new SourceFieldDefinition(
             name, disposition, ValidateValue: validate, ValueKind: valueKind));
-        return this;
-    }
-
-    public SourceFieldSchema ConditionalAlias(
-        string canonicalName,
-        string alias,
-        Func<ClashProxyNode, object?, string?> validate)
-    {
-        if (!fields.TryGetValue(canonicalName, out SourceFieldDefinition? canonical))
-        {
-            throw new InvalidOperationException($"别名缺少对应的源字段声明: {canonicalName}");
-        }
-
-        Add(new SourceFieldDefinition(
-            alias, SourceFieldDisposition.Alias, canonicalName,
-            ValidateValue: validate, ValueKind: canonical.ValueKind));
         return this;
     }
 

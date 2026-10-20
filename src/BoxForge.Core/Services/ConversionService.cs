@@ -1,4 +1,5 @@
 using BoxForge.Builders;
+using System.Text.Json.Nodes;
 using BoxForge.Configuration;
 using BoxForge.Builders.Components;
 using BoxForge.Models;
@@ -9,7 +10,7 @@ using BoxForge.Exceptions;
 
 namespace BoxForge.Services;
 
-public sealed class ConversionService(
+internal sealed class ConversionService(
     IClashParser clashParser,
     NodeCatalogBuilder nodeCatalogBuilder,
     IProxyCacheIdGenerator proxyCacheIdGenerator,
@@ -18,32 +19,36 @@ public sealed class ConversionService(
     IConfigSerializer configSerializer,
     BoxForgeProfile profile)
 {
+    internal BoxForgeProfile ResolveProfile(JsonObject overlay) => profile.ApplyOverrides(overlay);
+
     public PreparedConversion Prepare(
         string yamlContent,
-        bool strictNodeValidation = false)
+        BoxForgeProfile? effectiveProfile = null)
     {
         ClashConfig clashConfig = clashParser.Parse(yamlContent)
             ?? throw new NodeParseException("YAML 解析失败，请检查文件内容。");
         NodeCatalog nodes = nodeCatalogBuilder.Build(
             clashConfig,
-            strictNodeValidation);
+            effectiveProfile);
         string cacheId = proxyCacheIdGenerator.Generate(clashConfig.Proxies);
         return new PreparedConversion(nodes, cacheId);
     }
 
     public string Convert(
         PreparedConversion prepared,
-        TargetPlatform platform)
+        TargetPlatform platform,
+        BoxForgeProfile? effectiveProfile = null)
     {
         var request = new SingboxBuildRequest(
                 prepared.Nodes,
                 platform,
-                prepared.CacheId);
+                prepared.CacheId)
+        { Profile = effectiveProfile };
         SingboxConfig config = configBuilder.Build(request);
 
-        configValidator.Validate(config, profile.GetPlatform(platform).AddressFamily);
+        configValidator.Validate(config, (effectiveProfile ?? profile).GetPlatform(platform).AddressFamily);
         return configSerializer.Serialize(config);
     }
 }
 
-public sealed record PreparedConversion(NodeCatalog Nodes, string CacheId);
+internal sealed record PreparedConversion(NodeCatalog Nodes, string CacheId);
