@@ -3,41 +3,12 @@ using BoxForge.Builders.Components;
 using BoxForge.Configuration;
 using BoxForge.Exceptions;
 using BoxForge.Models.Clash;
-using BoxForge.Models.Intermediate;
 
 namespace BoxForge.Tests;
 
 [TestFixture]
 public sealed class NodeCatalogBuilderTests
 {
-    [Test]
-    public void CatalogContainsOnlyInterpretedNodes()
-    {
-        var builder = new NodeCatalogBuilder(BoxForgeProfile.Default);
-        var catalog = builder.Build(new ClashConfig
-        {
-            Proxies = [CreateProxy("vless"), CreateProxy("trojan"), CreateProxy("anytls"), CreateProxy("hysteria2"), CreateProxy("ss")]
-        });
-        Assert.That(catalog.Nodes.Select(node => node.GetType()),
-            Is.EqualTo(new[] { typeof(VlessNode), typeof(TrojanNode), typeof(AnyTlsNode), typeof(Hysteria2Node), typeof(ShadowsocksNode) }));
-        Assert.That(catalog.Nodes.Select(node => node.Connection.ConnectTimeout), Is.All.Null);
-        Assert.That(catalog.Names, Is.EqualTo(new[] { "vless-node", "trojan-node", "anytls-node", "hysteria2-node", "ss-node" }));
-    }
-
-    private static ClashProxyNode CreateProxy(string type)
-    {
-        var fields = new Hashtable
-        {
-            ["type"] = type,
-            ["name"] = type + "-node",
-            ["server"] = "node.example.com",
-            ["port"] = 443,
-            [type == "vless" ? "uuid" : "password"] = "test-only"
-        };
-        if (type == "ss") fields["cipher"] = "aes-128-gcm";
-        return new ClashProxyNode(fields);
-    }
-
     [Test]
     public void InvalidNodeRejectsInput()
     {

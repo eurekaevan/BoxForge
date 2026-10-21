@@ -1,6 +1,7 @@
 # 生成配置约定
 
-本文记录生成配置的有效行为及 JSON 输出约定。
+本文记录内置 profile 的默认生成行为及 JSON 输出约定。平台参数、运行时开关与
+策略可通过[统一 profile](configuration.md#统一-profile)覆盖。
 
 ## JSON 输出约定
 
@@ -14,17 +15,17 @@
 
 ## 平台差异
 
-平台默认值集中在不可变的 `PlatformProfile`：Mobile 用于 Android，Desktop
-共享 Windows/Linux 默认值，再覆盖 Linux 转发能力和各平台 Taildrop 路径。
-现有 `TargetPlatform` 调用入口不变，不新增 CLI 或环境变量选项。
+平台默认值来自内嵌的 `Configuration/default-profile.json`，加载为不可变
+`BoxForgeProfile` 中的各平台 `PlatformProfile`。CLI 的 `--profile`、
+`BOXFORGE_Profile` 和 HTTP 请求内联 profile 均可覆盖平台参数，具体优先级见配置参考。
 用户显式提供的节点参数优先于平台调优默认值，Tailscale 启用状态仍由
-`profile.runtime.tailscale` 的桌面与 Android 独立开关控制；显式地址族请求也不会被预设覆盖。
-DNS 顺序回退的首选 `2s` 预算属于算法常量，不是 Mobile 的全局 DNS 超时。
+`profile.runtime.tailscale` 的桌面与 Android 独立开关控制；地址族使用有效 profile 的平台值。
+DNS 顺序回退的首选 `2s` 预算属于算法常量，不是 Android 的全局 DNS 超时。
 
 每个平台都只生成一个 TUN inbound，不再提供本地 SOCKS/HTTP mixed 入口。
 原先显式使用 `127.0.0.1:8848` 的客户端须改为通过 TUN 联网。
 TUN 固定启用 `auto_route`，DNS 模式显式输出 `dns_mode: hijack`。
-`strict_route` 仅在 Linux/Windows 显式启用；指定版本 Android feature matrix
+`strict_route` 默认仅在 Linux/Windows 显式启用；指定版本 Android feature matrix
 标记该能力未实现，因此省略。不生成 `set_system_proxy` 或
 `platform.http_proxy`，因此不会由
 sing-box 自动修改系统 HTTP 代理设置。
@@ -50,10 +51,11 @@ Windows/Android 省略该字段。实际吞吐收益尚未验证，可按
   在 UDP sniff 之后、各自原始规则所在位置增加仅匹配 `tun-in` + UDP 的 L3
   route。它们不会被搬到 sniff 之前，因此仍保留原有服务优先级和域名嗅探语义。
 
-TUN 仍配置 `fd00::1/126`，但它只用于让操作系统把 IPv6 流量送入 sing-box，
+TUN 默认 IPv6 地址为 `fd00::1/126`，可通过 `tun_addresses` 替换。默认
+`Ipv4Only` 下，该地址只用于让操作系统把 IPv6 流量送入 sing-box，
 不是 IPv6 连通能力。DNS 劫持之后立即生成全局 `ip_version: 6` 拒绝，在任何
 DIRECT、Tailscale、bridge、bypass 或 sniff 之前终止 IPv6。服务分流之前再生成
-同样的兜底拒绝，保留后置 IPv6 防护。
+同样的兜底拒绝，保留后置 IPv6 防护。覆盖为 `DualStack` 时不生成这些拒绝规则。
 
 Linux 在每条上述 L3 route 之前再生成无 `outbound` 的 `bypass` 动作，使
 `auto_redirect` 流量在相同条件下从内核层直接绕过 sing-box；该动作在其他
@@ -64,7 +66,7 @@ Linux 的 `bridge` 需要系统权限，`bypass` 依赖已启用的 `auto_redire
 Windows 和 Android 不生成这些转发层；Windows 不再通过生成配置启用 bridge/WinDivert。
 
 三个平台默认生成 Tailscale endpoint，并启用 `on_demand: true`。启用时，
-`taildrop_directory` 始终按目标平台生成：Android 使用
+`taildrop_directory` 来自有效平台 profile：默认 Android 使用
 SFA 工作目录下的 `Taildrop`，Windows 使用
 `$USERPROFILE\Downloads\Taildrop`，Linux 使用 `$HOME/Downloads/Taildrop`。环境
 变量由目标机器上的 sing-box 在运行时展开。
@@ -170,7 +172,7 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
   `category-ads-all`。域名过滤仍可能误伤共享服务，不能保证零误拦。
   Games 使用 DustinWin 的 `games`，不限于单一游戏平台，并明确排除
   `games-cn`；具体覆盖范围由上游规则维护。
-- 全部 IPv6 使用原生 `ip_version: 6` 匹配，并在 DIRECT、Tailscale 和所有
+- `Ipv4Only` 下，全部 IPv6 使用原生 `ip_version: 6` 匹配，并在 DIRECT、Tailscale 和所有
   代理业务路由之前被拒绝。不生成仅供 mixed 域名目标使用的 `resolve` 和复检规则。
 - TCP HTTP/TLS 嗅探排除 `21/22/3306/5900`，避免这些端口上客户端等待服务器
   先发数据时产生嗅探超时等待；排除只作用于 sniff，不跳过任何后续分流或拒绝规则。
@@ -217,11 +219,15 @@ CA/名称验证，而非叠加校验。但 Mihomo 还能匹配中间/根证书�
 
 各协议及共享 TLS 的来源/目标解释与固定 revision 链接保存在
 [协议映射数据表](data/protocol-mappings.json)，由脚本生成[证据参考](protocol-mappings.md)。
-表中 ID 仅用于文档和测试，内部 IR 保留实际来源字段路径，不携带规则 ID。
+表中 ID 仅用于文档和测试；内部 IR 只保留解释后的值及是否显式提供的标记，
+不携带来源字段路径或规则 ID。
 五个协议统一通过 Schema 校验与协议解释钩子构建中立节点；目标发射不读取证据表。
 
 研究基线：Mihomo Meta `88dcbf7f1614a67c3b36b848ee3592dfa92ada36`，
 sing-box `1.15.0-alpha.8` / `b609f959f57ce34416c51c7b87ce4a76f2e1df56`。
+该固定源码研究基线保留原始 revision；当前最低支持与资格验证核心为官方
+sing-box `1.15.0-alpha.12` / `25b0d5ea3e466d246c708ac0f20d0448110e566c`，
+两者的证据用途不同，不能以核心检查通过替代源码语义对照。
 官方 Mihomo [TLS](https://wiki.metacubex.one/en/config/proxies/tls/) 文档与固定源码交叉核对：
 
 - Mihomo [VLESS](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/vless.go)、

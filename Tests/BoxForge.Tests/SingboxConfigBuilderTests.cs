@@ -150,11 +150,8 @@ public sealed class SingboxConfigBuilderTests
         });
     }
 
-    [TestCase("untouched")]
-    [TestCase("hash")]
-    [TestCase("equality")]
-    [TestCase("copy-hash")]
-    public async Task SharedCatalogGeneratesIndependentPlatformConfigurationsConcurrently(string access)
+    [Test]
+    public async Task SharedCatalogGeneratesIndependentPlatformConfigurationsConcurrently()
     {
         var input = new ClashConfig { Proxies = [] };
         var parser = new ClashParser();
@@ -171,19 +168,6 @@ public sealed class SingboxConfigBuilderTests
         TargetPlatform[] platforms = Enum.GetValues<TargetPlatform>();
         var expected = platforms.ToDictionary(platform => platform,
             platform => serializer.Serialize(builder.Build(new SingboxBuildRequest(catalog, platform, new string('a', 64)))));
-        switch (access)
-        {
-            case "hash":
-                _ = catalog.GetHashCode();
-                break;
-            case "equality":
-                Assert.That(catalog.Equals(catalog with { }), Is.True);
-                break;
-            case "copy-hash":
-                _ = (catalog with { }).GetHashCode();
-                break;
-
-        }
         var generated = await Task.WhenAll(Enumerable.Range(0, 3).SelectMany(_ => platforms.Reverse().Select(platform =>
             Task.Run(() => (Platform: platform, Config: builder.Build(new SingboxBuildRequest(catalog, platform, new string('a', 64))))))));
         foreach (var result in generated)

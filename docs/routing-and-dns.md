@@ -1,7 +1,8 @@
 # DNS 与路由优先级
 
 sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视为可测试的公开约定。
-本文记录当前构建器实际输出的顺序，便于修改规则时评估优先级影响。
+本文记录内置 profile 的默认输出顺序，便于修改规则时评估优先级影响。
+平台参数、服务及策略可通过[统一 profile](configuration.md#统一-profile)覆盖；阶段顺序保持不变。
 
 ## 路由规则顺序
 
@@ -43,17 +44,20 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
 IPv6 早期拒绝 → 广告拒绝 → IPv6 兜底拒绝 → 代理服务 → 国内 IPv4 → 最终代理
 ```
 
-所有代理服务路由位于后置 IPv6 拒绝之后，确保服务分流只处理 IPv4 目标。
+`Ipv4Only` 下，所有代理服务路由位于后置 IPv6 拒绝之后，确保服务分流只处理 IPv4 目标。
 
 ## DNS 分类与控制面解析
 
-`AddressFamilyPolicies` 为 Linux、Windows、Android 统一选择 `Ipv4Only`。
-它同时生成 `dns.strategy = ipv4_only`、最前面的全局 AAAA 空 `NOERROR`，
-以及 route 的早期和后置 IPv6 reject。保留 `DualStack` 策略入口，但当前
-没有平台使用它。路由 reject 仍覆盖字面量 IPv6 和不经 sing-box DNS 的连接。
+有效 `BoxForgeProfile` 中各平台的 `PlatformProfile.AddressFamily` 决定地址族；
+内置 JSON 为 Linux、Windows、Android 均设置 `Ipv4Only`。此模式生成
+`dns.strategy = ipv4_only`、最前面的全局 AAAA 空 `NOERROR`，以及 route 的早期和
+后置 IPv6 reject，后者也覆盖字面量 IPv6 和不经 sing-box DNS 的连接。
+通过 `platforms.<平台>.address_family` 可覆盖为 `DualStack`，此时不生成上述
+AAAA 阻断和 IPv6 reject，DNS 与控制面解析策略也随之切换；内置默认值没有启用双栈。
 
 控制平面域名由 `route.default_domain_resolver` 解析：直连
-`dns-direct-alidns`、`ipv4_only`、`disable_optimistic_cache = true`。
+`dns-direct-alidns`、随平台地址族选择的策略（默认 `ipv4_only`）、
+`disable_optimistic_cache = true`。
 代理节点、直连出站和 Tailscale endpoint 继承该设置；rule-set 和 Dashboard
 HTTP client 显式使用相同 resolver。节点域名不加入 client DNS 规则。
 该固定 tag 的 IP 和 TLS 名称可通过 [resolver profile](configuration.md#resolver-profile)
@@ -61,7 +65,7 @@ HTTP client 显式使用相同 resolver。节点域名不加入 client DNS 规�
 
 client DNS 依次分类：
 
-1. 所有 AAAA 查询返回空 `NOERROR`。
+1. `Ipv4Only` 下，所有 AAAA 查询返回空 `NOERROR`。
 2. 启用 Tailscale 时，`preferred_by` 命中的 MagicDNS 和 split DNS 交给
    `dns-tailscale`，禁用 optimistic 缓存。
 3. `ads` 返回 `NXDOMAIN`。
@@ -81,12 +85,12 @@ Cloudflare、备用为经主代理 Google。DNS 构建器从注入的 `BoxForgeP
 平台的 `DnsSelectionMode`：默认 Android 使用 `SequentialFallback`，Linux/Windows 使用
 `ParallelFastest`。
 
-Android 先 `evaluate` primary（`timeout: 2s`），随后按顺序判断 primary 的
+顺序回退模式（默认 Android）先 `evaluate` primary（`timeout: 2s`），随后按顺序判断 primary 的
 `NOERROR` 和 `NXDOMAIN`。只有这两个规则都不接受 primary 结果时，才会执行
-secondary `evaluate`；secondary 继承全局 `dns.timeout = 5s`。健康情况下因此
+secondary `evaluate`；secondary 继承全局 `dns.timeout`（默认 `5s`）。健康情况下因此
 只产生一个上游请求。
 
-Linux/Windows 先连续执行两个 `evaluate`，让 primary 和 secondary 并行查询。
+并行模式（默认 Linux/Windows）先连续执行两个 `evaluate`，让 primary 和 secondary 并行查询。
 A 查询先进入独立的地址池，两条 `NOERROR` `respond` 同时要求响应中有
 IPv4 地址（`ip_cidr: 0.0.0.0/0`）并启用 `race: true`。最快含地址的响应
 立即提交，空 NOERROR、仅 CNAME 或仅附加区地址不能抢赢。响应条件不重复带
@@ -96,19 +100,20 @@ IPv4 地址（`ip_cidr: 0.0.0.0/0`）并启用 `race: true`。最快含地址的
 两条地址竞速均未命中后，依次接受 primary/secondary 的 NOERROR 后备，再依次
 接受 primary/secondary 的 NXDOMAIN。地址池以同 scope 的 SERVFAIL 结束，
 不会进入后续通用池重复查询。HTTPS、SVCB、MX 等非 A 查询保持原有 NOERROR
-竞速，不要求响应含 IP；AAAA 在进入池前已返回空答。Android 策略不变。
+竞速，不要求响应含 IP；`Ipv4Only` 下 AAAA 在进入池前已返回空答。
 
 非 A 查询的 NXDOMAIN `respond` 同样不启用 race，等待未决的 NOERROR 竞速。
-所有查询的全局超时仍为 `5s`：快负答或空答与另一侧不响应的组合仍可能等满
-5 秒。这是保留有效结果优先的代价，本轮没有缩短负响应等待预算。
+所有查询的全局超时来自 `policies.dns_timeout`，默认 `5s`：快负答或空答与
+另一侧不响应的组合仍可能等满该预算。这是保留有效结果优先的代价。
 
 每个 pool 最后都有同 scope 的 `predefined SERVFAIL`。双方传输失败、超时、
 SERVFAIL 或 REFUSED 时在本 pool 终止，priority 和 CN 不会穿透到后一分类。
 `dns.final = dns-proxy-cloudflare` 仅为异常兜底，正常 client 查询由各自 pool
 结束。
 
-正常 TTL 缓存和容量 4096 的 reverse mapping 保留；optimistic 缓存超时为
-`6h`。Linux/Windows 地址池的 A evaluate 单独设置
+正常 TTL 缓存和 reverse mapping 保留；缓存容量来自 `policies.dns_cache_capacity`
+（默认 4096），optimistic 超时来自 `policies.dns_optimistic_timeout`（默认 `6h`）。
+并行模式地址池的 A evaluate 单独设置
 `disable_optimistic_cache: true`，只使用正常 TTL 内的缓存，避免过期空答或旧
 地址抢赢新查询；它同时牺牲了 A 查询过期正向缓存的立即返回能力。其他查询
 仍保留 optimistic。控制平面解析和 Tailscale split DNS 也禁用 optimistic 缓存。
@@ -121,10 +126,13 @@ DNS `preferred_by` 引用 DNS server，而不是路由 outbound/endpoint；当�
 标签使用独立命名空间，按大小写精确匹配。省略 `dns.final`（空字符串）仍
 采用 sing-box 的首个 DNS server 默认值；内置生成策略和规则顺序不变。
 
-上述规则依据 sing-box 1.15.0-alpha.8 的
+当前最低支持与资格验证核心为官方 sing-box `1.15.0-alpha.12`，revision
+`25b0d5ea3e466d246c708ac0f20d0448110e566c`。规则语法参见官方
 [DNS rule action](https://sing-box.sagernet.org/configuration/dns/rule_action/)、
 [DNS rule](https://sing-box.sagernet.org/configuration/dns/rule/) 和
 [route default_domain_resolver](https://sing-box.sagernet.org/configuration/route/)。
+这些在线文档可能随版本更新；固定 `alpha.8` 源码的协议研究证据与当前
+`alpha.12` 核心检查、本地回环各自的覆盖范围见[协议验证边界](protocol-validation.md)。
 当前不生成 `dns_server_address`、`dns_search_domain`、DHCP 或 local
 resolver。
 

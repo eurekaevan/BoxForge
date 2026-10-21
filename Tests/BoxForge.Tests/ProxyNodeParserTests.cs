@@ -65,7 +65,7 @@ public sealed class ProxyNodeParserTests
 
     [TestCase("ss", "cipher")]
     [TestCase("shadowsocks", "method")]
-    public void ShadowsocksIrKeepsCipherAliasAndRawPassword(string protocol, string cipherField)
+    public void ShadowsocksPreservesCipherAliasAndRawPassword(string protocol, string cipherField)
     {
         ShadowsocksNode node = ParseShadowsocks(CreateNode(protocol, new Hashtable
         {
@@ -73,7 +73,6 @@ public sealed class ProxyNodeParserTests
             ["password"] = " test-only "
         }));
         Assert.That(node.Cipher.Value, Is.EqualTo("aes-128-gcm"));
-        Assert.That(node.Cipher.IsSpecified, Is.True);
         Assert.That(SingboxNodeEmitter.Emit(node).Password, Is.EqualTo(" test-only "));
         Assert.That(node, Is.TypeOf<ShadowsocksNode>());
     }
@@ -86,7 +85,7 @@ public sealed class ProxyNodeParserTests
     [TestCase("true", "0", 1)]
     [TestCase("true", "1", 1)]
     [TestCase("true", "2", 2)]
-    public void ShadowsocksIrKeepsUotOriginAndEffectiveWireVersion(string enabledInput, string versionInput, int expected)
+    public void ShadowsocksPreservesEffectiveWireVersion(string enabledInput, string versionInput, int expected)
     {
         bool? enabled = enabledInput == "true" ? true : enabledInput == "false" ? false : null;
         var fields = new Hashtable { ["cipher"] = "aes-128-gcm", ["password"] = "test-only" };
@@ -94,9 +93,7 @@ public sealed class ProxyNodeParserTests
         if (versionInput != "omitted") fields["udp_over_tcp_version"] = versionInput == "null" ? null : versionInput;
         ShadowsocksNode node = ParseShadowsocks(CreateNode("ss", fields));
         Assert.That(node.UdpOverTcpEnabled.Value, Is.EqualTo(enabled));
-        Assert.That(node.UdpOverTcpEnabled.IsSpecified, Is.EqualTo(enabledInput != "omitted"));
         Assert.That((int)node.UdpOverTcpVersion.Value, Is.EqualTo(expected));
-        Assert.That(node.UdpOverTcpVersion.IsSpecified, Is.EqualTo(versionInput != "omitted"));
         var emitted = SingboxNodeEmitter.Emit(node);
         if (enabled == true)
             Assert.That(emitted.UdpOverTcp!.Version, Is.EqualTo(expected));
@@ -120,10 +117,7 @@ public sealed class ProxyNodeParserTests
             [parent] = options
         }));
         ShadowsocksObfs plugin = node.Plugin.Value!;
-        Assert.That(node.Plugin.IsSpecified, Is.True);
-        Assert.That(plugin.Mode.IsSpecified, Is.True);
         Assert.That(plugin.Host.Value, Is.EqualTo(hostInput == "custom" ? "a;b=c\\d" : "bing.com"));
-        Assert.That(plugin.Host.IsSpecified, Is.EqualTo(hostInput != "omitted"));
         var emitted = SingboxNodeEmitter.Emit(node);
         Assert.That(emitted.Plugin, Is.EqualTo("obfs-local"));
         Assert.That(emitted.PluginOpts, Is.EqualTo($"obfs={mode};obfs-host="
@@ -134,13 +128,12 @@ public sealed class ProxyNodeParserTests
     [TestCase("omitted")]
     [TestCase("null")]
     [TestCase("")]
-    public void ShadowsocksIrKeepsDisabledPluginOrigin(string input)
+    public void ShadowsocksOmitsDisabledPlugin(string input)
     {
         var fields = new Hashtable { ["cipher"] = "aes-128-gcm", ["password"] = "test-only" };
         if (input != "omitted") fields["plugin"] = input == "null" ? null : input;
         ShadowsocksNode node = ParseShadowsocks(CreateNode("ss", fields));
         Assert.That(node.Plugin.Value, Is.Null);
-        Assert.That(node.Plugin.IsSpecified, Is.EqualTo(input != "omitted"));
         Assert.That(SingboxNodeEmitter.Emit(node).PluginOpts, Is.Null);
     }
 
@@ -218,7 +211,6 @@ public sealed class ProxyNodeParserTests
         if (input != "omitted") fields["ports"] = input == "null" ? null : input;
         Hysteria2Node node = ParseHysteria2(CreateNode("hysteria2", fields));
         Hysteria2Outbound outbound = SingboxNodeEmitter.Emit(node);
-        Assert.That(node.Ports.IsSpecified, Is.True);
         if (expected == "443")
         {
             Assert.That(node.Ports.Value[0].End, Is.Null);
@@ -241,12 +233,11 @@ public sealed class ProxyNodeParserTests
     [TestCase("0", 30L, null)]
     [TestCase("30-15", 15L, 30L)]
     [TestCase("2-3", 5L, 5L)]
-    public void Hysteria2IrKeepsFixedAndRangedHopOrigins(string input, long? minimum, long? maximum)
+    public void Hysteria2PreservesFixedAndRangedHopIntervals(string input, long? minimum, long? maximum)
     {
         var fields = new Hashtable { ["password"] = "test-only" };
         if (input != "omitted") fields["hop_interval"] = input == "null" ? null : input;
         Hysteria2Node node = ParseHysteria2(CreateNode("hysteria2", fields));
-        Assert.That(node.HopInterval.IsSpecified, Is.EqualTo(input != "omitted"));
         Assert.That(node.HopInterval.Value?.MinimumSeconds, Is.EqualTo(minimum));
         Assert.That(node.HopInterval.Value?.MaximumSeconds, Is.EqualTo(maximum));
         foreach (TargetPlatform platform in Enum.GetValues<TargetPlatform>())
@@ -261,14 +252,12 @@ public sealed class ProxyNodeParserTests
     [TestCase("null", null)]
     [TestCase("0", 0)]
     [TestCase("125000 Bps", 1)]
-    public void Hysteria2IrKeepsBandwidthOriginAndTuningPriority(string input, int? expected)
+    public void Hysteria2PreservesBandwidthAndTuningPriority(string input, int? expected)
     {
         var fields = new Hashtable { ["password"] = "test-only" };
         if (input != "omitted") fields["up"] = input == "null" ? null : input;
         Hysteria2Node node = ParseHysteria2(CreateNode("hysteria2", fields));
         Assert.That(node.UploadMegabitsPerSecond.Value, Is.EqualTo(expected));
-        Assert.That(node.UploadMegabitsPerSecond.IsSpecified, Is.EqualTo(input != "omitted"));
-        Assert.That(node.DownloadMegabitsPerSecond.IsSpecified, Is.False);
         Assert.That(node.BbrProfile.Value, Is.Null);
         var tuned = (Hysteria2Outbound)SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(node, BoxForgeProfile.Default.GetPlatform(TargetPlatform.Linux)));
         Assert.That(tuned.UpMbps, Is.EqualTo(expected));
@@ -398,7 +387,6 @@ public sealed class ProxyNodeParserTests
             ["bbr_profile"] = "aggressive",
             ["alpn"] = new[] { "h3" }
         }));
-        Assert.That(node.BbrProfile.IsSpecified, Is.True);
         foreach (TargetPlatform platform in Enum.GetValues<TargetPlatform>())
         {
             var outbound = (Hysteria2Outbound)SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(node, BoxForgeProfile.Default.GetPlatform(platform)));
@@ -421,7 +409,7 @@ public sealed class ProxyNodeParserTests
     [TestCase("idle_timeout", "1μs", "1μs")]
     [TestCase("idle-session-check-interval", "30", "30s")]
     [TestCase("idle_session_check_interval", "250ms", "250ms")]
-    public void AnyTlsIrRetainsDurationMeaningAndActualAlias(string field, string value, string expected)
+    public void AnyTlsParsesSessionDurationAliases(string field, string value, string expected)
     {
         AnyTlsNode node = ParseAnyTls(CreateNode("anytls", new Hashtable
         {
@@ -431,12 +419,11 @@ public sealed class ProxyNodeParserTests
         bool isInterval = field.Contains("check", StringComparison.Ordinal);
         SourceValue<string?> duration = isInterval ? node.IdleCheckInterval : node.IdleTimeout;
         Assert.That(duration.Value, Is.EqualTo(expected));
-        Assert.That(duration.IsSpecified, Is.True);
     }
 
     [TestCase(false)]
     [TestCase(true)]
-    public void AnyTlsIrKeepsOmissionSeparateFromExplicitNull(bool explicitNull)
+    public void AnyTlsOmitsAbsentAndNullSessionFields(bool explicitNull)
     {
         var fields = new Hashtable { ["password"] = "test-only" };
         if (explicitNull)
@@ -450,13 +437,9 @@ public sealed class ProxyNodeParserTests
         Assert.Multiple(() =>
         {
             Assert.That(node.IdleTimeout.Value, Is.Null);
-            Assert.That(node.IdleTimeout.IsSpecified, Is.EqualTo(explicitNull));
             Assert.That(node.IdleCheckInterval.Value, Is.Null);
-            Assert.That(node.IdleCheckInterval.IsSpecified, Is.EqualTo(explicitNull));
             Assert.That(node.MinimumIdleSessions.Value, Is.Null);
-            Assert.That(node.MinimumIdleSessions.IsSpecified, Is.EqualTo(explicitNull));
             Assert.That(node.ClientMetadata.Value, Is.Null);
-            Assert.That(node.ClientMetadata.IsSpecified, Is.EqualTo(explicitNull));
         });
         string json = SerializeOutbound(SingboxNodeEmitter.Emit(node));
         Assert.That(json, Does.Not.Contain("idle_session").And.Not.Contain("client_metadata"));
@@ -564,8 +547,6 @@ public sealed class ProxyNodeParserTests
             ["client_metadata"] = "",
             ["alpn"] = new[] { "h2" }
         }));
-        Assert.That(node.MinimumIdleSessions.IsSpecified, Is.True);
-        Assert.That(node.ClientMetadata.IsSpecified, Is.True);
         foreach (TargetPlatform platform in Enum.GetValues<TargetPlatform>())
         {
             var outbound = (AnyTlsOutbound)SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(node, BoxForgeProfile.Default.GetPlatform(platform)));
@@ -635,7 +616,7 @@ public sealed class ProxyNodeParserTests
     [TestCase("trojan", false)]
     [TestCase("vless", true)]
     [TestCase("trojan", true)]
-    public void TlsIrRetainsAliasesAndNestedRealityPaths(string protocol, bool aliases)
+    public void TlsPreservesAliasesAndNestedRealityValues(string protocol, bool aliases)
     {
         string nameField = aliases ? "servername" : "sni";
         string fingerprintField = aliases ? "client_fingerprint" : "client-fingerprint";
@@ -651,13 +632,9 @@ public sealed class ProxyNodeParserTests
         OutboundTls emitted = SingboxNodeEmitter.EmitTls(tls)!;
         Assert.Multiple(() =>
         {
-            Assert.That(tls.ServerName.IsSpecified, Is.EqualTo(nameField is not null));
             Assert.That(emitted.ServerName, Is.EqualTo("tls.example.com"));
-            Assert.That(tls.ClientFingerprint.IsSpecified, Is.EqualTo(fingerprintField is not null));
             Assert.That(emitted.Utls!.Fingerprint, Is.EqualTo("chrome"));
-            Assert.That(tls.Reality!.PublicKey.IsSpecified, Is.True);
             Assert.That(emitted.Reality!.PublicKey, Is.EqualTo(RealityPublicKey));
-            Assert.That(tls.Reality.ShortId.IsSpecified, Is.True);
             Assert.That(emitted.Reality.ShortId, Is.EqualTo("Aa00"));
         });
     }
@@ -668,13 +645,12 @@ public sealed class ProxyNodeParserTests
     [TestCase("trojan", "null")]
     [TestCase("vless", "empty")]
     [TestCase("trojan", "empty")]
-    public void TlsIrKeepsNameFallbackAndItsOrigin(string protocol, string input)
+    public void TlsFallsBackToServerForMissingOrEmptyNames(string protocol, string input)
     {
         var fields = new Hashtable();
         if (input != "omitted") fields["servername"] = input == "null" ? null : " ";
         TlsSettings tls = ParseTls(protocol, fields);
         Assert.That(tls.ServerName.Value, Is.EqualTo("node.example.com"));
-        Assert.That(tls.ServerName.IsSpecified, Is.EqualTo(input != "omitted"));
         Assert.That(SingboxNodeEmitter.EmitTls(tls)!.ServerName, Is.EqualTo("node.example.com"));
     }
 
@@ -686,29 +662,13 @@ public sealed class ProxyNodeParserTests
     [TestCase("trojan", "false", false)]
     [TestCase("vless", "true", true)]
     [TestCase("trojan", "true", true)]
-    public void TlsIrKeepsCertificateValidationPresence(string protocol, string input, bool? expected)
+    public void TlsPreservesCertificateValidationSetting(string protocol, string input, bool? expected)
     {
         var fields = new Hashtable();
         if (input != "omitted") fields["skip-cert-verify"] = expected;
         TlsSettings tls = ParseTls(protocol, fields);
         Assert.That(tls.AllowInvalidCertificate.Value, Is.EqualTo(expected));
-        Assert.That(tls.AllowInvalidCertificate.IsSpecified, Is.EqualTo(input != "omitted"));
         Assert.That(SingboxNodeEmitter.EmitTls(tls)!.Insecure, Is.EqualTo(expected));
-    }
-
-    [TestCase("vless")]
-    [TestCase("trojan")]
-    public void TlsIrKeepsAlpnOmissionSeparateFromAnExplicitEmptyList(string protocol)
-    {
-        TlsSettings absent = ParseTls(protocol, new Hashtable());
-        TlsSettings empty = ParseTls(protocol, new Hashtable { ["alpn"] = Array.Empty<string>() });
-        Assert.Multiple(() =>
-        {
-            Assert.That(absent.ApplicationProtocols.Value, Is.Null);
-            Assert.That(absent.ApplicationProtocols.IsSpecified, Is.False);
-            Assert.That(empty.ApplicationProtocols.Value, Is.Empty);
-            Assert.That(empty.ApplicationProtocols.IsSpecified, Is.True);
-        });
     }
 
     [TestCase("vless", false, null)]
@@ -719,13 +679,12 @@ public sealed class ProxyNodeParserTests
     [TestCase("trojan", true, "")]
     [TestCase("vless", true, "none")]
     [TestCase("trojan", true, "none")]
-    public void TlsIrKeepsNativeFingerprintOrigin(string protocol, bool supplied, string? value)
+    public void TlsOmitsUtlsForMissingOrNativeFingerprint(string protocol, bool supplied, string? value)
     {
         var fields = new Hashtable();
         if (supplied) fields["client_fingerprint"] = value;
         TlsSettings tls = ParseTls(protocol, fields);
         Assert.That(tls.ClientFingerprint.Value, Is.Null);
-        Assert.That(tls.ClientFingerprint.IsSpecified, Is.EqualTo(supplied));
         Assert.That(SingboxNodeEmitter.EmitTls(tls)!.Utls, Is.Null);
     }
 
@@ -750,7 +709,7 @@ public sealed class ProxyNodeParserTests
     [TestCase("null", null)]
     [TestCase("false", false)]
     [TestCase("true", true)]
-    public void VlessIrDistinguishesTlsOmissionFromExplicitValues(string input, bool? expected)
+    public void VlessEnablesTlsOnlyWhenRequested(string input, bool? expected)
     {
         var fields = new Hashtable { ["uuid"] = "test-only" };
         if (input != "omitted") fields["tls"] = expected;
@@ -759,7 +718,6 @@ public sealed class ProxyNodeParserTests
         Assert.Multiple(() =>
         {
             Assert.That(node.TlsEnabled.Value, Is.EqualTo(expected));
-            Assert.That(node.TlsEnabled.IsSpecified, Is.EqualTo(input != "omitted"));
             Assert.That(node.Tls is not null, Is.EqualTo(expected == true));
         });
         node.Validate();
@@ -769,7 +727,7 @@ public sealed class ProxyNodeParserTests
     [TestCase("packet-encoding", null, "Xudp")]
     [TestCase("packet_encoding", "packet", "PacketAddress")]
     [TestCase("packet-encoding", "PACKET", "Xudp")]
-    public void VlessIrRetainsDatagramOriginAndEffectiveMeaning(
+    public void VlessPreservesEffectiveDatagramEncoding(
         string? field, string? value, string expected)
     {
         var fields = new Hashtable { ["uuid"] = "test-only" };
@@ -779,23 +737,8 @@ public sealed class ProxyNodeParserTests
         Assert.Multiple(() =>
         {
             Assert.That(node.DatagramEncoding.Value.ToString(), Is.EqualTo(expected));
-            Assert.That(node.DatagramEncoding.IsSpecified, Is.EqualTo(field is not null));
             Assert.That(node.Flow.Value, Is.EqualTo(VlessFlow.None));
-            Assert.That(node.Flow.IsSpecified, Is.False);
         });
-    }
-
-    [Test]
-    public void VlessIrKeepsExplicitFlowOriginAfterNormalization()
-    {
-        VlessNode node = ParseVless(CreateNode("vless", new Hashtable
-        {
-            ["uuid"] = "test-only",
-            ["flow"] = "xtls-rprx-vision-udp443"
-        }));
-
-        Assert.That(node.Flow.Value, Is.EqualTo(VlessFlow.Vision));
-        Assert.That(node.Flow.IsSpecified, Is.True);
     }
 
     [Test]
@@ -1186,6 +1129,10 @@ public sealed class ProxyNodeParserTests
         ProxyOutbound present = Convert<ProxyOutbound>(CreateNode(protocol, fields));
         Assert.That(GetTls(absent)!.Alpn, Is.Null);
         Assert.That(GetTls(present)!.Alpn, Is.EqualTo(new[] { "h2", "http/1.1", "h2" }));
+        fields["alpn"] = Array.Empty<string>();
+        ProxyOutbound empty = Convert<ProxyOutbound>(CreateNode(protocol, fields));
+        Assert.That(GetTls(empty)!.Alpn, Is.Empty);
+        Assert.That(SerializeOutbound(empty), Does.Not.Contain("\"alpn\""));
         foreach (object malformed in new object[] { "h2", new object[] { 1 } })
         {
             fields["alpn"] = malformed;

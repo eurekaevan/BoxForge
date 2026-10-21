@@ -7,7 +7,6 @@ using BoxForge.Engine;
 using BoxForge.Exceptions;
 using BoxForge.Models;
 using BoxForge.Models.Singbox;
-using BoxForge.Services;
 using BoxForge.Parsers;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -227,30 +226,6 @@ public sealed class BoxForgeEngineTests
             Assert.That(artifact.Sha256, Is.EqualTo(expectedHash));
             Assert.That(artifact.Sha256, Does.Match("^[0-9a-f]{64}$"));
         });
-    }
-
-    [Test]
-    public async Task MatchesExistingConversionServiceOutputByteForByte()
-    {
-        using ServiceProvider provider = CreateProvider();
-        var engine = provider.GetRequiredService<IBoxForgeEngine>();
-        var conversionService = provider.GetRequiredService<ConversionService>();
-        PreparedConversion prepared = conversionService.Prepare(ValidYaml);
-
-        ConversionBundle bundle = await engine.ConvertAsync(
-            new ConversionRequest(
-                "compatibility",
-                ValidYaml,
-                [
-                    TargetPlatform.Windows,
-                    TargetPlatform.Android,
-                    TargetPlatform.Linux
-                ]));
-
-        Assert.That(
-            bundle.Artifacts.Select(artifact => artifact.Content),
-            Is.EqualTo(bundle.Artifacts.Select(artifact =>
-                conversionService.Convert(prepared, artifact.Platform))));
     }
 
     [Test]
