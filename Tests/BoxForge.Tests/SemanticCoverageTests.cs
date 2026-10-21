@@ -291,7 +291,7 @@ public sealed class SemanticCoverageTests
             Assert.That(android.TcpKeepAlive, Is.Null);
             Assert.That(android.TcpKeepAliveInterval, Is.EqualTo("12s"));
             Assert.That(android.ConnectTimeout, Is.EqualTo("9s"));
-            Assert.That(source.HopInterval.Value!.MaximumSeconds, Is.EqualTo(40));
+            Assert.That(source.HopInterval!.MaximumSeconds, Is.EqualTo(40));
         });
     }
 

@@ -80,12 +80,7 @@ internal static class Hysteria2Protocol
         var tls = TlsConfigHelper.ExtractSettings(node, server, forceTls: true, supportsUtls: false)
             ?? throw new InvalidOperationException("Hysteria2 interpretation unexpectedly returned no TLS settings.");
         return new Hysteria2Node(name, server,
-            new(ports, true), nodePassword,
-            new(up, node.GetPresentField("up") is not null),
-            new(down, node.GetPresentField("down") is not null),
-            new(hopInterval, node.GetPresentField("hop-interval", "hop_interval") is not null),
-            new(bbrProfile, node.GetPresentField("bbr-profile", "bbr_profile") is not null),
-            new(obfsConfig, node.GetPresentField("obfs") is not null),
+            ports, nodePassword, up, down, hopInterval, bbrProfile, obfsConfig,
             new(node.GetNullableBool("tls"), node.GetPresentField("tls") is not null), tls);
     }
 

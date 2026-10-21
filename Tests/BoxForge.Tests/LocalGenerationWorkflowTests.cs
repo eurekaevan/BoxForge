@@ -5,6 +5,7 @@ using BoxForge.Workflows;
 using BoxForge.App;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Diagnostics;
 
 namespace BoxForge.Tests;
 
@@ -108,6 +109,11 @@ public sealed class LocalGenerationWorkflowTests
             outputDirectory,
             "existing.txt");
         await File.WriteAllTextAsync(existingFile, "preserve-me");
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(outputDirectory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            File.SetUnixFileMode(existingFile, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
         var engine = new RecordingEngine(request =>
         {
             if (request.Name == "b")
@@ -141,6 +147,12 @@ public sealed class LocalGenerationWorkflowTests
             Assert.That(engine.Requests.Select(request => request.Name),
                 Is.EqualTo(new[] { "a", "b" }));
             Assert.That(File.ReadAllText(existingFile), Is.EqualTo("preserve-me"));
+            if (!OperatingSystem.IsWindows())
+            {
+                Assert.That(File.GetUnixFileMode(outputDirectory), Is.EqualTo(
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute));
+                Assert.That(File.GetUnixFileMode(existingFile), Is.EqualTo(UnixFileMode.UserRead | UnixFileMode.UserWrite));
+            }
             Assert.That(Directory.GetDirectories(temporaryDirectory, ".output.boxforge-*"), Is.Empty);
             Assert.That(
                 File.Exists(GetOutputPath(
@@ -401,6 +413,115 @@ public sealed class LocalGenerationWorkflowTests
         });
     }
 
+    [TestCase(false, false)]
+    [TestCase(true, false)]
+    [TestCase(false, true)]
+    [TestCase(true, true)]
+    public async Task RealCliKeepsOutputPrivateUnderPermissiveUmaskWhenReplacingOutput(bool fileSetChanged, bool customModes)
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            Assert.Ignore("Linux umask and Unix permission regression.");
+            return;
+        }
+
+        const UnixFileMode privateDirectory = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
+        const UnixFileMode privateFile = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+        // Parent permissions must not conceal an output tree that accidentally becomes public.
+        File.SetUnixFileMode(temporaryDirectory, privateDirectory
+            | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+        string inputDirectory = CreateDirectory("input");
+        string outputDirectory = System.IO.Path.Combine(temporaryDirectory, "output");
+        string source = System.IO.Path.Combine(inputDirectory, "sample.yaml");
+        const string yaml = """
+            proxies:
+              - name: permission-test
+                type: ss
+                server: first.example.com
+                port: 443
+                cipher: aes-128-gcm
+                password: test-only
+            """;
+        await File.WriteAllTextAsync(source, yaml);
+        string configPath = GetOutputPath(outputDirectory, "sample", TargetPlatform.Linux);
+        string[] directories =
+        [
+            outputDirectory,
+            System.IO.Path.Combine(outputDirectory, "sample"),
+            System.IO.Path.GetDirectoryName(configPath)!
+        ];
+
+        await RunCliAsync();
+        UnixFileMode sharedDirectory = privateDirectory | UnixFileMode.GroupExecute;
+        UnixFileMode[] expectedDirectories = customModes
+            ? [sharedDirectory, sharedDirectory | UnixFileMode.GroupRead, sharedDirectory]
+            : [privateDirectory, privateDirectory, privateDirectory];
+        UnixFileMode expectedFile = privateFile | (customModes ? UnixFileMode.GroupRead : 0);
+        foreach (string directory in directories)
+        {
+            Assert.That(File.GetUnixFileMode(directory), Is.EqualTo(privateDirectory), directory);
+        }
+        for (int index = 0; index < directories.Length; index++)
+            File.SetUnixFileMode(directories[index], expectedDirectories[index]);
+        Assert.That(File.GetUnixFileMode(configPath), Is.EqualTo(privateFile), configPath);
+        File.SetUnixFileMode(configPath, expectedFile);
+        string previous = await File.ReadAllTextAsync(configPath);
+        string staleFile = System.IO.Path.Combine(outputDirectory, "stale.txt");
+        if (fileSetChanged)
+            await File.WriteAllTextAsync(staleFile, "stale");
+        else
+            await File.WriteAllTextAsync(source, yaml.Replace("first.example.com", "second.example.com", StringComparison.Ordinal));
+
+        await RunCliAsync();
+        for (int index = 0; index < directories.Length; index++)
+            Assert.That(File.GetUnixFileMode(directories[index]), Is.EqualTo(expectedDirectories[index]), directories[index]);
+        Assert.That(File.GetUnixFileMode(configPath), Is.EqualTo(expectedFile), configPath);
+        Assert.That(File.Exists(staleFile), Is.False);
+        Assert.That(File.ReadAllText(configPath), fileSetChanged ? Is.EqualTo(previous) : Is.Not.EqualTo(previous));
+        Assert.That(Directory.GetDirectories(temporaryDirectory, ".output.*"), Is.Empty);
+
+        async Task RunCliAsync()
+        {
+            var startInfo = new ProcessStartInfo("/bin/sh")
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+            foreach (string argument in new[]
+            {
+                "-c", "umask 022; exec \"$@\"", "boxforge-permission-test", "dotnet", "exec",
+                "--runtimeconfig", System.IO.Path.Combine(TestContext.CurrentContext.TestDirectory, "BoxForge.Tests.runtimeconfig.json"),
+                "--depsfile", System.IO.Path.Combine(TestContext.CurrentContext.TestDirectory, "BoxForge.Tests.deps.json"),
+                typeof(GenerateCommandRunner).Assembly.Location,
+                "generate", "--input-dir", inputDirectory, "--output-dir", outputDirectory, "--platform", "Linux"
+            })
+                startInfo.ArgumentList.Add(argument);
+            foreach (string key in startInfo.Environment.Keys.ToArray())
+            {
+                if (key.StartsWith("BOXFORGE_", StringComparison.OrdinalIgnoreCase))
+                    startInfo.Environment.Remove(key);
+            }
+            using var process = Process.Start(startInfo)!;
+            Task<string> output = process.StandardOutput.ReadToEndAsync();
+            Task<string> error = process.StandardError.ReadToEndAsync();
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            try
+            {
+                await process.WaitForExitAsync(timeout.Token);
+                Assert.That(process.ExitCode, Is.Zero, await output + await error);
+            }
+            finally
+            {
+                if (!process.HasExited)
+                {
+                    process.Kill(entireProcessTree: true);
+                    await process.WaitForExitAsync();
+                }
+            }
+        }
+    }
+
     [TestCase(false)]
     [TestCase(true)]
     public async Task UnchangedArtifactsKeepOutputUnlessItContainsStaleFiles(bool hasStaleFile)
@@ -445,6 +566,11 @@ public sealed class LocalGenerationWorkflowTests
         await File.WriteAllTextAsync(System.IO.Path.Combine(inputDirectory, "b.yaml"), "second");
         string existingFile = System.IO.Path.Combine(outputDirectory, "old.txt");
         await File.WriteAllTextAsync(existingFile, "old");
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(outputDirectory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            File.SetUnixFileMode(existingFile, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
         using var cancellation = new CancellationTokenSource();
         var engine = new RecordingEngine(request =>
         {
@@ -463,6 +589,12 @@ public sealed class LocalGenerationWorkflowTests
         {
             Assert.That(engine.Requests.Select(request => request.Name), Is.EqualTo(new[] { "a", "b" }));
             Assert.That(File.ReadAllText(existingFile), Is.EqualTo("old"));
+            if (!OperatingSystem.IsWindows())
+            {
+                Assert.That(File.GetUnixFileMode(outputDirectory), Is.EqualTo(
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute));
+                Assert.That(File.GetUnixFileMode(existingFile), Is.EqualTo(UnixFileMode.UserRead | UnixFileMode.UserWrite));
+            }
             Assert.That(Directory.GetFiles(outputDirectory, "*", SearchOption.AllDirectories), Is.EqualTo(new[] { existingFile }));
             Assert.That(Directory.GetDirectories(temporaryDirectory, ".output.boxforge-*"), Is.Empty);
         });
@@ -512,6 +644,11 @@ public sealed class LocalGenerationWorkflowTests
     {
         string output = CreateDirectory("output");
         File.WriteAllText(System.IO.Path.Combine(output, "old.txt"), "old");
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(output, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            File.SetUnixFileMode(System.IO.Path.Combine(output, "old.txt"), UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
         var publishError = new IOException("publish failed");
         var restoreError = new UnauthorizedAccessException("restore failed");
         int moves = 0;
@@ -552,6 +689,12 @@ public sealed class LocalGenerationWorkflowTests
             Assert.That(Directory.Exists(backup), Is.False);
         }
         Assert.That(File.ReadAllText(GetOutputPath(staging!, "sample", TargetPlatform.Android)), Is.EqualTo("new"));
+        if (!OperatingSystem.IsWindows())
+        {
+            string preserved = restorationFails ? backup! : output;
+            Assert.That(File.GetUnixFileMode(preserved), Is.EqualTo(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute));
+            Assert.That(File.GetUnixFileMode(System.IO.Path.Combine(preserved, "old.txt")), Is.EqualTo(UnixFileMode.UserRead | UnixFileMode.UserWrite));
+        }
     }
 
     [Test]

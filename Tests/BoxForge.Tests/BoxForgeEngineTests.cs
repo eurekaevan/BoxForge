@@ -1,5 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using BoxForge.Builders;
 using BoxForge.Builders.Components;
 using BoxForge.Configuration;
@@ -27,6 +29,121 @@ public sealed class BoxForgeEngineTests
             cipher: aes-128-gcm
             password: test-only
         """;
+
+    [TestCase("vless", AddressFamilyPolicy.DualStack)]
+    [TestCase("trojan", AddressFamilyPolicy.DualStack)]
+    [TestCase("ss", AddressFamilyPolicy.DualStack)]
+    [TestCase("hysteria2", AddressFamilyPolicy.DualStack)]
+    [TestCase("anytls", AddressFamilyPolicy.DualStack)]
+    [TestCase("vless", AddressFamilyPolicy.Ipv4Only)]
+    [TestCase("trojan", AddressFamilyPolicy.Ipv4Only)]
+    [TestCase("ss", AddressFamilyPolicy.Ipv4Only)]
+    [TestCase("hysteria2", AddressFamilyPolicy.Ipv4Only)]
+    [TestCase("anytls", AddressFamilyPolicy.Ipv4Only)]
+    public async Task SourceIpv4ConstraintOverridesDualStackWithoutChangingUnconstrainedNodes(
+        string protocol, AddressFamilyPolicy family)
+    {
+        using ServiceProvider provider = CreateProvider();
+        var engine = provider.GetRequiredService<IBoxForgeEngine>();
+        var request = new ConversionRequest("node-address-family",
+            AddressFamilyYaml(protocol, ("constrained", "ipv4"), ("unconstrained", null)),
+            Enum.GetValues<TargetPlatform>())
+        { Profile = AddressFamilyProfile(family) };
+        ConversionBundle bundle = await engine.ConvertAsync(request);
+
+        foreach (var artifact in bundle.Artifacts)
+        {
+            using var document = JsonDocument.Parse(artifact.Content);
+            JsonElement root = document.RootElement;
+            var nodes = root.GetProperty("outbounds").EnumerateArray()
+                .Where(node => node.TryGetProperty("server", out _))
+                .ToDictionary(node => node.GetProperty("tag").GetString()!);
+            bool constrainedResolver = nodes["constrained"].TryGetProperty("domain_resolver", out var resolver);
+            Assert.Multiple(() =>
+            {
+                Assert.That(constrainedResolver, Is.EqualTo(family == AddressFamilyPolicy.DualStack), artifact.Platform.ToString());
+                Assert.That(nodes["unconstrained"].TryGetProperty("domain_resolver", out _), Is.False,
+                    "Omission must inherit the platform resolver without adding a per-node restriction.");
+            });
+            if (family == AddressFamilyPolicy.DualStack)
+            {
+                Assert.Multiple(() =>
+                {
+                    Assert.That(resolver.GetProperty("server").GetString(), Is.EqualTo(SingboxTags.DirectAliDns));
+                    Assert.That(resolver.GetProperty("strategy").GetString(), Is.EqualTo("ipv4_only"));
+                    Assert.That(resolver.GetProperty("disable_optimistic_cache").GetBoolean(), Is.True);
+                    Assert.That(root.GetProperty("route").GetProperty("default_domain_resolver").TryGetProperty("strategy", out _), Is.False,
+                        "The source constraint must not narrow the platform default for other nodes.");
+                });
+            }
+            else
+                Assert.That(root.GetProperty("route").GetProperty("default_domain_resolver").GetProperty("strategy").GetString(),
+                    Is.EqualTo("ipv4_only"));
+        }
+    }
+
+    [TestCase("vless")]
+    [TestCase("trojan")]
+    [TestCase("ss")]
+    [TestCase("hysteria2")]
+    [TestCase("anytls")]
+    public async Task SourceAddressFamilyResolversBelongToEachNodeAndEachOutput(string protocol)
+    {
+        RecordingConfigBuilder? recordingBuilder = null;
+        using ServiceProvider provider = CreateProvider(services =>
+            recordingBuilder = new RecordingConfigBuilder(CreateConfigBuilder(services)));
+        var engine = provider.GetRequiredService<IBoxForgeEngine>();
+        var request = new ConversionRequest("isolated-resolvers",
+            AddressFamilyYaml(protocol, ("first", "ipv4"), ("second", "ipv4")),
+            Enum.GetValues<TargetPlatform>())
+        { Profile = AddressFamilyProfile(AddressFamilyPolicy.DualStack) };
+        ConversionBundle first = await engine.ConvertAsync(request);
+        ConversionBundle second = await engine.ConvertAsync(request);
+        DnsResolverOptions[] resolvers = recordingBuilder!.Configurations
+            .SelectMany(config => config.Outbounds.OfType<ProxyOutbound>()).Select(node => node.DomainResolver!).ToArray();
+        Assert.Multiple(() =>
+        {
+            Assert.That(resolvers, Has.Length.EqualTo(12));
+            Assert.That(resolvers, Is.All.Not.Null);
+            Assert.That(resolvers.Distinct(ReferenceEqualityComparer.Instance).Count(), Is.EqualTo(resolvers.Length),
+                "Nodes, platforms and repeated engine builds must receive separate resolver objects.");
+            Assert.That(second.Artifacts.Select(artifact => artifact.Content),
+                Is.EqualTo(first.Artifacts.Select(artifact => artifact.Content)));
+        });
+
+        var unconstrained = await engine.ConvertAsync(request with
+        {
+            ClashYaml = AddressFamilyYaml(protocol, ("first", null), ("second", null))
+        });
+        foreach (var artifact in unconstrained.Artifacts)
+        {
+            using var document = JsonDocument.Parse(artifact.Content);
+            Assert.That(document.RootElement.GetProperty("outbounds").EnumerateArray()
+                .Where(node => node.TryGetProperty("server", out _))
+                .Any(node => node.TryGetProperty("domain_resolver", out _)), Is.False,
+                "A prior constrained request must not affect the next request's unconstrained nodes.");
+        }
+    }
+
+    [TestCase("ipv6")]
+    [TestCase("dual")]
+    [TestCase("ipv4-prefer")]
+    [TestCase("ipv6-prefer")]
+    [TestCase("null")]
+    public void UnsupportedSourceAddressFamiliesStillRejectEveryProtocol(string sourceFamily)
+    {
+        using ServiceProvider provider = CreateProvider();
+        var engine = provider.GetRequiredService<IBoxForgeEngine>();
+        foreach (string protocol in new[] { "vless", "trojan", "ss", "hysteria2", "anytls" })
+        {
+            var request = new ConversionRequest("unsupported-family",
+                AddressFamilyYaml(protocol, ("unsafe", sourceFamily)), [TargetPlatform.Linux])
+            { Profile = AddressFamilyProfile(AddressFamilyPolicy.DualStack) };
+            var error = Assert.ThrowsAsync<BoxForgeConversionException>(async () => await engine.ConvertAsync(request));
+            Assert.That(error!.InnerException, Is.TypeOf<NodeParseException>());
+            Assert.That(error.InnerException!.Message, Does.Contain("ip-version").And.Contain("unsafe"), protocol);
+        }
+    }
 
     [TestCase("metadata: &loop {next: *loop}")]
     [TestCase("metadata: &loop [*loop]")]
@@ -451,6 +568,23 @@ public sealed class BoxForgeEngineTests
         await Task.WhenAll(tasks);
     }
 
+    private static JsonObject AddressFamilyProfile(AddressFamilyPolicy family) => JsonSerializer.SerializeToNode(new
+    {
+        platforms = new
+        {
+            Android = new { dns = new { address_family = family.ToString() } },
+            Linux = new { dns = new { address_family = family.ToString() } },
+            Windows = new { dns = new { address_family = family.ToString() } }
+        }
+    })!.AsObject();
+
+    private static string AddressFamilyYaml(string protocol, params (string Name, string? Family)[] nodes) =>
+        "proxies:\n" + string.Concat(nodes.Select(node =>
+            $"  - name: {node.Name}\n    type: {protocol}\n    server: node.example.com\n    port: 443\n"
+            + (protocol == "vless" ? "    uuid: 00000000-0000-4000-8000-000000000001\n" : "    password: test-only\n")
+            + (protocol == "ss" ? "    cipher: aes-128-gcm\n" : "")
+            + (node.Family is null ? "" : $"    ip-version: {node.Family}\n")));
+
     private static ServiceProvider CreateProvider(
         Func<IServiceProvider, ISingboxConfigBuilder>? configBuilderFactory = null)
     {
@@ -497,6 +631,7 @@ public sealed class BoxForgeEngineTests
         TargetPlatform? failingPlatform = null) : ISingboxConfigBuilder
     {
         public List<TargetPlatform> Calls { get; } = [];
+        public List<SingboxConfig> Configurations { get; } = [];
 
         public SingboxConfig Build(SingboxBuildRequest request)
         {
@@ -507,7 +642,9 @@ public sealed class BoxForgeEngineTests
                     new ConfigDiagnostic("TEST", "outbounds", $"模拟 {request.Platform} 校验失败。")]);
             }
 
-            return inner.Build(request);
+            SingboxConfig config = inner.Build(request);
+            Configurations.Add(config);
+            return config;
         }
     }
 }

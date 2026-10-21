@@ -45,17 +45,12 @@ internal sealed class SourceFieldSchema
         return this;
     }
 
-    public SourceFieldSchema Mapped(params string[] names) =>
-        Mapped(SourceFieldValueKind.Scalar, names);
-
-    public SourceFieldSchema Mapped(
-        SourceFieldValueKind valueKind,
-        params string[] names)
+    public SourceFieldSchema Mapped(params string[] names)
     {
         foreach (string name in names)
         {
             Add(new SourceFieldDefinition(
-                name, SourceFieldDisposition.Mapped, ValueKind: valueKind));
+                name, SourceFieldDisposition.Mapped));
         }
 
         return this;
@@ -79,13 +74,13 @@ internal sealed class SourceFieldSchema
         return this;
     }
 
-    public SourceFieldSchema Ignored(string reason, params string[] names)
+    public SourceFieldSchema Ignored(params string[] names)
     {
         foreach (string name in names)
         {
             Add(new SourceFieldDefinition(
                 name, SourceFieldDisposition.IgnoredByDesign,
-                Reason: reason, ValueKind: SourceFieldValueKind.Any));
+                ValueKind: SourceFieldValueKind.Any));
         }
 
         return this;
@@ -103,14 +98,11 @@ internal sealed class SourceFieldSchema
         return this;
     }
 
-    public SourceFieldSchema Nested(
-        string name,
-        SourceFieldSchema schema,
-        Func<ClashProxyNode, object?, string?>? validate = null)
+    public SourceFieldSchema Nested(string name, SourceFieldSchema schema)
     {
         Add(new SourceFieldDefinition(
             name, SourceFieldDisposition.Mapped, NestedSchema: schema,
-            ValueKind: SourceFieldValueKind.Mapping, ValidateValue: validate));
+            ValueKind: SourceFieldValueKind.Mapping));
         return this;
     }
 

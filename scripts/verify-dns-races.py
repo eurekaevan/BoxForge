@@ -19,6 +19,10 @@ import tempfile
 import time
 
 
+CORE_LOCK = json.loads((pathlib.Path(__file__).resolve().parent.parent / "docs/data/sing-box-core.json").read_text(encoding="utf-8"))
+VERSION = CORE_LOCK["version"]
+REVISION = CORE_LOCK["revision"]
+
 def wire_name(name):
     return b"".join(bytes([len(label)]) + label.encode() for label in name.split(".")) + b"\0"
 
@@ -89,8 +93,8 @@ def response(query, mode, upstream, ttl):
 
 async def main(core, generated):
     version = subprocess.check_output([str(core), "version"], text=True)
-    if "sing-box version 1.15.0-alpha.12\n" not in version or "25b0d5ea3e466d246c708ac0f20d0448110e566c" not in version:
-        raise ValueError("Expected official sing-box 1.15.0-alpha.12 / 25b0d5ea3e466d246c708ac0f20d0448110e566c")
+    if f"sing-box version {VERSION}\n" not in version or REVISION not in version:
+        raise ValueError(f"Expected official sing-box {VERSION} / {REVISION}")
     root = pathlib.Path(tempfile.mkdtemp(prefix="boxforge-dns-races."))
     print(f"Diagnostics: {root}", flush=True)
     cert, key = root / "cert.pem", root / "key.pem"

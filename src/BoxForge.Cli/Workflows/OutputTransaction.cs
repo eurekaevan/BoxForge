@@ -25,7 +25,10 @@ internal sealed partial class OutputTransaction : IDisposable
         stagingDirectory = Path.Combine(
             outputParent,
             $".{Path.GetFileName(outputDirectory)}.boxforge-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(stagingDirectory);
+        if (OperatingSystem.IsWindows())
+            Directory.CreateDirectory(stagingDirectory);
+        else
+            Directory.CreateDirectory(stagingDirectory, PrivateDirectoryMode);
     }
 
     public async Task<bool> StageAsync(
@@ -49,6 +52,10 @@ internal sealed partial class OutputTransaction : IDisposable
         string existingFile = Path.Combine(outputDirectory, relativePath);
         Directory.CreateDirectory(Path.GetDirectoryName(stagedFile)!);
         await File.WriteAllTextAsync(stagedFile, artifact.Content, cancellationToken);
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(stagedFile, File.Exists(existingFile)
+                ? File.GetUnixFileMode(existingFile)
+                : UnixFileMode.UserRead | UnixFileMode.UserWrite);
         bool changed = !File.Exists(existingFile)
             || !string.Equals(
                 await File.ReadAllTextAsync(existingFile, cancellationToken),
@@ -65,6 +72,8 @@ internal sealed partial class OutputTransaction : IDisposable
         {
             return;
         }
+
+        PreserveDirectoryPermissions(staging);
 
         string parentDirectory = Directory.GetParent(outputDirectory)!.FullName;
         string backupDirectory = Path.Combine(
@@ -144,6 +153,25 @@ internal sealed partial class OutputTransaction : IDisposable
             .EnumerateFiles(directory, "*", SearchOption.AllDirectories)
             .Select(path => Path.GetRelativePath(directory, path))
             .Order(PathComparer);
+    }
+
+    private const UnixFileMode PrivateDirectoryMode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
+
+    private void PreserveDirectoryPermissions(string staging)
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        // Finish writing before copying modes that may remove write or traversal access.
+        // Materialize first and apply parents last, restoring the root mode only after its children.
+        string[] directories = Directory.EnumerateDirectories(staging, "*", SearchOption.AllDirectories)
+            .OrderByDescending(path => path.Length).Append(staging).ToArray();
+        foreach (string directory in directories)
+        {
+            string existingDirectory = Path.Combine(outputDirectory, Path.GetRelativePath(staging, directory));
+            File.SetUnixFileMode(directory, Directory.Exists(existingDirectory)
+                ? File.GetUnixFileMode(existingDirectory)
+                : PrivateDirectoryMode);
+        }
     }
 
     private static StringComparer PathComparer => OperatingSystem.IsWindows()

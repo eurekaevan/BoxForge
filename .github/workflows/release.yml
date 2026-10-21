@@ -67,6 +67,8 @@ jobs:
           dotnet build BoxForge.slnx -c Release --no-incremental --warnaserror
           dotnet test BoxForge.slnx -c Release --no-build --no-restore
           python3 scripts/generate-protocol-mappings.py --check
+          python3 scripts/generate-contract-docs.py --check
+          python3 -m unittest discover -s scripts -p 'test_*.py'
           python3 scripts/verify-generated-configs.py src/BoxForge.Cli/bin/Release/net10.0/BoxForge.dll
       - name: Publish self-contained CLI
         run: |

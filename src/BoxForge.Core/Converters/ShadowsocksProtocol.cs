@@ -75,16 +75,12 @@ internal static class ShadowsocksProtocol
             if (mode is not ("http" or "tls"))
                 throw new NodeParseException("字段 'plugin-opts.mode' 只支持 http 或 tls");
             obfs = new ShadowsocksObfs(
-                new(mode == "http" ? ShadowsocksObfsMode.Http : ShadowsocksObfsMode.Tls,
-                    true),
-                new(host, options.GetPresentField("host") is not null));
+                mode == "http" ? ShadowsocksObfsMode.Http : ShadowsocksObfsMode.Tls,
+                host);
         }
 
         return new ShadowsocksNode(name, server, port,
-            new(method, node.GetPresentField("cipher", "method") is not null), password,
-            new(enabled, node.GetPresentField("udp-over-tcp", "udp_over_tcp") is not null),
-            new(version == 2 ? ShadowsocksUotVersion.V2 : ShadowsocksUotVersion.V1,
-                node.GetPresentField("udp-over-tcp-version", "udp_over_tcp_version") is not null),
-            new(obfs, node.GetPresentField("plugin") is not null));
+            method, password, enabled,
+            version == 2 ? ShadowsocksUotVersion.V2 : ShadowsocksUotVersion.V1, obfs);
     }
 }

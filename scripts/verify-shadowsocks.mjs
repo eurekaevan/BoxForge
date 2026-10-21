@@ -12,14 +12,15 @@ import { promisify } from 'node:util';
 
 import { freePort, launch, waitListening, stop } from './verification-process.mjs';
 
+const coreLock = JSON.parse(await readFile(new URL('../docs/data/sing-box-core.json', import.meta.url), 'utf8'));
 const run = promisify(execFile);
 const [coreArgument, configArgument] = process.argv.slice(2);
 if (!coreArgument || !configArgument)
     throw new Error('Usage: node scripts/verify-shadowsocks.mjs <sing-box core> <generated config.json>');
 const core = resolve(coreArgument);
 const { stdout: version } = await run(core, ['version']);
-assert.ok(version.includes('1.15.0-alpha.12')
-    && version.includes('25b0d5ea3e466d246c708ac0f20d0448110e566c'), version);
+assert.ok(version.includes(`sing-box version ${coreLock.version}\n`)
+    && version.includes(coreLock.revision), version);
 const generated = JSON.parse(await readFile(resolve(configArgument), 'utf8'));
 const directory = await mkdtemp(join(tmpdir(), 'boxforge-shadowsocks-'));
 const body = 'BoxForge Shadowsocks loopback verified\n';

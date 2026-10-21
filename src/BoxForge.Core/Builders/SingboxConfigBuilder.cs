@@ -64,7 +64,13 @@ internal sealed class SingboxConfigBuilder(
             .. profiles.RegionOutbounds,
             .. profiles.RegionAutoOutbounds,
             .. profiles.ServiceOutbounds,
-            .. plan.Nodes.Select(SingboxNodeEmitter.Emit)
+            .. plan.Nodes.Select(node => SingboxNodeEmitter.Emit(node) with
+            {
+                DomainResolver = node.AddressFamily == AddressFamilyPolicy.Ipv4Only
+                    && plan.AddressFamily == AddressFamilyPolicy.DualStack
+                        ? ControlPlaneDnsPolicy.CreateResolver(AddressFamilyPolicy.Ipv4Only)
+                        : null
+            })
         ];
         if (plan.UseDirectForwarding)
         {

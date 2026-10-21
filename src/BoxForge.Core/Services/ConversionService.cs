@@ -19,11 +19,11 @@ internal sealed class ConversionService(
     IConfigSerializer configSerializer,
     BoxForgeProfile profile)
 {
-    internal BoxForgeProfile ResolveProfile(TargetPlatform platform, JsonObject? overlay = null) => profile.ForPlatform(platform, overlay);
+    internal BoxForgeProfile ResolveProfile(TargetPlatform platform, JsonObject? overlay) => profile.ForPlatform(platform, overlay);
 
     public PreparedConversion Prepare(
         string yamlContent,
-        BoxForgeProfile? effectiveProfile = null)
+        BoxForgeProfile effectiveProfile)
     {
         ClashConfig clashConfig = clashParser.Parse(yamlContent)
             ?? throw new NodeParseException("YAML 解析失败，请检查文件内容。");
@@ -37,7 +37,7 @@ internal sealed class ConversionService(
     public string Convert(
         PreparedConversion prepared,
         TargetPlatform platform,
-        BoxForgeProfile? effectiveProfile = null)
+        BoxForgeProfile effectiveProfile)
     {
         var request = new SingboxBuildRequest(
                 prepared.Nodes,
@@ -46,7 +46,7 @@ internal sealed class ConversionService(
         { Profile = effectiveProfile };
         SingboxConfig config = configBuilder.Build(request);
 
-        configValidator.Validate(config, (effectiveProfile ?? profile).GetPlatform(platform).AddressFamily);
+        configValidator.Validate(config, effectiveProfile.GetPlatform(platform).AddressFamily);
         return configSerializer.Serialize(config);
     }
 }

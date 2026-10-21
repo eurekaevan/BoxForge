@@ -72,7 +72,7 @@ public sealed class ProxyNodeParserTests
             [cipherField] = " aes-128-gcm ",
             ["password"] = " test-only "
         }));
-        Assert.That(node.Cipher.Value, Is.EqualTo("aes-128-gcm"));
+        Assert.That(node.Cipher, Is.EqualTo("aes-128-gcm"));
         Assert.That(SingboxNodeEmitter.Emit(node).Password, Is.EqualTo(" test-only "));
         Assert.That(node, Is.TypeOf<ShadowsocksNode>());
     }
@@ -92,8 +92,8 @@ public sealed class ProxyNodeParserTests
         if (enabledInput != "omitted") fields["udp_over_tcp"] = enabled;
         if (versionInput != "omitted") fields["udp_over_tcp_version"] = versionInput == "null" ? null : versionInput;
         ShadowsocksNode node = ParseShadowsocks(CreateNode("ss", fields));
-        Assert.That(node.UdpOverTcpEnabled.Value, Is.EqualTo(enabled));
-        Assert.That((int)node.UdpOverTcpVersion.Value, Is.EqualTo(expected));
+        Assert.That(node.UdpOverTcpEnabled, Is.EqualTo(enabled));
+        Assert.That((int)node.UdpOverTcpVersion, Is.EqualTo(expected));
         var emitted = SingboxNodeEmitter.Emit(node);
         if (enabled == true)
             Assert.That(emitted.UdpOverTcp!.Version, Is.EqualTo(expected));
@@ -116,13 +116,13 @@ public sealed class ProxyNodeParserTests
             ["plugin"] = "obfs",
             [parent] = options
         }));
-        ShadowsocksObfs plugin = node.Plugin.Value!;
-        Assert.That(plugin.Host.Value, Is.EqualTo(hostInput == "custom" ? "a;b=c\\d" : "bing.com"));
+        ShadowsocksObfs plugin = node.Plugin!;
+        Assert.That(plugin.Host, Is.EqualTo(hostInput == "custom" ? "a;b=c\\d" : "bing.com"));
         var emitted = SingboxNodeEmitter.Emit(node);
         Assert.That(emitted.Plugin, Is.EqualTo("obfs-local"));
         Assert.That(emitted.PluginOpts, Is.EqualTo($"obfs={mode};obfs-host="
             + (hostInput == "custom" ? "a\\;b\\=c\\\\d" : "bing.com")));
-        Assert.That(node.Plugin.Value!.Host.Value, Is.EqualTo(hostInput == "custom" ? "a;b=c\\d" : "bing.com"));
+        Assert.That(node.Plugin!.Host, Is.EqualTo(hostInput == "custom" ? "a;b=c\\d" : "bing.com"));
     }
 
     [TestCase("omitted")]
@@ -133,7 +133,7 @@ public sealed class ProxyNodeParserTests
         var fields = new Hashtable { ["cipher"] = "aes-128-gcm", ["password"] = "test-only" };
         if (input != "omitted") fields["plugin"] = input == "null" ? null : input;
         ShadowsocksNode node = ParseShadowsocks(CreateNode("ss", fields));
-        Assert.That(node.Plugin.Value, Is.Null);
+        Assert.That(node.Plugin, Is.Null);
         Assert.That(SingboxNodeEmitter.Emit(node).PluginOpts, Is.Null);
     }
 
@@ -147,16 +147,16 @@ public sealed class ProxyNodeParserTests
             ["plugin"] = "obfs",
             ["plugin-opts"] = new Hashtable { ["mode"] = "http" }
         }));
-        var plugin = node.Plugin.Value!;
+        var plugin = node.Plugin!;
         ShadowsocksNode[] invalidNodes =
         [
             node with { Port = 0 },
             node with { Password = "" },
-            node with { Cipher = node.Cipher with { Value = "" } },
-            node with { UdpOverTcpVersion = node.UdpOverTcpVersion with { Value = (ShadowsocksUotVersion)0 } },
-            node with { Plugin = node.Plugin with { Value = plugin with { Host = plugin.Host with { Value = " " } } } },
-            node with { Plugin = node.Plugin with { Value = plugin with { Host = plugin.Host with { Value = "x\ny=1" } } } },
-            node with { Plugin = node.Plugin with { Value = plugin with { Mode = plugin.Mode with { Value = (ShadowsocksObfsMode)999 } } } }
+            node with { Cipher = "" },
+            node with { UdpOverTcpVersion = (ShadowsocksUotVersion)0 },
+            node with { Plugin = plugin with { Host = " " } },
+            node with { Plugin = plugin with { Host = "x\ny=1" } },
+            node with { Plugin = plugin with { Mode = (ShadowsocksObfsMode)999 } }
         ];
         foreach (ShadowsocksNode invalid in invalidNodes)
             Assert.Throws<InvalidOperationException>(() => SingboxNodeEmitter.Emit(invalid));
@@ -213,7 +213,7 @@ public sealed class ProxyNodeParserTests
         Hysteria2Outbound outbound = SingboxNodeEmitter.Emit(node);
         if (expected == "443")
         {
-            Assert.That(node.Ports.Value[0].End, Is.Null);
+            Assert.That(node.Ports[0].End, Is.Null);
             Assert.That(outbound.ServerPort, Is.EqualTo(443));
             Assert.That(outbound.ServerPorts, Is.Null);
         }
@@ -238,8 +238,8 @@ public sealed class ProxyNodeParserTests
         var fields = new Hashtable { ["password"] = "test-only" };
         if (input != "omitted") fields["hop_interval"] = input == "null" ? null : input;
         Hysteria2Node node = ParseHysteria2(CreateNode("hysteria2", fields));
-        Assert.That(node.HopInterval.Value?.MinimumSeconds, Is.EqualTo(minimum));
-        Assert.That(node.HopInterval.Value?.MaximumSeconds, Is.EqualTo(maximum));
+        Assert.That(node.HopInterval?.MinimumSeconds, Is.EqualTo(minimum));
+        Assert.That(node.HopInterval?.MaximumSeconds, Is.EqualTo(maximum));
         foreach (TargetPlatform platform in Enum.GetValues<TargetPlatform>())
         {
             var tuned = (Hysteria2Outbound)SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(node, BoxForgeProfile.Default.GetPlatform(platform)));
@@ -257,8 +257,8 @@ public sealed class ProxyNodeParserTests
         var fields = new Hashtable { ["password"] = "test-only" };
         if (input != "omitted") fields["up"] = input == "null" ? null : input;
         Hysteria2Node node = ParseHysteria2(CreateNode("hysteria2", fields));
-        Assert.That(node.UploadMegabitsPerSecond.Value, Is.EqualTo(expected));
-        Assert.That(node.BbrProfile.Value, Is.Null);
+        Assert.That(node.UploadMegabitsPerSecond, Is.EqualTo(expected));
+        Assert.That(node.BbrProfile, Is.Null);
         var tuned = (Hysteria2Outbound)SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(node, BoxForgeProfile.Default.GetPlatform(TargetPlatform.Linux)));
         Assert.That(tuned.UpMbps, Is.EqualTo(expected));
         Assert.That(tuned.BbrProfile, Is.EqualTo(expected > 0 ? null : "standard"));
@@ -276,7 +276,7 @@ public sealed class ProxyNodeParserTests
             ["obfs_min_packet_size"] = minimum,
             ["obfs_max_packet_size"] = 0
         }));
-        var obfs = node.Obfuscation.Value!;
+        var obfs = node.Obfuscation!;
         Assert.That(obfs.Kind, Is.EqualTo(Hysteria2ObfuscationKind.Gecko));
         Assert.That(obfs.MinimumPacketSize.Value, Is.EqualTo(minimum == 0 ? null : (int?)minimum));
         Assert.That(obfs.MinimumPacketSize.IsSpecified, Is.True);
@@ -299,35 +299,29 @@ public sealed class ProxyNodeParserTests
             node with { Tls = null! },
             node with { TlsEnabled = node.TlsEnabled with { Value = false } },
             node with { TlsEnabled = node.TlsEnabled with { IsSpecified = true, Value = null } },
-            node with { Tls = node.Tls with { ClientFingerprint = node.Tls.ClientFingerprint with { Value = "chrome" } } },
-            node with { Ports = node.Ports with { Value = [] } },
-            node with { Ports = node.Ports with { Value = [new(0, null)] } },
-            node with { Ports = node.Ports with { Value = [new(444, 443)] } },
-            node with { UploadMegabitsPerSecond = node.UploadMegabitsPerSecond with { Value = -1 } },
-            node with { HopInterval = node.HopInterval with { Value = new(4, null) } },
-            node with { HopInterval = node.HopInterval with { Value = new(20, 10) } },
-            node with { HopInterval = node.HopInterval with { Value = new(9223372037L, null) } },
-            node with { BbrProfile = node.BbrProfile with { Value = (Hysteria2BbrProfile)999 } },
-            node with { Obfuscation = node.Obfuscation with { Value = node.Obfuscation.Value! with { Password = "" } } },
+            node with { Tls = node.Tls with { ClientFingerprint = "chrome" } },
+            node with { Ports = [] },
+            node with { Ports = [new(0, null)] },
+            node with { Ports = [new(444, 443)] },
+            node with { UploadMegabitsPerSecond = -1 },
+            node with { HopInterval = new(4, null) },
+            node with { HopInterval = new(20, 10) },
+            node with { HopInterval = new(9223372037L, null) },
+            node with { BbrProfile = (Hysteria2BbrProfile)999 },
+            node with { Obfuscation = node.Obfuscation! with { Password = "" } },
             node with
             {
-                Obfuscation = node.Obfuscation with
+                Obfuscation = node.Obfuscation! with
                 {
-                    Value = node.Obfuscation.Value! with
-                    {
-                        MinimumPacketSize = node.Obfuscation.Value!.MinimumPacketSize with { Value = 1201 }
-                    }
+                    MinimumPacketSize = node.Obfuscation!.MinimumPacketSize with { Value = 1201 }
                 }
             },
             node with
             {
-                Obfuscation = node.Obfuscation with
+                Obfuscation = node.Obfuscation! with
                 {
-                    Value = node.Obfuscation.Value! with
-                    {
-                        Kind = Hysteria2ObfuscationKind.Salamander,
-                        MinimumPacketSize = node.Obfuscation.Value!.MinimumPacketSize with { IsSpecified = true }
-                    }
+                    Kind = Hysteria2ObfuscationKind.Salamander,
+                    MinimumPacketSize = node.Obfuscation!.MinimumPacketSize with { IsSpecified = true }
                 }
             }
         ];
@@ -399,8 +393,8 @@ public sealed class ProxyNodeParserTests
             outbound.ServerPorts!.Clear();
             outbound.Tls.Alpn!.Clear();
         }
-        Assert.That(node.Ports.Value, Has.Count.EqualTo(2));
-        Assert.That(node.Tls.ApplicationProtocols.Value, Is.EqualTo(new[] { "h3" }));
+        Assert.That(node.Ports, Has.Count.EqualTo(2));
+        Assert.That(node.Tls.ApplicationProtocols, Is.EqualTo(new[] { "h3" }));
     }
 
     [TestCase("idle-session-timeout", "30", "30s")]
@@ -417,8 +411,8 @@ public sealed class ProxyNodeParserTests
             [field] = value
         }));
         bool isInterval = field.Contains("check", StringComparison.Ordinal);
-        SourceValue<string?> duration = isInterval ? node.IdleCheckInterval : node.IdleTimeout;
-        Assert.That(duration.Value, Is.EqualTo(expected));
+        string? duration = isInterval ? node.IdleCheckInterval : node.IdleTimeout;
+        Assert.That(duration, Is.EqualTo(expected));
     }
 
     [TestCase(false)]
@@ -436,10 +430,10 @@ public sealed class ProxyNodeParserTests
         AnyTlsNode node = ParseAnyTls(CreateNode("anytls", fields));
         Assert.Multiple(() =>
         {
-            Assert.That(node.IdleTimeout.Value, Is.Null);
-            Assert.That(node.IdleCheckInterval.Value, Is.Null);
-            Assert.That(node.MinimumIdleSessions.Value, Is.Null);
-            Assert.That(node.ClientMetadata.Value, Is.Null);
+            Assert.That(node.IdleTimeout, Is.Null);
+            Assert.That(node.IdleCheckInterval, Is.Null);
+            Assert.That(node.MinimumIdleSessions, Is.Null);
+            Assert.That(node.ClientMetadata, Is.Null);
         });
         string json = SerializeOutbound(SingboxNodeEmitter.Emit(node));
         Assert.That(json, Does.Not.Contain("idle_session").And.Not.Contain("client_metadata"));
@@ -482,18 +476,18 @@ public sealed class ProxyNodeParserTests
             node with { Tls = null! },
             node with { TlsEnabled = node.TlsEnabled with { Value = false } },
             node with { TlsEnabled = node.TlsEnabled with { IsSpecified = true, Value = null } },
-            node with { MinimumIdleSessions = node.MinimumIdleSessions with { Value = -1 } },
-            node with { IdleTimeout = node.IdleTimeout with { Value = "0s" } },
-            node with { IdleCheckInterval = node.IdleCheckInterval with { Value = "2562048h" } },
-            node with { ClientMetadata = node.ClientMetadata with { Value = "x\nv=1" } },
-            node with { ClientMetadata = node.ClientMetadata with { Value = new string('x', 65480) } },
+            node with { MinimumIdleSessions = -1 },
+            node with { IdleTimeout = "0s" },
+            node with { IdleCheckInterval = "2562048h" },
+            node with { ClientMetadata = "x\nv=1" },
+            node with { ClientMetadata = new string('x', 65480) },
             node with
             {
                 Tls = node.Tls with
                 {
                     Reality = new RealitySettings(
-                        new(RealityPublicKey, true),
-                        new("00", true))
+                        RealityPublicKey,
+                        "00")
                 }
             }
         ];
@@ -559,7 +553,7 @@ public sealed class ProxyNodeParserTests
             Assert.That(SerializeOutbound(outbound), Does.Contain("\"client_metadata\": \"\""));
             outbound.Tls.Alpn!.Clear();
         }
-        Assert.That(node.Tls.ApplicationProtocols.Value, Is.EqualTo(new[] { "h2" }));
+        Assert.That(node.Tls.ApplicationProtocols, Is.EqualTo(new[] { "h2" }));
     }
 
     [TestCase(false)]
@@ -650,7 +644,7 @@ public sealed class ProxyNodeParserTests
         var fields = new Hashtable();
         if (input != "omitted") fields["servername"] = input == "null" ? null : " ";
         TlsSettings tls = ParseTls(protocol, fields);
-        Assert.That(tls.ServerName.Value, Is.EqualTo("node.example.com"));
+        Assert.That(tls.ServerName, Is.EqualTo("node.example.com"));
         Assert.That(SingboxNodeEmitter.EmitTls(tls)!.ServerName, Is.EqualTo("node.example.com"));
     }
 
@@ -667,7 +661,7 @@ public sealed class ProxyNodeParserTests
         var fields = new Hashtable();
         if (input != "omitted") fields["skip-cert-verify"] = expected;
         TlsSettings tls = ParseTls(protocol, fields);
-        Assert.That(tls.AllowInvalidCertificate.Value, Is.EqualTo(expected));
+        Assert.That(tls.AllowInvalidCertificate, Is.EqualTo(expected));
         Assert.That(SingboxNodeEmitter.EmitTls(tls)!.Insecure, Is.EqualTo(expected));
     }
 
@@ -684,7 +678,7 @@ public sealed class ProxyNodeParserTests
         var fields = new Hashtable();
         if (supplied) fields["client_fingerprint"] = value;
         TlsSettings tls = ParseTls(protocol, fields);
-        Assert.That(tls.ClientFingerprint.Value, Is.Null);
+        Assert.That(tls.ClientFingerprint, Is.Null);
         Assert.That(SingboxNodeEmitter.EmitTls(tls)!.Utls, Is.Null);
     }
 
@@ -702,7 +696,7 @@ public sealed class ProxyNodeParserTests
             Assert.That(outbound.Tls!.Alpn, Is.EqualTo(new[] { "h2", "http/1.1", "h2" }));
             outbound.Tls.Alpn!.Clear();
         }
-        Assert.That(node.Tls.ApplicationProtocols.Value, Is.EqualTo(new[] { "h2", "http/1.1", "h2" }));
+        Assert.That(node.Tls.ApplicationProtocols, Is.EqualTo(new[] { "h2", "http/1.1", "h2" }));
     }
 
     [TestCase("omitted", null)]
@@ -717,7 +711,7 @@ public sealed class ProxyNodeParserTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(node.TlsEnabled.Value, Is.EqualTo(expected));
+            Assert.That(node.TlsEnabled, Is.EqualTo(expected));
             Assert.That(node.Tls is not null, Is.EqualTo(expected == true));
         });
         node.Validate();
@@ -736,8 +730,8 @@ public sealed class ProxyNodeParserTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(node.DatagramEncoding.Value.ToString(), Is.EqualTo(expected));
-            Assert.That(node.Flow.Value, Is.EqualTo(VlessFlow.None));
+            Assert.That(node.DatagramEncoding.ToString(), Is.EqualTo(expected));
+            Assert.That(node.Flow, Is.EqualTo(VlessFlow.None));
         });
     }
 
@@ -750,14 +744,14 @@ public sealed class ProxyNodeParserTests
             ["tls"] = true
         }));
         VlessNode missingTls = node with { Tls = null };
-        VlessNode disabledTls = node with { TlsEnabled = node.TlsEnabled with { Value = false } };
+        VlessNode disabledTls = node with { TlsEnabled = false };
         VlessNode invalidReality = node with
         {
             Tls = node.Tls! with
             {
                 Reality = new RealitySettings(
-                    new(RealityPublicKey, true),
-                    new("00", true))
+                    RealityPublicKey,
+                    "00")
             }
         };
 
@@ -787,7 +781,7 @@ public sealed class ProxyNodeParserTests
             Assert.That(outbound.Tls.Alpn, Is.EqualTo(new[] { "h2", "http/1.1", "h2" }));
             outbound.Tls.Alpn!.Clear();
         }
-        Assert.That(node.Tls!.ApplicationProtocols.Value, Is.EqualTo(new[] { "h2", "http/1.1", "h2" }));
+        Assert.That(node.Tls!.ApplicationProtocols, Is.EqualTo(new[] { "h2", "http/1.1", "h2" }));
     }
 
     [TestCase("trojan", "port", "443")]

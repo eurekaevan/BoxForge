@@ -19,12 +19,40 @@ import tempfile
 import urllib.request
 
 
-VERSION = "1.15.0-alpha.12"
-REVISION = "25b0d5ea3e466d246c708ac0f20d0448110e566c"
+CORE_LOCK = json.loads((Path(__file__).resolve().parent.parent / "docs/data/sing-box-core.json").read_text(encoding="utf-8"))
+VERSION = CORE_LOCK["version"]
+REVISION = CORE_LOCK["revision"]
 ARCHIVE_NAME = f"sing-box-{VERSION}-linux-amd64.tar.gz"
-# Official release asset digest: https://api.github.com/repos/SagerNet/sing-box/releases/tags/v1.15.0-alpha.12
-ARCHIVE_SHA256 = "b107528ec7d989333d986573c097d840b9ef1afa9bb177f8eb03e0767f370514"
+# Official release asset digest, pinned with its version and revision in sing-box-core.json.
+ARCHIVE_SHA256 = CORE_LOCK["archive_sha256"]
 ARCHIVE_URL = f"https://github.com/SagerNet/sing-box/releases/download/v{VERSION}/{ARCHIVE_NAME}"
+
+
+VERSION_TIMEOUT = 10
+GENERATION_TIMEOUT = 60
+CHECK_TIMEOUT = 30
+
+
+def run_command(command, root, context, *, timeout=CHECK_TIMEOUT, environment=None, expected_error=None):
+    try:
+        result = subprocess.run(command, cwd=root, env=environment, timeout=timeout,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    except subprocess.TimeoutExpired as error:
+        output = error.stdout or ""
+        if isinstance(output, bytes):
+            output = output.decode("utf-8", errors="replace")
+        raise RuntimeError(f"{context}: timed out after {timeout}s\n{output}") from error
+    except OSError as error:
+        raise RuntimeError(f"{context}: could not start process: {error}") from error
+    if result.returncode < 0:
+        raise RuntimeError(f"{context}: terminated by signal {-result.returncode}\n{result.stdout}")
+    if expected_error is not None:
+        if result.returncode != 1 or expected_error not in result.stdout:
+            raise RuntimeError(f"{context}: expected exit 1 and diagnostic {expected_error!r}; "
+                               f"received exit {result.returncode}\n{result.stdout}")
+    elif result.returncode != 0:
+        raise RuntimeError(f"{context}: exited with status {result.returncode}\n{result.stdout}")
+    return result.stdout
 
 
 def download_core(root):
@@ -51,29 +79,33 @@ def download_core(root):
 def verify_rejections(core, root, generated):
     baseline = json.loads((generated / "profiles/Linux/config.json").read_text())
     route_cases = (
-        ("invalid-ip-version", {"ip_version": 5, "action": "reject"}),
-        ("no-drop-on-route", {"action": "route", "outbound": "DIRECT", "no_drop": True}),
-        ("strategy-on-route", {"action": "route", "outbound": "DIRECT", "strategy": "ipv4_only"}),
-        ("outbound-on-sniff", {"action": "sniff", "outbound": "DIRECT"}),
+        ("invalid-ip-version", {"ip_version": 5, "action": "reject"}, "parse rule[{index}]: invalid ip version: 5"),
+        ("no-drop-on-route", {"action": "route", "outbound": "DIRECT", "no_drop": True}, 'route.rules[{index}].no_drop: json: unknown field "no_drop"'),
+        ("strategy-on-route", {"action": "route", "outbound": "DIRECT", "strategy": "ipv4_only"}, 'route.rules[{index}].strategy: json: unknown field "strategy"'),
+        ("outbound-on-sniff", {"action": "sniff", "outbound": "DIRECT"}, 'route.rules[{index}].outbound: json: unknown field "outbound"'),
     )
     cases = []
-    for name, rule in route_cases:
+    for name, rule, diagnostic in route_cases:
         config = copy.deepcopy(baseline)
         config["route"]["rules"].append(rule)
-        cases.append((name, config))
+        index = len(config["route"]["rules"]) - 1
+        cases.append((name, config, diagnostic.format(index=index)))
     config = copy.deepcopy(baseline)
-    grouped = next(item for item in config["route"]["rule_set"] if isinstance(item["tag"], list))
+    group_index, grouped = next((index, item) for index, item in enumerate(config["route"]["rule_set"])
+                                if isinstance(item["tag"], list))
     grouped["url"] = grouped["url"].replace("{tag}", "constant")
-    cases.append(("grouped-rule-set-without-tag-placeholder", config))
+    cases.append(("grouped-rule-set-without-tag-placeholder", config,
+                  f"route.rule_set[{group_index}]: missing {{tag}} placeholder in url"))
     config = json.loads((generated / "tls/Linux/config.json").read_text())
-    next(item for item in config["outbounds"] if item["type"] == "vless")["flow"] = "bad"
-    cases.append(("invalid-vless-flow", config))
-    for name, config in cases:
+    outbound_index, vless = next((index, item) for index, item in enumerate(config["outbounds"])
+                                 if item["type"] == "vless")
+    vless["flow"] = "bad"
+    cases.append(("invalid-vless-flow", config, f"initialize outbound[{outbound_index}]: unsupported flow: bad"))
+    for name, config, diagnostic in cases:
         path = root / f"invalid-{name}.json"
         path.write_text(json.dumps(config))
-        result = subprocess.run([str(core), "check", "-c", str(path)], cwd=root, capture_output=True)
-        if result.returncode == 0:
-            raise RuntimeError(f"Official core unexpectedly accepted negative case: {name}")
+        run_command([str(core), "check", "-c", str(path)], root,
+                    f"Official core negative case {name}", expected_error=diagnostic)
         print(f"Official core rejected: {name}")
     return len(cases)
 
@@ -98,7 +130,7 @@ def verify(cli, supplied_core):
                 source.write(f"\n  - name: {tag}\n    type: hysteria2\n    server: node.example.com\n"
                              f"    port: 0\n    ports: {json.dumps(ports)}\n    password: test-only\n")
         core = supplied_core or download_core(root)
-        version = subprocess.check_output([str(core), "version"], text=True, cwd=root)
+        version = run_command([str(core), "version"], root, "Official core version", timeout=VERSION_TIMEOUT)
         if f"sing-box version {VERSION}\n" not in version or REVISION not in version:
             raise RuntimeError(f"Expected official sing-box {VERSION} / {REVISION}; found:\n{version}")
         count = 0
@@ -112,10 +144,11 @@ def verify(cli, supplied_core):
                     "BOXFORGE_features__tailscale__enabled": json.dumps(tailscale),
                     "BOXFORGE_features__api__enabled": json.dumps(api),
                 })
-                subprocess.run([
+                run_command([
                     "dotnet", str(cli), "generate", "--input-dir", str(fixtures),
                     "--output-dir", str(output), "--platform", "all",
-                ], cwd=root, env=environment, check=True)
+                ], root, f"CLI generation tailscale={tailscale} api={api}",
+                   timeout=GENERATION_TIMEOUT, environment=environment)
                 configs = sorted(output.glob("*/*/config.json"))
                 if len(configs) != 15:
                     raise RuntimeError(f"Expected 5 fixtures × 3 platforms, found {len(configs)} in {output}")
@@ -130,7 +163,8 @@ def verify(cli, supplied_core):
                                 valid = leaf.get("server_ports") == expected and "server_port" not in leaf
                             if not valid:
                                 raise RuntimeError(f"Incorrect Hysteria2 port representation for {tag} in {config}")
-                    subprocess.run([str(core), "check", "-c", str(config)], cwd=root, check=True)
+                    run_command([str(core), "check", "-c", str(config)], root,
+                                f"Official core positive case {config.relative_to(output)}")
                     count += 1
         rejected = verify_rejections(core, root, output)
         print(f"Official sing-box {VERSION} check passed: {count} generated configurations, {rejected} invalid configurations rejected.")

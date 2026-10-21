@@ -1,4 +1,5 @@
 using BoxForge.Exceptions;
+using BoxForge.Configuration;
 using BoxForge.Models.Clash;
 using BoxForge.Models.Intermediate;
 
@@ -23,7 +24,10 @@ internal static class ProxyNodeParser
         {
             string name = proxy.GetRequiredString("name");
             schema.Validate(proxy);
-            ProxyNode node = parse(proxy, name);
+            ProxyNode node = parse(proxy, name) with
+            {
+                AddressFamily = proxy.GetPresentField("ip-version") is null ? null : AddressFamilyPolicy.Ipv4Only
+            };
             node.Validate();
             return node;
         }

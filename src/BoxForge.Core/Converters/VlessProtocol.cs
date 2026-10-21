@@ -30,10 +30,9 @@ internal static class VlessProtocol
         string? encoding = node.GetRawString("packet-encoding") ?? node.GetRawString("packet_encoding");
 
         return new VlessNode(name, server, port, userId,
-            new(flow, node.GetPresentField("flow") is not null),
-            new(encoding is "packetaddr" or "packet" ? DatagramEncoding.PacketAddress : DatagramEncoding.Xudp,
-                node.GetPresentField("packet-encoding", "packet_encoding") is not null),
-            new(node.GetNullableBool("tls"), node.GetPresentField("tls") is not null),
+            flow,
+            encoding is "packetaddr" or "packet" ? DatagramEncoding.PacketAddress : DatagramEncoding.Xudp,
+            node.GetNullableBool("tls"),
             tls);
     }
 

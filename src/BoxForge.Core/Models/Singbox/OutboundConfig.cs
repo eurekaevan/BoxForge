@@ -42,6 +42,7 @@ public record BridgeOutbound : Outbound;
 
 public abstract record ProxyOutbound : Outbound
 {
+    [JsonPropertyName("domain_resolver")] public DnsResolverOptions? DomainResolver { get; init; }
     [JsonPropertyName("server")] public required string Server { get; init; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [JsonPropertyName("server_port")] public int? ServerPort { get; init; }

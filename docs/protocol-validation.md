@@ -2,9 +2,13 @@
 
 研究基线为 Mihomo Meta/Alpha `88dcbf7f1614a67c3b36b848ee3592dfa92ada36`
 及官方 sing-box `1.15.0-alpha.8`、revision
-`b609f959f57ce34416c51c7b87ce4a76f2e1df56`。当前最低支持与资格验证核心为官方
-sing-box `1.15.0-alpha.12`、revision `25b0d5ea3e466d246c708ac0f20d0448110e566c`，
-覆盖 Tailscale `on_demand` 与 Linux TUN `multi_queue`；更换构建后必须重新资格验证。
+`b609f959f57ce34416c51c7b87ce4a76f2e1df56`。
+
+<!-- BEGIN GENERATED:core-baseline -->
+当前最低支持与资格验证核心为官方 sing-box `1.15.0-alpha.12`，
+revision `25b0d5ea3e466d246c708ac0f20d0448110e566c`。版本、revision 与归档摘要统一来自
+[核心锁定数据](data/sing-box-core.json)；不代表验证了所有后续版本或定制构建。
+<!-- END GENERATED:core-baseline -->
 
 ## TCP、TLS 与 Reality 支持范围
 
@@ -26,10 +30,15 @@ Shadowsocks 保留普通 SS、UoT 和 obfs HTTP/TLS，拒绝 `v2ray-plugin`。
 dotnet format BoxForge.slnx --verify-no-changes
 dotnet build BoxForge.slnx --no-incremental --warnaserror
 dotnet test BoxForge.slnx --no-build
+python3 -m unittest discover -s scripts -p 'test_*.py'
 ```
 
 官方配置检查已有统一入口，默认下载固定的官方 Linux amd64 核心并核验归档
-SHA-256、版本及 revision；其他平台或已有核心可用 `--core` 指定路径：
+SHA-256、版本及 revision；其他平台或已有核心可用 `--core` 指定路径。
+版本查询限时 10 秒、每轮 CLI 生成限时 60 秒、每次核心配置检查限时 30 秒。
+反例必须以状态 1 退出，且诊断匹配该用例的字段路径及错误主题；无关错误、
+信号终止和超时均判为验证失败，并保留用例上下文及进程输出。
+标准库测试使用假进程检查这些失败边界，不代替下述官方核心验证：
 
 ```bash
 python3 scripts/verify-generated-configs.py src/BoxForge.Cli/bin/Debug/net10.0/BoxForge.dll

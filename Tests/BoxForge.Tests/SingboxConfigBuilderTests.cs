@@ -583,7 +583,7 @@ public sealed class SingboxConfigBuilderTests
             Assert.That(outbound.HopIntervalMax, Is.EqualTo("60s"));
             Assert.That(outbound.BbrProfile, Is.EqualTo("standard"));
             Assert.That(source.Connection.ConnectTimeout, Is.Null);
-            Assert.That(source.HopInterval.Value, Is.Null);
+            Assert.That(source.HopInterval, Is.Null);
         });
     }
 

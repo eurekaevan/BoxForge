@@ -21,10 +21,10 @@ internal static class OutboundTuningPolicy
         ProxyNode result = tuned is Hysteria2Node hysteria2
             ? hysteria2 with
             {
-                TuningHopInterval = hysteria2.HopInterval.Value is null
+                TuningHopInterval = hysteria2.HopInterval is null
                     ? hysteria2.TuningHopInterval ?? DefaultHysteria2Hop : null,
-                TuningBbrProfile = hysteria2.BbrProfile.Value is null
-                    && !(hysteria2.UploadMegabitsPerSecond.Value > 0 || hysteria2.DownloadMegabitsPerSecond.Value > 0)
+                TuningBbrProfile = hysteria2.BbrProfile is null
+                    && !(hysteria2.UploadMegabitsPerSecond > 0 || hysteria2.DownloadMegabitsPerSecond > 0)
                     ? hysteria2.TuningBbrProfile ?? DefaultHysteria2Bbr : null
             }
             : tuned;

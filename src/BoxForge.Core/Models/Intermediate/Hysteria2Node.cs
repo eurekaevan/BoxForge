@@ -3,13 +3,13 @@ namespace BoxForge.Models.Intermediate;
 internal sealed record Hysteria2Node(
     string Name,
     string Server,
-    SourceValue<IReadOnlyList<Hysteria2PortSpan>> Ports,
+    IReadOnlyList<Hysteria2PortSpan> Ports,
     string Password,
-    SourceValue<int?> UploadMegabitsPerSecond,
-    SourceValue<int?> DownloadMegabitsPerSecond,
-    SourceValue<Hysteria2HopInterval?> HopInterval,
-    SourceValue<Hysteria2BbrProfile?> BbrProfile,
-    SourceValue<Hysteria2Obfuscation?> Obfuscation,
+    int? UploadMegabitsPerSecond,
+    int? DownloadMegabitsPerSecond,
+    Hysteria2HopInterval? HopInterval,
+    Hysteria2BbrProfile? BbrProfile,
+    Hysteria2Obfuscation? Obfuscation,
     SourceValue<bool?> TlsEnabled,
     TlsSettings Tls) : ProxyNode(Name, Server)
 {
@@ -21,18 +21,18 @@ internal sealed record Hysteria2Node(
         if (Tls is null || TlsEnabled.Value == false
             || (TlsEnabled.IsSpecified && TlsEnabled.Value != true))
             throw new InvalidOperationException("Hysteria2 requires TLS; an explicit TLS switch must be true.");
-        if (Tls.Reality is not null || Tls.ClientFingerprint.Value is not null)
+        if (Tls.Reality is not null || Tls.ClientFingerprint is not null)
             throw new InvalidOperationException("Hysteria2 QUIC TLS does not support Reality or uTLS.");
-        if (Ports.Value.Count == 0 || Ports.Value.Any(port =>
+        if (Ports.Count == 0 || Ports.Any(port =>
                 port.Start is < 1 or > 65535 || port.End is < 1 or > 65535 || port.End < port.Start))
             throw new InvalidOperationException("Hysteria2 requires valid, ordered port spans.");
-        if (UploadMegabitsPerSecond.Value < 0 || DownloadMegabitsPerSecond.Value < 0)
+        if (UploadMegabitsPerSecond < 0 || DownloadMegabitsPerSecond < 0)
             throw new InvalidOperationException("Hysteria2 bandwidth cannot be negative.");
-        if ((HopInterval.Value ?? TuningHopInterval) is { } hop
+        if ((HopInterval ?? TuningHopInterval) is { } hop
             && (hop.MinimumSeconds < 5 || hop.MinimumSeconds > long.MaxValue / 1_000_000_000
                 || hop.MaximumSeconds < hop.MinimumSeconds || hop.MaximumSeconds > long.MaxValue / 1_000_000_000))
             throw new InvalidOperationException("Hysteria2 hop interval must be an ordered positive range within int64 nanoseconds.");
-        if (Obfuscation.Value is { } obfs)
+        if (Obfuscation is { } obfs)
         {
             if (string.IsNullOrEmpty(obfs.Password))
                 throw new InvalidOperationException("Hysteria2 obfuscation requires a password.");

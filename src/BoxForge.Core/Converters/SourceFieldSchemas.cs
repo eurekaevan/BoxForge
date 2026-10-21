@@ -7,15 +7,16 @@ internal static class SourceFieldSchemas
 {
     public static SourceFieldSchema Common() => new SourceFieldSchema()
         .Mapped("name", "type", "server", "port")
-        .Ignored("仅用于界面或订阅标注，不参与代理连接", "metadata", "provider-name", "icon", "description")
+        // Display and subscription annotations do not affect proxy connections.
+        .Ignored("metadata", "provider-name", "icon", "description")
         .Conditional("udp", SourceFieldDisposition.IgnoredByDesign,
             (node, _) => node.GetBool("udp")
                 ? null
                 : "为 false 时会禁用 UDP，而当前出站没有对应限制")
-        .Conditional("ip-version", SourceFieldDisposition.IgnoredByDesign,
+        .Conditional("ip-version", SourceFieldDisposition.Mapped,
             (_, value) => value?.ToString()?.Trim() == "ipv4"
                 ? null
-                : "要求的地址族与 BoxForge 当前 IPv4-only 出站策略不等价")
+                : "当前仅支持 ipv4 节点地址族约束")
         .Conditional("tfo", SourceFieldDisposition.IgnoredByDesign,
             (node, _) => node.GetBool("tfo")
                 ? "启用 TCP Fast Open 尚未映射"

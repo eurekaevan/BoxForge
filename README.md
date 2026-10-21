@@ -38,9 +38,11 @@ Release workflow 自动使用台北时区的日期 tag（`YYYY-MM-DD`，同日�
 下载安装、固定源码版本与升级检查见[版本与发布契约](docs/releases.md)。
 以下为源码运行方式。
 
-需要 .NET SDK 10.0。生成配置面向 sing-box 1.15 系列；当前最低要求为
-`1.15.0-alpha.12`，统一覆盖 Tailscale endpoint 的 `on_demand` 和 Linux
-TUN 的 `multi_queue`；不承诺更早 alpha 版本兼容。
+<!-- BEGIN GENERATED:minimum-core -->
+需要 .NET SDK 10.0。生成配置当前最低要求为官方 sing-box `1.15.0-alpha.12`，
+统一覆盖 Tailscale endpoint 的 `on_demand` 和 Linux TUN 的 `multi_queue`；
+不承诺更早 alpha 版本兼容。锁定版本与 revision 见[核心数据](docs/data/sing-box-core.json)。
+<!-- END GENERATED:minimum-core -->
 
 ```bash
 dotnet run --project src/BoxForge.Cli -- generate \
@@ -141,6 +143,9 @@ singboxConfigs/
 任意一项失败时，旧输出保持不变，已写入临时目录的变更在摘要中计为
 “已回滚”。
 
+Unix 上暂存目录和新输出目录默认使用 `0700`，新配置文件默认使用 `0600`；
+重新生成时保留已有同路径目录和文件的权限位，避免替换输出时放宽访问权限。
+
 | 退出码 | 含义 |
 | --- | --- |
 | `0` | 全部生成成功，或所有内容未变而跳过 |
@@ -199,8 +204,10 @@ TUN 地址、探测、连接和 DNS 参数可通过 profile 调整；字段与�
 dotnet format BoxForge.slnx --verify-no-changes
 dotnet build BoxForge.slnx --no-incremental --warnaserror
 dotnet test BoxForge.slnx --no-build
+python3 -m unittest discover -s scripts -p 'test_*.py'
 node --test scripts/verification-process.test.mjs
 python3 scripts/generate-protocol-mappings.py --check
+python3 scripts/generate-contract-docs.py --check
 python3 scripts/verify-generated-configs.py src/BoxForge.Cli/bin/Debug/net10.0/BoxForge.dll
 ```
 
@@ -210,6 +217,6 @@ python3 scripts/verify-generated-configs.py src/BoxForge.Cli/bin/Debug/net10.0/B
 同时接入普通 CI 和发布前验证；已有核心可通过 `--core /path/to/sing-box` 指定。
 它不创建 TUN 或验证连通性；部署实际配置前仍可执行 `sing-box check -c <config.json>`。
 
-当前资格验证锁定官方 `1.15.0-alpha.12`，并将单元测试、官方配置检查、
+当前资格验证采用上述锁定核心，并将单元测试、官方配置检查、
 本地协议回环与真实设备/网络验证分开记录。完整命令和未验证路径见
 [协议验证边界](docs/protocol-validation.md)。

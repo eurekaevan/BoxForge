@@ -51,9 +51,7 @@ internal static class TlsConfigHelper
                     "Reality short-id 必须是 0 到 8 字节的偶数位十六进制字符串");
             }
 
-            realityConfig = new RealitySettings(
-                new(publicKey, true),
-                new(shortId, true));
+            realityConfig = new RealitySettings(publicKey, shortId);
         }
 
         string? fingerprint = supportsUtls
@@ -71,14 +69,11 @@ internal static class TlsConfigHelper
             throw new NodeParseException("字段 'reality-opts' 要求有效的 client-fingerprint；空值或 none 不支持 Reality");
 
         return new TlsSettings(
-            new(node.GetString("sni") ?? node.GetString("servername") ?? server,
-                node.GetPresentField("sni", "servername") is not null),
-            new(node.GetNullableBool("skip-cert-verify"),
-                node.GetPresentField("skip-cert-verify") is not null),
-            new(node.GetValue("alpn") is IEnumerable<object?> alpn
+            node.GetString("sni") ?? node.GetString("servername") ?? server,
+            node.GetNullableBool("skip-cert-verify"),
+            node.GetValue("alpn") is IEnumerable<object?> alpn
                 ? Array.AsReadOnly(alpn.Cast<string>().ToArray()) : null,
-                node.GetPresentField("alpn") is not null),
-            new(effectiveFingerprint, node.GetPresentField("client-fingerprint", "client_fingerprint") is not null),
+            effectiveFingerprint,
             realityConfig);
     }
 

@@ -4,17 +4,17 @@ namespace BoxForge.Models.Intermediate;
 internal readonly record struct SourceValue<T>(T Value, bool IsSpecified);
 
 internal sealed record TlsSettings(
-    SourceValue<string> ServerName,
-    SourceValue<bool?> AllowInvalidCertificate,
-    SourceValue<IReadOnlyList<string>?> ApplicationProtocols,
-    SourceValue<string?> ClientFingerprint,
+    string ServerName,
+    bool? AllowInvalidCertificate,
+    IReadOnlyList<string>? ApplicationProtocols,
+    string? ClientFingerprint,
     RealitySettings? Reality)
 {
     internal void Validate()
     {
-        if (Reality is not null && string.IsNullOrEmpty(ClientFingerprint.Value))
+        if (Reality is not null && string.IsNullOrEmpty(ClientFingerprint))
             throw new InvalidOperationException("Reality requires a client TLS fingerprint.");
     }
 }
 
-internal sealed record RealitySettings(SourceValue<string> PublicKey, SourceValue<string> ShortId);
+internal sealed record RealitySettings(string PublicKey, string ShortId);

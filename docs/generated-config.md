@@ -57,6 +57,11 @@ TUN 默认 IPv6 地址为 `fd00::1/126`，可通过 `tun_addresses` 替换。默
 DIRECT、Tailscale、bridge、bypass 或 sniff 之前终止 IPv6。服务分流之前再生成
 同样的兜底拒绝，保留后置 IPv6 防护。覆盖为 `DualStack` 时不生成这些拒绝规则。
 
+源节点显式提供 `ip-version: ipv4` 时，仍保留该节点的 IPv4 解析约束：
+`DualStack` 下为该节点设置独立的 `domain_resolver`，绑定 `dns-direct-alidns`、
+`strategy: ipv4_only` 并禁用 optimistic cache。省略该字段的节点继承平台策略；
+`Ipv4Only` 下使用已有的全局限制，不重复生成节点 resolver。其他 `ip-version` 值仍拒绝。
+
 Linux 在每条上述 L3 route 之前再生成无 `outbound` 的 `bypass` 动作，使
 `auto_redirect` 流量在相同条件下从内核层直接绕过 sing-box；该动作在其他
 上下文会被跳过。每条原 `DIRECT` 都原位保留作为 correctness fallback，覆盖
@@ -221,15 +226,18 @@ CA/名称验证，而非叠加校验。但 Mihomo 还能匹配中间/根证书�
 
 各协议及共享 TLS 的来源/目标解释与固定 revision 链接保存在
 [协议映射数据表](data/protocol-mappings.json)，由脚本生成[证据参考](protocol-mappings.md)。
-表中 ID 仅用于文档和测试；内部 IR 只保留解释后的值及是否显式提供的标记，
+表中 ID 仅用于文档和测试；内部 IR 保存解释后的值，仅在校验确需区分缺失与显式 null 时保留显式标记，
 不携带来源字段路径或规则 ID。
 五个协议统一通过 Schema 校验与协议解释钩子构建中立节点；目标发射不读取证据表。
 
 研究基线：Mihomo Meta `88dcbf7f1614a67c3b36b848ee3592dfa92ada36`，
 sing-box `1.15.0-alpha.8` / `b609f959f57ce34416c51c7b87ce4a76f2e1df56`。
-该固定源码研究基线保留原始 revision；当前最低支持与资格验证核心为官方
-sing-box `1.15.0-alpha.12` / `25b0d5ea3e466d246c708ac0f20d0448110e566c`，
-两者的证据用途不同，不能以核心检查通过替代源码语义对照。
+<!-- BEGIN GENERATED:core-baseline -->
+当前最低支持与资格验证核心为官方 sing-box `1.15.0-alpha.12`，
+revision `25b0d5ea3e466d246c708ac0f20d0448110e566c`。版本、revision 与归档摘要统一来自
+[核心锁定数据](data/sing-box-core.json)；不代表验证了所有后续版本或定制构建。
+<!-- END GENERATED:core-baseline -->
+上述固定源码研究与当前核心检查的证据用途不同，不能以核心检查通过替代源码语义对照。
 官方 Mihomo [TLS](https://wiki.metacubex.one/en/config/proxies/tls/) 文档与固定源码交叉核对：
 
 - Mihomo [VLESS](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/vless.go)、
@@ -242,8 +250,11 @@ sing-box `1.15.0-alpha.12` / `25b0d5ea3e466d246c708ac0f20d0448110e566c`，
 
 ## sing-box API
 
-API 默认不生成。启用 `SingboxApi:Enabled` 后，顶层增加一个仅监听
+<!-- BEGIN GENERATED:api-setting -->
+API 默认 `features.api.enabled = false`。将该键设为 `true`
+（环境变量 `BOXFORGE_features__api__enabled=true`）后，顶层增加一个仅监听
 `127.0.0.1:9090` 的 `api` service，并启用工作目录下的 `dashboard`。
+<!-- END GENERATED:api-setting -->
 Dashboard 下载使用独立的 `http-dashboard-direct` 直连 HTTP client；允许的浏览器
 origin 被限制为同端口的 `127.0.0.1` 与 `localhost`，
 `access_control_allow_private_network` 保持

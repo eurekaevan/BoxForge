@@ -332,7 +332,15 @@ internal sealed class SingboxConfigValidator : ISingboxConfigValidator
         int index,
         ValidationContext context)
     {
-        if (context.AddressFamily == AddressFamilyPolicy.Ipv4Only
+        ValidateReference(
+            proxy.DomainResolver?.Server,
+            context.DnsTags,
+            "SB060",
+            $"outbounds[{index}].domain_resolver.server",
+            "引用了不存在的 DNS server。",
+            context.Diagnostics);
+        if ((context.AddressFamily == AddressFamilyPolicy.Ipv4Only
+                || proxy.DomainResolver?.Strategy == DnsStrategy.Ipv4Only)
             && IPAddress.TryParse(proxy.Server, out IPAddress? serverAddress)
             && serverAddress.AddressFamily == AddressFamily.InterNetworkV6)
         {

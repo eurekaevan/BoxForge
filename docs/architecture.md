@@ -128,8 +128,9 @@ ClashProxyNode → ProxyNodeParser → Schema + 协议解释 → NodeCatalog（�
 ```
 
 五个协议的节点 IR、共用 `TlsSettings` 和 `RealitySettings` 不引用 sing-box 模型或 JSON 属性。
-flow 与 UDP 编码使用语义枚举；`SourceValue<T>` 是只包含值和 `IsSpecified` 的只读值类型。
-显式标记用于区分缺失、显式 null 和协议固有默认值，不保存字段名、字段路径或证据 ID。
+flow 与 UDP 编码使用语义枚举，其他字段直接保存解释后的值。
+只有强制 TLS 协议的激活开关及 Gecko 包大小校验需要区分缺失和显式 null，
+这些字段使用包含值与 `IsSpecified` 的只读 `SourceValue<T>`；不保存字段名、字段路径或证据 ID。
 字段声明和别名由协议 Schema 校验，含固定 revision 的语义证据由数据表维护。
 SNI 缺失、null 或空白时仍回退到 server；ALPN 缺失与显式空列表在 IR 中不同，
 目标序列化仍维持原有空列表省略行为。

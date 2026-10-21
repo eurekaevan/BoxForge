@@ -6,14 +6,14 @@ internal sealed record VlessNode(
     string Server,
     int Port,
     string UserId,
-    SourceValue<VlessFlow> Flow,
-    SourceValue<DatagramEncoding> DatagramEncoding,
-    SourceValue<bool?> TlsEnabled,
+    VlessFlow Flow,
+    DatagramEncoding DatagramEncoding,
+    bool? TlsEnabled,
     TlsSettings? Tls) : ProxyNode(Name, Server)
 {
     internal override void Validate()
     {
-        if ((TlsEnabled.Value == true) != (Tls is not null))
+        if ((TlsEnabled == true) != (Tls is not null))
             throw new InvalidOperationException("VLESS TLS activation must match the interpreted source setting.");
         Tls?.Validate();
     }

@@ -6,15 +6,43 @@ CLI 与 HTTP Server 共用配置规则；未提供覆盖时保留内置生成策
 
 ## 配置表
 
-| 分区 | 字段与默认值 |
-| --- | --- |
-| `features.tailscale` | `enabled: true`；`taildrop_directory` 按目标平台设置，见文末 |
-| `features.api` | `enabled: false` |
-| `dns` | `address_family: "Ipv4Only"`；`selection_mode` 默认 Android 为 `SequentialFallback`、桌面为 `ParallelFastest`；`timeout: "5s"`；`cache_capacity: 4096`；`optimistic_timeout: "6h"`；`resolvers` 见后文 |
-| `route` | `regions`、`services`、`rule_sets` 见后文；`main_default_region: "us"`；`sniff_timeout: "300ms"`；`sniff_excluded_ports: [21,22,3306,5900]`；`tun_addresses: ["172.19.0.1/30","fd00::1/126"]` |
-| `route` 平台参数 | `strict_route`、`auto_redirect`、`multi_queue`、`use_direct_forwarding`，默认差异见[生成配置](generated-config.md#平台差异) |
-| `tuning` | `connect_timeout: "5s"`；桌面 `tcp_keep_alive: "1m"`、`tcp_keep_alive_interval: "30s"`，Android 两者为 `null`；`url_test_interval` 默认 Android `3m`、桌面 `1m`；`url_test_url: "https://www.gstatic.com/generate_204"`；`url_test_tolerance: 50`；`url_test_idle_timeout: "30m"` |
-| `privacy` | 空对象 `{}`，保留结构，不提供开关 |
+<!-- BEGIN GENERATED:profile-defaults -->
+由[内置 profile 源码](https://github.com/eurekaevan/BoxForge/blob/main/src/BoxForge.Core/Configuration/default-profile.json)生成；平台列仅列出内置覆盖，未列出的值继承根默认值。
+对象数组的完整内容见内置 profile；下表的数组是默认数据，覆盖操作见后文。
+
+更新事实来源后运行 `python3 scripts/generate-contract-docs.py`；CI 使用 `--check` 拒绝过期片段。
+
+| 配置路径 | 根默认值 | 平台覆盖 |
+| --- | --- | --- |
+| `features.tailscale.enabled` | `true` | — |
+| `features.tailscale.taildrop_directory` | `"$HOME/Downloads/Taildrop"` | Android: `"Taildrop"`；Windows: `"$USERPROFILE\\Downloads\\Taildrop"` |
+| `features.api.enabled` | `false` | — |
+| `dns.address_family` | `"Ipv4Only"` | — |
+| `dns.selection_mode` | `"ParallelFastest"` | Android: `"SequentialFallback"` |
+| `dns.timeout` | `"5s"` | — |
+| `dns.cache_capacity` | `4096` | — |
+| `dns.optimistic_timeout` | `"6h"` | — |
+| `dns.resolvers` | 4 项（见内置 profile） | — |
+| `route.regions` | 4 项（见内置 profile） | — |
+| `route.services` | 5 项（见内置 profile） | — |
+| `route.rule_sets` | 4 项（见内置 profile） | — |
+| `route.main_default_region` | `"us"` | — |
+| `route.sniff_timeout` | `"300ms"` | — |
+| `route.sniff_excluded_ports` | `[21,22,3306,5900]` | — |
+| `route.tun_addresses` | `["172.19.0.1/30","fd00::1/126"]` | — |
+| `route.strict_route` | `true` | Android: `null` |
+| `route.auto_redirect` | `null` | Linux: `true` |
+| `route.multi_queue` | `null` | Linux: `true` |
+| `route.use_direct_forwarding` | `false` | Linux: `true` |
+| `tuning.connect_timeout` | `"5s"` | — |
+| `tuning.tcp_keep_alive` | `"1m"` | Android: `null` |
+| `tuning.tcp_keep_alive_interval` | `"30s"` | Android: `null` |
+| `tuning.url_test_interval` | `"1m"` | Android: `"3m"` |
+| `tuning.url_test_url` | `"https://www.gstatic.com/generate_204"` | — |
+| `tuning.url_test_tolerance` | `50` | — |
+| `tuning.url_test_idle_timeout` | `"30m"` | — |
+| `privacy` | `{}` | — |
+<!-- END GENERATED:profile-defaults -->
 
 API 启用后生成仅监听 `127.0.0.1:9090` 的 sing-box service 和 Dashboard，
 不改变 BoxForge HTTP Server 的监听地址。Dashboard 使用独立直连 HTTP client；

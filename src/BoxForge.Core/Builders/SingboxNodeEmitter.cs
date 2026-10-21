@@ -28,13 +28,13 @@ internal static class SingboxNodeEmitter
             TcpKeepAliveInterval = node.Connection.TcpKeepAliveInterval,
             ServerPort = node.Port,
             Uuid = node.UserId,
-            Flow = node.Flow.Value switch
+            Flow = node.Flow switch
             {
                 VlessFlow.None => null,
                 VlessFlow.Vision => "xtls-rprx-vision",
                 _ => throw new ArgumentOutOfRangeException(nameof(node), "Unknown VLESS flow.")
             },
-            PacketEncoding = node.DatagramEncoding.Value switch
+            PacketEncoding = node.DatagramEncoding switch
             {
                 DatagramEncoding.Xudp => "xudp",
                 DatagramEncoding.PacketAddress => "packetaddr",
@@ -72,10 +72,10 @@ internal static class SingboxNodeEmitter
             TcpKeepAliveInterval = node.Connection.TcpKeepAliveInterval,
             ServerPort = node.Port,
             Password = node.Password,
-            IdleSessionTimeout = node.IdleTimeout.Value,
-            IdleSessionCheckInterval = node.IdleCheckInterval.Value,
-            MinIdleSession = node.MinimumIdleSessions.Value,
-            ClientMetadata = node.ClientMetadata.Value,
+            IdleSessionTimeout = node.IdleTimeout,
+            IdleSessionCheckInterval = node.IdleCheckInterval,
+            MinIdleSession = node.MinimumIdleSessions,
+            ClientMetadata = node.ClientMetadata,
             Tls = EmitTls(node.Tls)
         };
     }
@@ -83,9 +83,9 @@ internal static class SingboxNodeEmitter
     internal static Hysteria2Outbound Emit(Hysteria2Node node)
     {
         node.Validate();
-        var ports = node.Ports.Value;
+        var ports = node.Ports;
         bool singlePort = ports.Count == 1 && ports[0].End is null;
-        var obfs = node.Obfuscation.Value;
+        var obfs = node.Obfuscation;
         return new Hysteria2Outbound
         {
             Tag = node.Name,
@@ -98,13 +98,13 @@ internal static class SingboxNodeEmitter
                 port.Start.ToString(CultureInfo.InvariantCulture) + ":"
                 + (port.End ?? port.Start).ToString(CultureInfo.InvariantCulture)).ToList(),
             Password = node.Password,
-            UpMbps = node.UploadMegabitsPerSecond.Value,
-            DownMbps = node.DownloadMegabitsPerSecond.Value,
-            HopInterval = (node.HopInterval.Value ?? node.TuningHopInterval) is { } hop
+            UpMbps = node.UploadMegabitsPerSecond,
+            DownMbps = node.DownloadMegabitsPerSecond,
+            HopInterval = (node.HopInterval ?? node.TuningHopInterval) is { } hop
                 ? hop.MinimumSeconds.ToString(CultureInfo.InvariantCulture) + "s" : null,
-            HopIntervalMax = (node.HopInterval.Value ?? node.TuningHopInterval)?.MaximumSeconds is { } maximum
+            HopIntervalMax = (node.HopInterval ?? node.TuningHopInterval)?.MaximumSeconds is { } maximum
                 ? maximum.ToString(CultureInfo.InvariantCulture) + "s" : null,
-            BbrProfile = (node.BbrProfile.Value ?? node.TuningBbrProfile) switch
+            BbrProfile = (node.BbrProfile ?? node.TuningBbrProfile) switch
             {
                 null => null,
                 Hysteria2BbrProfile.Standard => "standard",
@@ -131,8 +131,8 @@ internal static class SingboxNodeEmitter
     internal static ShadowsocksOutbound Emit(ShadowsocksNode node)
     {
         node.Validate();
-        var plugin = node.Plugin.Value;
-        string? mode = plugin?.Mode.Value switch
+        var plugin = node.Plugin;
+        string? mode = plugin?.Mode switch
         {
             null => null,
             ShadowsocksObfsMode.Http => "http",
@@ -147,14 +147,14 @@ internal static class SingboxNodeEmitter
             TcpKeepAlive = node.Connection.TcpKeepAlive,
             TcpKeepAliveInterval = node.Connection.TcpKeepAliveInterval,
             ServerPort = node.Port,
-            Method = node.Cipher.Value,
+            Method = node.Cipher,
             Password = node.Password,
             Plugin = plugin is null ? null : "obfs-local",
-            PluginOpts = plugin is null ? null : $"obfs={EscapePluginOption(mode!)};obfs-host={EscapePluginOption(plugin.Host.Value)}",
-            UdpOverTcp = node.UdpOverTcpEnabled.Value == true ? new UdpOverTcpOptions
+            PluginOpts = plugin is null ? null : $"obfs={EscapePluginOption(mode!)};obfs-host={EscapePluginOption(plugin.Host)}",
+            UdpOverTcp = node.UdpOverTcpEnabled == true ? new UdpOverTcpOptions
             {
                 Enabled = true,
-                Version = (int)node.UdpOverTcpVersion.Value
+                Version = (int)node.UdpOverTcpVersion
             } : null
         };
     }
@@ -169,17 +169,17 @@ internal static class SingboxNodeEmitter
         return new OutboundTls
         {
             Enabled = true,
-            ServerName = tls.ServerName.Value,
-            Insecure = tls.AllowInvalidCertificate.Value,
-            Alpn = tls.ApplicationProtocols.Value?.ToList(),
-            Utls = tls.ClientFingerprint.Value is { } fingerprint
+            ServerName = tls.ServerName,
+            Insecure = tls.AllowInvalidCertificate,
+            Alpn = tls.ApplicationProtocols?.ToList(),
+            Utls = tls.ClientFingerprint is { } fingerprint
                 ? new Utls { Enabled = true, Fingerprint = fingerprint } : null,
             Reality = tls.Reality is { } reality
                 ? new OutboundReality
                 {
                     Enabled = true,
-                    PublicKey = reality.PublicKey.Value,
-                    ShortId = reality.ShortId.Value
+                    PublicKey = reality.PublicKey,
+                    ShortId = reality.ShortId
                 }
                 : null
         };

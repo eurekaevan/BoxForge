@@ -36,17 +36,16 @@ internal static class AnyTlsProtocol
         var tls = TlsConfigHelper.ExtractSettings(node, server, forceTls: true)
             ?? throw new InvalidOperationException("AnyTLS interpretation unexpectedly returned no TLS settings.");
         return new AnyTlsNode(name, server, port, password, timeout, interval,
-            new(minimumIdle, node.GetPresentField("min-idle-session", "min_idle_session") is not null),
-            new(metadata, node.GetPresentField("client-metadata", "client_metadata") is not null),
+            minimumIdle, metadata,
             new(node.GetNullableBool("tls"), node.GetPresentField("tls") is not null), tls);
     }
 
-    private static SourceValue<string?> ExtractDuration(ClashProxyNode node, string name, string[] aliases)
+    private static string? ExtractDuration(ClashProxyNode node, string name, string[] aliases)
     {
         string? field = node.GetPresentField(name)
             ?? aliases.FirstOrDefault(alias => node.GetPresentField(alias) is not null);
         string? value = field is null ? null : node.GetRawString(field);
-        return new(value is null ? null : GoDurationHelper.ParsePositiveSecondsOrDuration(value, field!), field is not null);
+        return value is null ? null : GoDurationHelper.ParsePositiveSecondsOrDuration(value, field!);
     }
 
     private static int? ExtractMinIdleSession(ClashProxyNode node)

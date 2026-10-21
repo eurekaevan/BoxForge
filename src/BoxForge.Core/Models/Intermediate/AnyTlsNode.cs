@@ -8,10 +8,10 @@ internal sealed record AnyTlsNode(
     string Server,
     int Port,
     string Password,
-    SourceValue<string?> IdleTimeout,
-    SourceValue<string?> IdleCheckInterval,
-    SourceValue<int?> MinimumIdleSessions,
-    SourceValue<string?> ClientMetadata,
+    string? IdleTimeout,
+    string? IdleCheckInterval,
+    int? MinimumIdleSessions,
+    string? ClientMetadata,
     SourceValue<bool?> TlsEnabled,
     TlsSettings Tls) : ProxyNode(Name, Server)
 {
@@ -22,12 +22,12 @@ internal sealed record AnyTlsNode(
             throw new InvalidOperationException("AnyTLS requires TLS; an explicit TLS switch must be true.");
         if (Tls.Reality is not null)
             throw new InvalidOperationException("AnyTLS does not support Reality.");
-        if (MinimumIdleSessions.Value < 0)
+        if (MinimumIdleSessions < 0)
             throw new InvalidOperationException("AnyTLS minimum idle sessions cannot be negative.");
-        if (ClientMetadata.Value is { } metadata && !IsValidMetadata(metadata))
+        if (ClientMetadata is { } metadata && !IsValidMetadata(metadata))
             throw new InvalidOperationException("AnyTLS client metadata violates the settings frame limits.");
-        if ((IdleTimeout.Value is { } timeout && !GoDurationHelper.IsPositiveDuration(timeout))
-            || (IdleCheckInterval.Value is { } interval && !GoDurationHelper.IsPositiveDuration(interval)))
+        if ((IdleTimeout is { } timeout && !GoDurationHelper.IsPositiveDuration(timeout))
+            || (IdleCheckInterval is { } interval && !GoDurationHelper.IsPositiveDuration(interval)))
             throw new InvalidOperationException("AnyTLS session durations must be positive Go durations.");
         Tls?.Validate();
     }

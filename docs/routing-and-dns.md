@@ -126,13 +126,18 @@ DNS `preferred_by` 引用 DNS server，而不是路由 outbound/endpoint；当�
 标签使用独立命名空间，按大小写精确匹配。省略 `dns.final`（空字符串）仍
 采用 sing-box 的首个 DNS server 默认值；内置生成策略和规则顺序不变。
 
-当前最低支持与资格验证核心为官方 sing-box `1.15.0-alpha.12`，revision
-`25b0d5ea3e466d246c708ac0f20d0448110e566c`。规则语法参见官方
+<!-- BEGIN GENERATED:core-baseline -->
+当前最低支持与资格验证核心为官方 sing-box `1.15.0-alpha.12`，
+revision `25b0d5ea3e466d246c708ac0f20d0448110e566c`。版本、revision 与归档摘要统一来自
+[核心锁定数据](data/sing-box-core.json)；不代表验证了所有后续版本或定制构建。
+<!-- END GENERATED:core-baseline -->
+
+规则语法参见官方
 [DNS rule action](https://sing-box.sagernet.org/configuration/dns/rule_action/)、
 [DNS rule](https://sing-box.sagernet.org/configuration/dns/rule/) 和
 [route default_domain_resolver](https://sing-box.sagernet.org/configuration/route/)。
 这些在线文档可能随版本更新；固定 `alpha.8` 源码的协议研究证据与当前
-`alpha.12` 核心检查、本地回环各自的覆盖范围见[协议验证边界](protocol-validation.md)。
+锁定核心检查、本地回环各自的覆盖范围见[协议验证边界](protocol-validation.md)。
 当前不生成 `dns_server_address`、`dns_search_domain`、DHCP 或 local
 resolver。
 
