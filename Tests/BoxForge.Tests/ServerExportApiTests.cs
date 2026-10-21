@@ -82,13 +82,12 @@ public sealed class ServerExportApiTests
                 Encoding.UTF8.GetBytes(ValidYaml), "profile.yaml", null, ["Linux", "Android"]);
             form.Add(new StringContent(JsonSerializer.Serialize(new
             {
-                version = 1,
-                runtime = new
+                features = new
                 {
-                    singbox_api = new { enabled },
-                    tailscale = new { enabled, android_enabled = enabled }
+                    api = new { enabled },
+                    tailscale = new { enabled }
                 },
-                platforms = new { Linux = new { multi_queue = enabled } }
+                platforms = new { Linux = new { route = new { multi_queue = enabled } } }
             })), "profile");
             using HttpResponseMessage response = await client.PostAsync("/api/v1/export", form);
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK),
@@ -128,12 +127,14 @@ public sealed class ServerExportApiTests
     [TestCase("null")]
     [TestCase("[]")]
     [TestCase("true")]
-    [TestCase("{}")]
-    [TestCase("{\"version\":1,\"version\":1}")]
-    [TestCase("{\"version\":2}")]
-    [TestCase("{\"version\":1,\"runtime\":{\"singbox_api\":{\"enabled\":\"secret-profile-value\"}}}")]
-    [TestCase("{\"version\":1,\"platforms\":{\"Linux\":{\"multi_queue\":\"secret-profile-value\"}}}")]
-    [TestCase("{\"version\":1,\"unknown-secret-profile-value\":true}")]
+    [TestCase("{\"features\":{},\"features\":{}}")]
+    [TestCase("{\"version\":1}")]
+    [TestCase("{\"features\":{\"api\":{\"enabled\":\"secret-profile-value\"}}}")]
+    [TestCase("{\"platforms\":{\"Linux\":{\"route\":{\"multi_queue\":\"secret-profile-value\"}}}}")]
+    [TestCase("{\"unknown-secret-profile-value\":true}")]
+    [TestCase("{\"platforms\":{\"Windows\":{\"features\":{\"api\":{\"enabled\":\"secret-profile-value\"}}}}}")]
+    [TestCase("{\"platforms\":{\"Windows\":{\"route\":{\"sniff_timeout\":[]}}}}")]
+    [TestCase("{\"platforms\":{\"Windows\":{\"features\":null}}}")]
     public async Task RejectsInvalidExportProfileWithoutEchoingValues(string profileJson)
     {
         using HttpClient client = factory.CreateClient();
@@ -146,10 +147,10 @@ public sealed class ServerExportApiTests
         Assert.That(await response.Content.ReadAsStringAsync(), Does.Not.Contain("secret-profile-value"));
     }
 
-    [TestCase("{\"version\":1,\"secret-profile-value-\\uD800\":true}")]
-    [TestCase("{\"version\":1,\"secret-profile-value-\\uDC00\":true}")]
-    [TestCase("{\"version\":1,\"policies\":{\"url_test_url\":\"secret-profile-value-\\uD800\"}}")]
-    [TestCase("{\"version\":1,\"policies\":{\"url_test_url\":\"secret-profile-value-\\uDC00\"}}")]
+    [TestCase("{\"secret-profile-value-\\uD800\":true}")]
+    [TestCase("{\"secret-profile-value-\\uDC00\":true}")]
+    [TestCase("{\"tuning\":{\"url_test_url\":\"secret-profile-value-\\uD800\"}}")]
+    [TestCase("{\"tuning\":{\"url_test_url\":\"secret-profile-value-\\uDC00\"}}")]
     public async Task RejectsUnpairedSurrogatesInExportProfileWithoutInternalErrors(string profileJson)
     {
         using HttpClient client = factory.CreateClient();
@@ -174,8 +175,8 @@ public sealed class ServerExportApiTests
         using HttpClient client = factory.CreateClient();
         using MultipartFormDataContent form = CreateExportForm(
             Encoding.UTF8.GetBytes(ValidYaml), "profile.yaml", null, ["Linux"]);
-        form.Add(new StringContent("{\"version\":1}"), "profile");
-        form.Add(new StringContent("{\"version\":1}"), "profile");
+        form.Add(new StringContent("{}"), "profile");
+        form.Add(new StringContent("{}"), "profile");
         using HttpResponseMessage response = await client.PostAsync("/api/v1/export", form);
 
         await AssertProblemAsync(response, HttpStatusCode.BadRequest);

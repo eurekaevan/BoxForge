@@ -107,19 +107,30 @@ public sealed class SingboxConfigBuilderTests
     }
 
     [Test]
-    public void EndpointSnapshotPreservesItsConfiguredTaildropDirectory()
+    public void EndpointSnapshotPreservesEffectiveRequestTaildropDirectory()
     {
         var profile = BoxForgeProfile.Default;
-        var endpointProfile = new BoxForgeProfile(BuiltInProfile.Default with
+        var endpointProfile = profile.ApplyOverrides(JsonSerializer.SerializeToNode(new
         {
-            Platforms = BuiltInProfile.Default.Platforms.SetItem(TargetPlatform.Linux,
-                profile.GetPlatform(TargetPlatform.Linux) with { TaildropDirectory = "EndpointTaildrop" })
+            platforms = new { Linux = new { features = new { tailscale = new { taildrop_directory = "EndpointTaildrop" } } } }
+        })!.AsObject());
+        var effective = endpointProfile.ForPlatform(TargetPlatform.Linux, JsonSerializer.SerializeToNode(new
+        {
+            features = new { tailscale = new { taildrop_directory = "RequestTaildrop" } }
+        })!.AsObject());
+        var builder = CreateBuilder(profile: profile);
+        var request = new SingboxBuildRequest(new NodeCatalog([], []), TargetPlatform.Linux, new string('a', 64))
+        { Profile = effective };
+        var plan = builder.Plan(request);
+        var config = builder.Build(request);
+        Assert.Multiple(() =>
+        {
+            Assert.That(plan.TaildropDirectory, Is.EqualTo("RequestTaildrop"));
+            Assert.That(config.Endpoints!.OfType<TailscaleEndpoint>().Single().TaildropDirectory, Is.EqualTo("RequestTaildrop"));
+            Assert.That(builder.Plan(request with { Profile = null }).TaildropDirectory,
+                Is.EqualTo(profile.GetPlatform(TargetPlatform.Linux).TaildropDirectory));
+            Assert.That(endpointProfile.GetPlatform(TargetPlatform.Linux).TaildropDirectory, Is.EqualTo("EndpointTaildrop"));
         });
-        var builder = new SingboxConfigBuilder(new TailscaleEndpointBuilder(endpointProfile),
-            new DnsProfileBuilder(profile), new RouteProfileBuilder(profile),
-            profile);
-        var config = builder.Build(new SingboxBuildRequest(new NodeCatalog([], []), TargetPlatform.Linux, new string('a', 64)));
-        Assert.That(config.Endpoints!.OfType<TailscaleEndpoint>().Single().TaildropDirectory, Is.EqualTo("EndpointTaildrop"));
     }
 
     [Test]
@@ -127,13 +138,11 @@ public sealed class SingboxConfigBuilderTests
     {
         var enabled = BoxForgeProfile.Default.ApplyOverrides(JsonSerializer.SerializeToNode(new
         {
-            version = 1,
-            runtime = new { tailscale = new { enabled = true, android_enabled = true }, singbox_api = new { enabled = true } }
+            features = new { tailscale = new { enabled = true }, api = new { enabled = true } }
         })!.AsObject());
         var disabled = enabled.ApplyOverrides(JsonSerializer.SerializeToNode(new
         {
-            version = 1,
-            runtime = new { tailscale = new { enabled = false, android_enabled = false }, singbox_api = new { enabled = false } }
+            features = new { tailscale = new { enabled = false }, api = new { enabled = false } }
         })!.AsObject());
         var request = new SingboxBuildRequest(new NodeCatalog([], []), TargetPlatform.Linux, new string('a', 64));
         var plan = CreateBuilder(profile: enabled).Plan(request);
@@ -700,12 +709,10 @@ public sealed class SingboxConfigBuilderTests
     [Test]
     public void BuilderAndValidatorShareTheInjectedProfileAddressFamily()
     {
-        var profile = new BoxForgeProfile(BuiltInProfile.Default with
+        var profile = BoxForgeProfile.Default.ApplyOverrides(JsonSerializer.SerializeToNode(new
         {
-            Platforms = BuiltInProfile.Default.Platforms.SetItem(TargetPlatform.Linux,
-                BuiltInProfile.Default.Platforms[TargetPlatform.Linux] with
-                { AddressFamily = AddressFamilyPolicy.DualStack })
-        });
+            platforms = new { Linux = new { dns = new { address_family = "DualStack" } } }
+        })!.AsObject());
         var request = new SingboxBuildRequest(
             new NodeCatalog([CreateProxy("ipv6-test", "2001:db8::1")], ["ipv6-test"]),
             TargetPlatform.Linux, new string('a', 64));
@@ -740,15 +747,14 @@ public sealed class SingboxConfigBuilderTests
         if (tailscaleEnabled is not null || androidEnabled is not null || apiEnabled is not null)
             profile = profile.ApplyOverrides(JsonSerializer.SerializeToNode(new
             {
-                version = 1,
-                runtime = new
+                features = new
                 {
-                    tailscale = new
-                    {
-                        enabled = tailscaleEnabled ?? profile.Runtime.Tailscale.Enabled,
-                        android_enabled = androidEnabled ?? profile.Runtime.Tailscale.AndroidEnabled
-                    },
-                    singbox_api = new { enabled = apiEnabled ?? profile.Runtime.SingboxApi.Enabled }
+                    tailscale = new { enabled = tailscaleEnabled ?? profile.Features.Tailscale.Enabled },
+                    api = new { enabled = apiEnabled ?? profile.Features.Api.Enabled }
+                },
+                platforms = new
+                {
+                    Android = new { features = new { tailscale = new { enabled = androidEnabled ?? profile.ForPlatform(TargetPlatform.Android).Features.Tailscale.Enabled } } }
                 }
             })!.AsObject());
         return new SingboxConfigBuilder(new TailscaleEndpointBuilder(profile),

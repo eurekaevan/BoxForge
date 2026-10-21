@@ -32,9 +32,14 @@ public sealed class RouteProfileBuilderTests
     [TestCase(TargetPlatform.Windows, AddressFamilyPolicy.DualStack)]
     public void RoutePlanSnapshotsPolicyAndEmitsIndependentConfigurations(TargetPlatform platform, AddressFamilyPolicy addressFamily)
     {
-        var settings = BoxForgeProfile.Default.GetPlatform(platform) with { AddressFamily = addressFamily };
-        var profile = new BoxForgeProfile(BuiltInProfile.Default with
-        { Platforms = BuiltInProfile.Default.Platforms.SetItem(platform, settings) });
+        var profile = BoxForgeProfile.Default.ApplyOverrides(JsonSerializer.SerializeToNode(new
+        {
+            platforms = new Dictionary<string, object>
+            {
+                [platform.ToString()] = new { dns = new { address_family = addressFamily.ToString() } }
+            }
+        })!.AsObject());
+        var settings = profile.GetPlatform(platform);
         var builder = new RouteProfileBuilder(profile);
         var plan = builder.Plan(platform);
         string expected = JsonSerializer.Serialize(SingboxRouteEmitter.Emit(builder.Plan(platform)));
@@ -46,11 +51,10 @@ public sealed class RouteProfileBuilderTests
         foreach (RouteRule rule in first.Rules)
             ClearMatchers(rule);
         first.Rules.Clear();
-        var changedProfile = new BoxForgeProfile(BuiltInProfile.Default with
+        var changedProfile = profile.ApplyOverrides(JsonSerializer.SerializeToNode(new
         {
-            Platforms = BuiltInProfile.Default.Platforms.SetItem(platform, settings),
-            Runtime = profile.Runtime with { Tailscale = new(false, false) }
-        });
+            features = new { tailscale = new { enabled = false } }
+        })!.AsObject());
         Assert.Multiple(() =>
         {
             Assert.That(JsonSerializer.Serialize(SingboxRouteEmitter.Emit(plan)), Is.EqualTo(expected));
@@ -59,8 +63,8 @@ public sealed class RouteProfileBuilderTests
             Assert.That(plan.TailscaleEnabled, Is.True);
             Assert.That(builder.Plan(platform).TailscaleEnabled, Is.True);
             Assert.That(builder.Plan(platform, changedProfile).TailscaleEnabled, Is.False);
-            Assert.That(plan.PriorityServices, Is.EqualTo(profile.Services.Where(service => service.PrecedesDomesticRoutes)));
-            Assert.That(plan.OtherServices, Is.EqualTo(profile.Services.Where(service => !service.PrecedesDomesticRoutes)));
+            Assert.That(JsonSerializer.Serialize(plan.PriorityServices), Is.EqualTo(JsonSerializer.Serialize(profile.Services.Where(service => service.PrecedesDomesticRoutes))));
+            Assert.That(JsonSerializer.Serialize(plan.OtherServices), Is.EqualTo(JsonSerializer.Serialize(profile.Services.Where(service => !service.PrecedesDomesticRoutes))));
             Assert.That(plan.RuleSets.SelectMany(source => source.Tags), Is.EqualTo(profile.RuleSets.SelectMany(source => source.Tags)));
         });
 
@@ -587,10 +591,10 @@ public sealed class RouteProfileBuilderTests
     }
 
     private static RouteProfileBuilder CreateBuilder() =>
-        new(new BoxForgeProfile(BuiltInProfile.Default with
+        new(BoxForgeProfile.Default.ApplyOverrides(JsonSerializer.SerializeToNode(new
         {
-            Runtime = BuiltInProfile.Default.Runtime with { Tailscale = new(false, false) }
-        }));
+            features = new { tailscale = new { enabled = false } }
+        })!.AsObject()));
 
     private static List<RouteRule> DirectRules(RouteConfig route) =>
         route.Rules.Where(rule =>

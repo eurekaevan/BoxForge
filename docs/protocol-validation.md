@@ -54,12 +54,12 @@ fixture 副本中追加 HY2 单端口、等端点范围、多标量、混合范�
 singbox_core=/absolute/path/to/sing-box
 verification_root=$(mktemp -d /tmp/boxforge-verification.XXXXXX)
 
-BOXFORGE_SingboxApi__Enabled=false \
+BOXFORGE_features__api__enabled=false \
 dotnet run --no-build --project src/BoxForge.Cli -- generate \
   --input-dir Tests/BoxForge.Tests/Fixtures \
   --output-dir "$verification_root/standard" --platform all || exit
 
-BOXFORGE_SingboxApi__Enabled=true \
+BOXFORGE_features__api__enabled=true \
 dotnet run --no-build --project src/BoxForge.Cli -- generate \
   --input-dir Tests/BoxForge.Tests/Fixtures \
   --output-dir "$verification_root/api" --platform all || exit

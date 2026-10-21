@@ -24,13 +24,15 @@ internal sealed class BoxForgeEngine(
         ValidateRequest(request);
         cancellationToken.ThrowIfCancellationRequested();
 
-        var effectiveProfile = request.Profile is { } overlay ? conversionService.ResolveProfile(overlay) : null;
+        var requestedPlatforms = request.Platforms.ToHashSet();
+        var profiles = PlatformOrder.Where(requestedPlatforms.Contains)
+            .ToDictionary(platform => platform, platform => conversionService.ResolveProfile(platform, request.Profile));
         PreparedConversion prepared;
         try
         {
             prepared = conversionService.Prepare(
                 request.ClashYaml,
-                effectiveProfile);
+                profiles.First().Value);
         }
         catch (Exception ex) when (ex is NodeParseException or YamlException)
         {
@@ -38,7 +40,6 @@ internal sealed class BoxForgeEngine(
                 "Clash YAML 转换失败。",
                 ex);
         }
-        var requestedPlatforms = request.Platforms.ToHashSet();
         var artifacts = new List<ConversionArtifact>(requestedPlatforms.Count);
 
         foreach (TargetPlatform platform in PlatformOrder)
@@ -51,13 +52,13 @@ internal sealed class BoxForgeEngine(
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                string content = conversionService.Convert(prepared, platform, effectiveProfile);
+                string content = conversionService.Convert(prepared, platform, profiles[platform]);
                 artifacts.Add(new ConversionArtifact(
                     platform,
                     content,
                     configSerializer.GetContentHash(content)));
             }
-            catch (Exception ex) when (ex is ConfigValidationException or RegexMatchTimeoutException)
+            catch (Exception ex) when (ex is ConfigValidationException or RegexMatchTimeoutException or NodeParseException)
             {
                 throw new BoxForgePlatformConversionException(platform, ex);
             }

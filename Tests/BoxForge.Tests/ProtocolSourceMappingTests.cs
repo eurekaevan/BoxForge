@@ -26,9 +26,9 @@ public sealed class ProtocolSourceMappingTests
         Assert.That(expected, Has.Count.EqualTo(120));
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
-            ["Tailscale:Enabled"] = desktop.ToString(),
-            ["Tailscale:AndroidEnabled"] = android.ToString(),
-            ["SingboxApi:Enabled"] = api.ToString()
+            ["features:tailscale:enabled"] = desktop.ToString(),
+            ["platforms:Android:features:tailscale:enabled"] = android.ToString(),
+            ["features:api:enabled"] = api.ToString()
         }).Build();
         using ServiceProvider provider = new ServiceCollection().AddLogging()
             .AddBoxForge(configuration).BuildServiceProvider();

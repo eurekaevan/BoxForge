@@ -376,16 +376,9 @@ public sealed class BoxForgeEngineTests
     [Test]
     public void PlanFailurePreservesStructuredDiagnosticsAndStopsPlatformGeneration()
     {
-        RecordingConfigBuilder? recording = null;
+        InvalidPlanConfigBuilder? recording = null;
         using ServiceProvider provider = CreateProvider(services =>
-        {
-            var profile = services.GetRequiredService<BoxForgeProfile>();
-            return recording = new RecordingConfigBuilder(new SingboxConfigBuilder(
-                new TailscaleEndpointBuilder(new BoxForgeProfile(BuiltInProfile.Default with
-                { Runtime = profile.Runtime with { Tailscale = new(false, true) } })),
-                services.GetRequiredService<DnsProfileBuilder>(), services.GetRequiredService<RouteProfileBuilder>(),
-                profile));
-        });
+            recording = new InvalidPlanConfigBuilder((SingboxConfigBuilder)CreateConfigBuilder(services)));
         var engine = provider.GetRequiredService<IBoxForgeEngine>();
         ConversionBundle? bundle = null;
         var error = Assert.ThrowsAsync<BoxForgePlatformConversionException>(async () =>
@@ -482,6 +475,22 @@ public sealed class BoxForgeEngineTests
             serviceProvider.GetRequiredService<DnsProfileBuilder>(),
             serviceProvider.GetRequiredService<RouteProfileBuilder>(),
             serviceProvider.GetRequiredService<BoxForgeProfile>());
+
+    internal sealed class InvalidPlanConfigBuilder(SingboxConfigBuilder inner) : ISingboxConfigBuilder
+    {
+        public List<TargetPlatform> Calls { get; } = [];
+
+        public SingboxConfig Build(SingboxBuildRequest request)
+        {
+            Calls.Add(request.Platform);
+            if (request.Platform == TargetPlatform.Linux)
+            {
+                var plan = inner.Plan(request) with { TailscaleEndpointEnabled = false };
+                plan.Validate();
+            }
+            return inner.Build(request);
+        }
+    }
 
     private sealed class RecordingConfigBuilder(
         ISingboxConfigBuilder inner,

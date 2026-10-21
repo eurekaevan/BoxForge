@@ -8,7 +8,7 @@ internal sealed class DnsProfileBuilder(BoxForgeProfile profile)
 {
     internal DnsPlan Plan(TargetPlatform platform, BoxForgeProfile? effectiveProfile = null)
     {
-        BoxForgeProfile settingsProfile = effectiveProfile ?? profile;
+        BoxForgeProfile settingsProfile = (effectiveProfile ?? profile).ForPlatform(platform);
         PlatformProfile settings = settingsProfile.GetPlatform(platform);
         DnsHttpsResolverPlan[] resolvers =
         [
@@ -31,11 +31,11 @@ internal sealed class DnsProfileBuilder(BoxForgeProfile profile)
         pools.Add(new DnsResolverPoolPlan("global", null,
             SingboxTags.ProxyCloudflareDns, SingboxTags.ProxyGoogleDns));
         var plan = new DnsPlan(settings.AddressFamily, settings.DnsSelectionMode,
-            resolvers, settingsProfile.Runtime.Tailscale.IsEnabled(settings),
+            resolvers, settingsProfile.Features.Tailscale.Enabled,
             [RuleSetTags.Ads], pools,
             SingboxTags.ProxyCloudflareDns,
-            settingsProfile.Policies.DnsTimeout, settingsProfile.Policies.DnsCacheCapacity,
-            settingsProfile.Policies.DnsOptimisticTimeout);
+            settingsProfile.Dns.Timeout, settingsProfile.Dns.CacheCapacity,
+            settingsProfile.Dns.OptimisticTimeout);
         plan.Validate();
         return plan;
     }

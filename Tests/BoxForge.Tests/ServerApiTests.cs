@@ -108,15 +108,14 @@ public sealed class ServerApiTests
                 platforms = new[] { "Linux", "Android" },
                 profile = new
                 {
-                    version = 1,
-                    runtime = new
+                    features = new
                     {
-                        singbox_api = new { enabled },
-                        tailscale = new { enabled, android_enabled = enabled }
+                        api = new { enabled },
+                        tailscale = new { enabled }
                     },
                     platforms = new Dictionary<string, object>
                     {
-                        ["Linux"] = new { multi_queue = enabled }
+                        ["Linux"] = new { route = new { multi_queue = enabled } }
                     }
                 }
             });
@@ -152,12 +151,14 @@ public sealed class ServerApiTests
     [TestCase("null")]
     [TestCase("[]")]
     [TestCase("true")]
-    [TestCase("{}")]
-    [TestCase("{\"version\":1,\"version\":1}")]
-    [TestCase("{\"version\":2}")]
-    [TestCase("{\"version\":1,\"runtime\":{\"singbox_api\":{\"enabled\":\"secret-profile-value\"}}}")]
-    [TestCase("{\"version\":1,\"platforms\":{\"Linux\":{\"multi_queue\":\"secret-profile-value\"}}}")]
-    [TestCase("{\"version\":1,\"unknown-secret-profile-value\":true}")]
+    [TestCase("{\"features\":{},\"features\":{}}")]
+    [TestCase("{\"version\":1}")]
+    [TestCase("{\"features\":{\"api\":{\"enabled\":\"secret-profile-value\"}}}")]
+    [TestCase("{\"platforms\":{\"Linux\":{\"route\":{\"multi_queue\":\"secret-profile-value\"}}}}")]
+    [TestCase("{\"unknown-secret-profile-value\":true}")]
+    [TestCase("{\"platforms\":{\"Windows\":{\"features\":{\"api\":{\"enabled\":\"secret-profile-value\"}}}}}")]
+    [TestCase("{\"platforms\":{\"Windows\":{\"route\":{\"sniff_timeout\":[]}}}}")]
+    [TestCase("{\"platforms\":{\"Windows\":{\"features\":null}}}")]
     public async Task RejectsInvalidProfileWithoutEchoingValues(string profileJson)
     {
         using HttpClient client = factory.CreateClient();
@@ -174,10 +175,10 @@ public sealed class ServerApiTests
         Assert.That(await response.Content.ReadAsStringAsync(), Does.Not.Contain("secret-profile-value"));
     }
 
-    [TestCase("{\"version\":1,\"secret-profile-value-\\uD800\":true}")]
-    [TestCase("{\"version\":1,\"secret-profile-value-\\uDC00\":true}")]
-    [TestCase("{\"version\":1,\"policies\":{\"url_test_url\":\"secret-profile-value-\\uD800\"}}")]
-    [TestCase("{\"version\":1,\"policies\":{\"url_test_url\":\"secret-profile-value-\\uDC00\"}}")]
+    [TestCase("{\"secret-profile-value-\\uD800\":true}")]
+    [TestCase("{\"secret-profile-value-\\uDC00\":true}")]
+    [TestCase("{\"tuning\":{\"url_test_url\":\"secret-profile-value-\\uD800\"}}")]
+    [TestCase("{\"tuning\":{\"url_test_url\":\"secret-profile-value-\\uDC00\"}}")]
     public async Task RejectsUnpairedSurrogatesInProfileWithoutInternalErrors(string profileJson)
     {
         using HttpClient client = factory.CreateClient();
@@ -232,7 +233,7 @@ public sealed class ServerApiTests
             platforms = new[] { "Linux" }
         });
         using var content = new StringContent(
-            body[..^1] + ",\"profile\":{\"version\":1},\"Profile\":{\"version\":1}}",
+            body[..^1] + ",\"profile\":{},\"Profile\":{}}",
             Encoding.UTF8, "application/json");
         using HttpResponseMessage response = await client.PostAsync("/api/v1/convert", content);
 
@@ -318,18 +319,11 @@ public sealed class ServerApiTests
     {
         string directory = Directory.CreateTempSubdirectory("boxforge-server-profile-").FullName;
         string profile = Path.Combine(directory, "profile.json");
-        await File.WriteAllTextAsync(profile,
-            """
-            {"version":1,"regions":[{"id":"tw","display_name":"🇹🇼 TW","pattern":"TW[0-9]+"}],
-             "services":[{"id":"ai","name":"AI Taiwan","default_region":"tw"},
-                         {"id":"custom","name":"Custom Games","rule_sets":["games"],"precedes_domestic_routes":true}],
-             "rule_sets":[{"tag":"ai","url":"https://rules.example.net/{tag}.srs","update_interval":"12h"}],
-             "resolvers":[{"id":"alidns","server":"203.0.113.53","server_name":"dns.example.net"}]}
-            """);
+        await File.WriteAllTextAsync(profile, ProfilePlannerTests.TaiwanProfileJson());
         if (invalidConfiguration == "profile")
         {
             await File.WriteAllTextAsync(profile,
-                """{"version":1,"policies":{"dns_timeout":"invalid"}}""");
+                """{"dns":{"timeout":"invalid"}}""");
         }
         // Keep environment changes in a child process; they must not race the in-process API fixtures.
         var startInfo = new ProcessStartInfo("dotnet")
@@ -354,9 +348,9 @@ public sealed class ServerApiTests
             }
         }
 
-        startInfo.Environment["BOXFORGE_Tailscale__Enabled"] = tailscaleEnabled.ToString();
-        startInfo.Environment["BOXFORGE_Tailscale__AndroidEnabled"] = tailscaleEnabled.ToString();
-        startInfo.Environment["BOXFORGE_SingboxApi__Enabled"] = (!tailscaleEnabled).ToString();
+        startInfo.Environment["BOXFORGE_features__tailscale__enabled"] = tailscaleEnabled.ToString();
+        startInfo.Environment["BOXFORGE_platforms__Android__features__tailscale__enabled"] = tailscaleEnabled.ToString();
+        startInfo.Environment["BOXFORGE_features__api__enabled"] = (!tailscaleEnabled).ToString();
         startInfo.Environment["BOXFORGE_Profile"] = profile;
         if (tailscaleEnabled)
         {
@@ -366,9 +360,9 @@ public sealed class ServerApiTests
             startInfo.ArgumentList.Add(profile);
         }
         if (invalidConfiguration == "tailscale")
-            startInfo.Environment["BOXFORGE_Tailscale__Enabled"] = "invalid";
+            startInfo.Environment["BOXFORGE_features__tailscale__enabled"] = "invalid";
         if (invalidConfiguration == "singbox_api")
-            startInfo.Environment["BOXFORGE_SingboxApi__Enabled"] = "invalid";
+            startInfo.Environment["BOXFORGE_features__api__enabled"] = "invalid";
         startInfo.Environment["Logging__LogLevel__Default"] = "Information";
         startInfo.Environment["Logging__LogLevel__Microsoft.Hosting.Lifetime"] = "Information";
         using var process = Process.Start(startInfo)!;
@@ -386,9 +380,9 @@ public sealed class ServerApiTests
                 string errors = await errorTask;
                 string expectedDiagnostic = invalidConfiguration switch
                 {
-                    "profile" => "dns_timeout",
-                    "tailscale" => "Tailscale:Enabled",
-                    _ => "SingboxApi:Enabled"
+                    "profile" => "dns.timeout",
+                    "tailscale" => "$.features.tailscale.enabled",
+                    _ => "$.features.api.enabled"
                 };
                 Assert.Multiple(() =>
                 {
@@ -749,11 +743,10 @@ public sealed class ServerApiTests
             services.AddSingleton<ISingboxConfigBuilder>(provider =>
             {
                 var profile = provider.GetRequiredService<BoxForgeProfile>();
-                return new SingboxConfigBuilder(
-                    new TailscaleEndpointBuilder(new BoxForgeProfile(BuiltInProfile.Default with
-                    { Runtime = profile.Runtime with { Tailscale = new(false, true) } })),
+                return new BoxForgeEngineTests.InvalidPlanConfigBuilder(new SingboxConfigBuilder(
+                    provider.GetRequiredService<TailscaleEndpointBuilder>(),
                     provider.GetRequiredService<DnsProfileBuilder>(), provider.GetRequiredService<RouteProfileBuilder>(),
-                    profile);
+                    profile));
             });
         }));
         using HttpClient client = failingFactory.CreateClient();

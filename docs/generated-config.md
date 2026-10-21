@@ -16,10 +16,10 @@
 ## 平台差异
 
 平台默认值来自内嵌的 `Configuration/default-profile.json`，加载为不可变
-`BoxForgeProfile` 中的各平台 `PlatformProfile`。CLI 的 `--profile`、
+`BoxForgeProfile` 中的各平台有效配置。CLI 的 `--profile`、
 `BOXFORGE_Profile` 和 HTTP 请求内联 profile 均可覆盖平台参数，具体优先级见配置参考。
 用户显式提供的节点参数优先于平台调优默认值，Tailscale 启用状态仍由
-`profile.runtime.tailscale` 的桌面与 Android 独立开关控制；地址族使用有效 profile 的平台值。
+`features.tailscale.enabled` 及平台层覆盖控制；地址族使用有效 profile 的平台值。
 DNS 顺序回退的首选 `2s` 预算属于算法常量，不是 Android 的全局 DNS 超时。
 
 每个平台都只生成一个 TUN inbound，不再提供本地 SOCKS/HTTP mixed 入口。
@@ -101,7 +101,7 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
 - Clash YAML 中的重复键会在解析阶段拒绝，不会以“后值覆盖前值”
   的方式静默改变节点字段。
 - 每种已支持节点协议先检查自己声明的 source schema。未支持或无法分类的
-  显式连接字段在 strict 生成中报错；non-strict 转换会跳过整个节点并告警。
+  显式连接字段使整次转换失败，不返回部分结果。
   已知的 UI 元数据和确认无连接作用的值会被明确列为忽略项。
 - 出站模型不携带 BoxForge 调优默认值。正式生成时仅对缺失字段填入
   `connect_timeout: 5s`、Linux/Windows TCP keepalive `1m`/`30s`，
@@ -157,7 +157,9 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
   `ipv4_only` 解析，以免代理 DNS 成为冷启动依赖。
 - 规则集来源与内部 tag 的映射如下；代码中的 DNS/route 引用只使用内部 tag，
   不依赖上游文件名。八个 tag 均唯一声明，默认按 `1d` 更新；可通过
-  [profile 按 tag 修改来源和间隔](configuration.md#rule-set-来源-profile)，批量来源的单成员覆盖会拆组。
+  [profile 显式数组操作](configuration.md#数组操作)替换完整来源实体，不自动拆分批量来源。
+  URL 模板展开与更新时长归一化仅用于目标发射；profile 快照保留原始配置值，
+  完整值叠加和 `remove` 按原始 URL、时长文本匹配，不按生成后的值匹配。
 
   | 来源 | 内部 tag → 文件名 | URL 基础路径 |
   | --- | --- | --- |
@@ -264,7 +266,7 @@ origin 被限制为同端口的 `127.0.0.1` 与 `localhost`，
   没有节点则选择 `DIRECT`。
 - AI、Google、Spotify 和 Microsoft 服务组在美国地区组存在时默认选择它；
   Games 在香港地区组存在时默认选择它。偏好地区仅有一个 leaf 时直接选择该节点，
-  零个 leaf 才回退主代理组；偏好定义仅来自 `profile.Services`。
+  零个 leaf 才回退主代理组；偏好定义仅来自 `route.services`。
   Service selector 不直接引用地区 AUTO，而由地区 selector 默认到 AUTO。
   主组仍保持上述“已生成地区组优先”的默认规则：单个 US 与多个 JP 并存时，
   主组默认 JP，偏好 US 的服务默认 US leaf；不新增单个 US 改写主组的策略。

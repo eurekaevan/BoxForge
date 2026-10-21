@@ -18,13 +18,15 @@ internal sealed class SingboxConfigBuilder(
 {
     internal ConfigurationPlan Plan(SingboxBuildRequest request)
     {
-        BoxForgeProfile settings = request.Profile ?? profile;
+        BoxForgeProfile settings = (request.Profile ?? profile).ForPlatform(request.Platform);
         PlatformProfile platform = settings.GetPlatform(request.Platform);
+        foreach (string name in request.Nodes.Names)
+            if (settings.IsReservedTag(name)) throw new BoxForge.Exceptions.NodeParseException($"节点名称 '{name}' 与 BoxForge 保留 tag 冲突");
         var groups = ProfilePlanner.PlanGroups(request.Nodes, settings, platform.UrlTestInterval);
-        var dns = dnsProfileBuilder.Plan(request.Platform, request.Profile);
-        var route = routeProfileBuilder.Plan(request.Platform, request.Profile);
-        var endpoint = tailscaleEndpointBuilder.Plan(request.Platform, request.Profile);
-        bool apiEnabled = settings.Runtime.SingboxApi.Enabled;
+        var dns = dnsProfileBuilder.Plan(request.Platform, settings);
+        var route = routeProfileBuilder.Plan(request.Platform, settings);
+        var endpoint = tailscaleEndpointBuilder.Plan(request.Platform, settings);
+        bool apiEnabled = settings.Features.Api.Enabled;
         string ruleSetDetour = groups.Probes.Count > 0
             ? groups.Probes[0].Name
             : request.Nodes.Names.Count > 0

@@ -20,7 +20,7 @@ public sealed class ProfilePlannerTests
     public void EmptySniffExclusionsKeepAnUnrestrictedTcpSniffCondition()
     {
         using var source = new MemoryStream(Encoding.UTF8.GetBytes("""
-            {"version":1,"policies":{"sniff_excluded_ports":[]}}
+            {"route":{"sniff_excluded_ports":{"replace":[]}}}
             """));
         var profile = BoxForgeProfile.Load(source);
         var route = SingboxRouteEmitter.Emit(new RouteProfileBuilder(profile).Plan(TargetPlatform.Linux));
@@ -36,14 +36,14 @@ public sealed class ProfilePlannerTests
     }
 
     [Test]
-    public void ProfilePoliciesReachGroupsDnsRouteAndPlatformOutputs()
+    public void ProfileSectionsReachGroupsDnsRouteAndPlatformOutputs()
     {
         using var source = new MemoryStream(Encoding.UTF8.GetBytes("""
-            {"version":1,
-             "policies":{"main_default_region":"jp","sniff_timeout":"450ms","sniff_excluded_ports":[25,465],
-                         "url_test_url":"https://probe.example.com/check","url_test_tolerance":80,"url_test_idle_timeout":"45m",
-                         "dns_timeout":"7s","dns_cache_capacity":8192,"dns_optimistic_timeout":"3h"},
-             "platforms":{"Linux":{"connect_timeout":"9s","tun_addresses":["172.20.0.1/30","fd01::1/126"]}}}
+            {
+             "route":{"main_default_region":"jp","sniff_timeout":"450ms","sniff_excluded_ports":{"replace":[25,465]}},
+             "tuning":{"url_test_url":"https://probe.example.com/check","url_test_tolerance":80,"url_test_idle_timeout":"45m"},
+             "dns":{"timeout":"7s","cache_capacity":8192,"optimistic_timeout":"3h"},
+             "platforms":{"Linux":{"tuning":{"connect_timeout":"9s"},"route":{"tun_addresses":{"replace":["172.20.0.1/30","fd01::1/126"]}}}}}
             """));
         var profile = BoxForgeProfile.Load(source);
         var nodes = CreateCatalog("美国 01", "美国 02", "日本 01", "日本 02");
@@ -128,7 +128,7 @@ public sealed class ProfilePlannerTests
             CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo(culture);
             using var source = new MemoryStream(Encoding.UTF8.GetBytes(ReadDefaultProfile()));
             var profile = BuiltInProfile.Load(source);
-            var definition = profile.Regions.Single(region => region.Id == "sg");
+            var definition = profile.Route.Regions.Single(region => region.Id == "sg");
             // Recreate the production pattern under this culture, regardless of static initialization order.
             var pattern = new System.Text.RegularExpressions.Regex(definition.Pattern,
                 BoxForgeProfile.Default.Regions.Single(region => region.Id == "sg").Pattern.Options);
@@ -151,16 +151,19 @@ public sealed class ProfilePlannerTests
         var root = JsonNode.Parse(ReadDefaultProfile())!;
         JsonNode target = level switch
         {
-            "region" => root["regions"]![0]!,
-            "service" => root["services"]![0]!,
+            "region" => root["route"]!["regions"]![0]!,
+            "service" => root["route"]!["services"]![0]!,
             "platform" => root["platforms"]!["Android"]!,
-            "rule_set" => root["rule_sets"]![0]!,
-            "resolver" => root["resolvers"]![0]!,
+            "rule_set" => root["route"]!["rule_sets"]![0]!,
+            "resolver" => root["dns"]!["resolvers"]![0]!,
             _ => root
         };
         target["typo"] = true;
         using var source = new MemoryStream(Encoding.UTF8.GetBytes(root.ToJsonString()));
-        Assert.Throws<JsonException>(() => BuiltInProfile.Load(source));
+        if (level == "platform")
+            Assert.Throws<FormatException>(() => new BoxForgeProfile(BuiltInProfile.Load(source)));
+        else
+            Assert.Throws<JsonException>(() => BuiltInProfile.Load(source));
     }
 
     [TestCase("duplicate")]
@@ -175,20 +178,54 @@ public sealed class ProfilePlannerTests
         var root = JsonNode.Parse(ReadDefaultProfile())!;
         switch (fault)
         {
-            case "version": root["version"] = 2; break;
+            case "version": root["version"] = 1; break;
             case "missing_platform": root["platforms"]!.AsObject().Remove("Android"); break;
-            case "missing_platform_field": root["platforms"]!["Android"]!.AsObject().Remove("dns_selection_mode"); break;
-            case "unknown_enum": root["platforms"]!["Android"]!["dns_selection_mode"] = "Unknown"; break;
-            case "numeric_enum": root["platforms"]!["Android"]!["dns_selection_mode"] = 123; break;
+            case "missing_platform_field": root["dns"]!.AsObject().Remove("selection_mode"); break;
+            case "unknown_enum": root["dns"]!["selection_mode"] = "Unknown"; break;
+            case "numeric_enum": root["dns"]!["selection_mode"] = 123; break;
         }
         string json = fault switch
         {
-            "duplicate" => ReadDefaultProfile().Replace("\"version\": 1", "\"version\": 1, \"version\": 1", StringComparison.Ordinal),
+            "duplicate" => ReadDefaultProfile().Replace("\"privacy\": {}", "\"privacy\": {}, \"privacy\": {}", StringComparison.Ordinal),
             "null" => "null",
             _ => root.ToJsonString()
         };
         using var source = new MemoryStream(Encoding.UTF8.GetBytes(json));
         Assert.Throws<JsonException>(() => BuiltInProfile.Load(source));
+    }
+
+    internal static string TaiwanProfileJson()
+    {
+        var defaults = JsonNode.Parse(BoxForgeProfile.Default.ToResolvedJson())!;
+        var route = defaults["route"]!;
+        var services = route["services"]!.DeepClone().AsArray();
+        var ai = services.Single(service => service!["id"]!.GetValue<string>() == "ai")!;
+        ai["name"] = "AI Taiwan";
+        ai["default_region"] = "tw";
+        services.Add(JsonNode.Parse("""{"id":"custom","name":"Custom Games","default_region":null,"rule_sets":["games"],"precedes_domestic_routes":true}"""));
+        var ruleSets = route["rule_sets"]!.DeepClone().AsArray();
+        foreach (var source in ruleSets)
+        {
+            var tags = source!["tags"]!.AsArray();
+            for (int index = tags.Count - 1; index >= 0; index--)
+                if (tags[index]!.GetValue<string>() == "ai") tags.RemoveAt(index);
+        }
+        for (int index = ruleSets.Count - 1; index >= 0; index--)
+            if (ruleSets[index]!["tags"]!.AsArray().Count == 0) ruleSets.RemoveAt(index);
+        ruleSets.Add(JsonNode.Parse("""{"tags":["ai"],"url":"https://rules.example.net/ai.srs","update_interval":"12h"}"""));
+        var resolvers = defaults["dns"]!["resolvers"]!.DeepClone().AsArray();
+        resolvers[0]!["server"] = "203.0.113.53";
+        resolvers[0]!["server_name"] = "dns.example.net";
+        return new JsonObject
+        {
+            ["route"] = new JsonObject
+            {
+                ["regions"] = new JsonObject { ["append"] = JsonNode.Parse("""[{"id":"tw","display_name":"🇹🇼 TW","pattern":"TW[0-9]+"}]""") },
+                ["services"] = new JsonObject { ["replace"] = services },
+                ["rule_sets"] = new JsonObject { ["replace"] = ruleSets }
+            },
+            ["dns"] = new JsonObject { ["resolvers"] = new JsonObject { ["replace"] = resolvers } }
+        }.ToJsonString();
     }
 
     private static string ReadDefaultProfile()

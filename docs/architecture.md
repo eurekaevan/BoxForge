@@ -44,39 +44,33 @@ BoxForge.Tests  ──→ BoxForge.Cli, BoxForge.Server, BoxForge.Core
 `BoxForge.Core/Configuration/default-profile.json` 作为程序集资源内嵌，保存现有地区
 匹配表达式、服务定义、运行时开关、全局策略、各平台参数及远端 rule-set URL 和更新间隔。
 默认数据由 `BoxForgeProfile` 加载并作为不可变实例注入；加载器拒绝
-未知字段、重复字段、不支持的版本及缺失的目标平台，不依赖运行目录中的文件。
+未知字段、重复字段及缺失的目标平台，不依赖运行目录中的文件。
 地区匹配保持原有生成式正则的文化无关大小写行为。
 
-地区、服务、rule-set 来源及 resolver 支持外部 JSON 覆盖（[地区](configuration.md#地区-profile)、
-[服务](configuration.md#服务-profile)、[来源](configuration.md#rule-set-来源-profile)、
-[resolver](configuration.md#resolver-profile)），ID 使用字符串。
-按内置默认值 → 文件 → 宿主环境配置 → 请求内联 profile 的顺序形成不可变
-`BoxForgeProfile`。宿主快照在启动时加载；请求内联对象与文件使用相同的合并和校验规则，
-生成独立的请求快照，不改变宿主或并发请求。CLI 的 resolved 命令直接序列化宿主最终快照。
-节点名称校验、selector、DNS 服务域名池、路由服务规则、rule-set 下载定义及 DoH
-端点使用该次转换的同一实例，避免不同容器或请求的覆盖互相影响。
-平台参数包含在该实例的 `Platforms` 中，通过实例方法 `GetPlatform` 查询；TUN、
-连接调优、DNS 模式、Tailscale 分类和 Taildrop 路径均使用该实例，不再读取静态平台默认值。
-构建器必须显式接收 profile，省略依赖不会回退到默认实例。
-文件与内联对象都要求 `version: 1`，共用对象键、标识唯一性和值校验。
-普通数组整体替换，地区/服务按 ID、来源按 tag、resolver 按固定 ID 的合并规则保留。
-只有明确可空的平台字段允许 `null`；其他字段显式 `null` 会被拒绝。
-保留 tag 由有效 profile 直接维护，与服务引用校验使用的规则集 tag 集合相互独立。
-地区正则有 250ms 单次匹配上限，超时导致转换
-失败，不返回部分结果。
-`runtime` 保存 Tailscale/API 开关，`policies` 保存主组默认地区、sniff、URL test 与 DNS
-参数，`platforms` 支持按平台局部覆盖，包含连接超时与 TUN 地址。现有环境变量开关
-作为宿主覆盖继续生效。路由阶段顺序、固定保留 tag 和 IPv6 守卫仍由代码约束；
-未提供覆盖时，Android 顺序回退与桌面并行竞速等既有输出保持不变。
-服务只能选择两个既有阶段，可引用内置或同一覆盖文件新增的规则集 tag；来源支持按
-现有 tag 覆盖 HTTPS URL 和正更新间隔，也支持追加远端 binary 规则集。新 tag 为
-1–32 位、以小写字母开头的小写字母数字连字符，必须提供 URL，更新间隔默认 `1d`；
-它们追加在原有来源之后，并按文件条目顺序排列。新 tag 受固定标签及有效地区、服务
-标签冲突检查约束，也纳入节点名称保留集合。单 tag 从批量来源中拆出时不影响其他
-成员，原有来源及拆分成员保持原顺序；悬空服务引用仍拒绝，不开放内嵌规则内容。
-resolver 只开放现有四个角色的规范 IPv4
-地址及 TLS DNS 名称，引导 CIDR 同步更新，主备和 detour 固定。平台字段可通过
-`platforms` 局部覆盖；本阶段没有隐私档位或 JSON Schema。
+profile 根分区为 `features`、`dns`、`route`、`tuning`、`privacy`；`platforms`
+是按 Android、Linux、Windows 选择的同结构稀疏层，不允许嵌套 `platforms`；根与平台项均不接受 `version` 字段。
+对每个目标先合并内置根值、文件根值、统一环境根值，再依来源顺序应用平台层；
+请求根值及请求自身的目标平台层最后应用。宿主快照启动时加载，请求快照彼此隔离。
+`profile show --resolved` 返回各平台完整五分区快照，根与平台项均无 `version` 字段，
+不作为可直接重新加载的差异覆盖文件。
+
+`features` 保存 Tailscale/API，`dns` 保存地址族、模式、超时、缓存和 resolver，
+`route` 保存地区、服务、规则集来源、sniff 与 TUN/转发策略，`tuning` 保存连接及探测参数。
+`privacy` 保留空对象，不引入开关。所有生成模块使用该次转换的有效目标配置，
+不会重新读取环境变量或回退到静态平台默认值。
+
+数组路径覆盖统一使用 `replace`、`append`、`remove`，固定按此顺序执行；
+删除按原始配置元素的完整 JSON 值深比较，找不到项会失败。没有按 ID/tag 隐式合并或批量来源自动拆组。
+规则源 URL 模板展开与更新时长归一化仅在目标发射时进行；profile 快照和后续叠加
+保留原始 URL、时长文本，`remove` 不使用规范化后的发射值。
+操作 payload 中完整实体的内部数组是普通数据，例如服务 `rule_sets`、来源 `tags`。
+地区、服务、来源及 resolver 的字段约束见[配置参考](configuration.md)，最终标签唯一性、
+必需来源及跨模块引用仍校验。地区正则具有 250ms 单次匹配上限，超时使请求失败。
+
+除引导文件路径的 `Profile` 外，`BOXFORGE_` 环境键必须映射真实配置路径；
+键名不区分大小写，`__` 分隔层级，标量与数组操作 JSON 都按目标类型严格校验。
+旧开关、未知键、重复键及不允许的 null 均拒绝。
+未提供覆盖时，默认生成策略不变；本阶段没有隐私档位或 JSON Schema。
 
 `Tests/BoxForge.Tests/Fixtures/default-profile-sha256.json` 记录迁移前实际 CLI 输出的
 SHA-256：5 份 YAML × 3 个平台 × 8 种桌面 Tailscale、Android Tailscale、API 开关
@@ -284,7 +278,7 @@ sing-box 运行时默认值。BoxForge 不保证逐字段原样复制；它保�
 
 `ProxyNodeParser` 在协议解释前按 `Schema` 逐项检查 `ClashObject.Properties`。
 五个协议的字段声明与解释钩子集中在各自的 `*Protocol` 中；`NodeCatalogBuilder` 仅编排
-严格转换或跳过错误节点，不重复协议选择和字段解释。已知但未支持的连接字段、尚未分类的字段、冲突的别名和无效的
+严格转换，不重复协议选择和字段解释。已知但未支持的连接字段、尚未分类的字段、冲突的别名和无效的
 显式值都会形成包含协议、节点名、字段名及原因的错误。schema 同时声明值形状，
 避免把列表或对象转换成字符串；嵌套 Reality 和 Shadowsocks 插件对象也逐项检查。
 嵌套声明可以附带使用条件；别名沿用同一嵌套 schema 和冲突检测。
@@ -292,16 +286,15 @@ VLESS/Trojan 只接受原生 TCP，旧传输选项作为不支持的来源语义
 `name`/`type` 等元数据和明确无连接作用的选项在 schema 中列明，
 不会用通配规则吞掉未知字段。
 
-引擎使用 strict conversion：任一不安全节点使整次转换失败，不返回部分配置。
-non-strict 调用则跳过整个节点并记录警告，包括缺少 `type`、未知协议、字段映射
-失败和保留 tag 冲突；不会删掉无法映射的字段后输出降级
-节点。后续协议工作应把字段从 `UnsupportedSemantic` 改为 `Mapped`，同时提供
+转换只有严格路径：缺少 `type`、未知协议、字段映射失败和保留 tag 冲突等任一
+无效节点使整次转换失败，不返回部分配置，不提供跳过节点并告警的入口。
+后续协议工作应把字段从 `UnsupportedSemantic` 改为 `Mapped`，同时提供
 映射与反例测试，并重新核对锁定来源与目标核心的实际行为。
 
 `OutboundTuningPolicy` 在协议解析之后、目标发射之前，在节点 IR 副本中填入
 缺失的 `connect_timeout`、桌面 TCP keepalive 和 Hysteria2 hop/BBR 值。
 这些字段在 outbound model 中默认是 `null`；模型本身不施加 BoxForge policy。
-连接超时来自平台 profile，路由 sniff 超时来自 `policies.sniff_timeout`，默认仍为
+连接超时来自平台 profile，路由 sniff 超时来自 `route.sniff_timeout`，默认仍为
 `300ms`。当前 YAML 显式
 HY2 hop/BBR 值优先于调优。显式固定间隔不会补入调优的随机上限；显式带宽
 启用时不会注入 BBR profile（显式 profile 仍保留，核心仅在 BBR 模式使用）。
@@ -324,10 +317,10 @@ HY2 hop/BBR 值优先于调优。显式固定间隔不会补入调优的随机�
 
 `ProfilePlanner` 的地区 inventory 记录实际 leaf membership，与地区 selector
 是否生成分离；服务的 `DefaultRegion` 对应 0/1/2+ leaf 时分别选择主组/leaf/
-地区 selector。主组优先使用 `policies.main_default_region` 对应的已生成地区组，
+地区 selector。主组优先使用 `route.main_default_region` 对应的已生成地区组，
 否则依次回退到首个地区组、首个 leaf 和 DIRECT；单个偏好地区 leaf 不改变该主组规则。
 
-地址族取自注入的 `BoxForgeProfile.GetPlatform`，构建请求不再另带地址族策略。
+地址族取自有效目标配置的 `dns.address_family`，构建请求不再另带地址族策略。
 默认三个平台仍是 Ipv4Only。DNS、route、控制面 resolver 与转换服务的
 `Validate(config, addressFamily)` 均使用同一实例中的策略，validator 不再次推导平台。IPv4-only 除解析
 策略和 IPv6 节点字面量外，还验证 early/post-resolve IPv6 reject guards 和首条

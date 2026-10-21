@@ -109,9 +109,8 @@ def verify(cli, supplied_core):
                 environment = {key: value for key, value in os.environ.items()
                                if not key.upper().startswith("BOXFORGE_")}
                 environment.update({
-                    "BOXFORGE_Tailscale__Enabled": str(tailscale),
-                    "BOXFORGE_Tailscale__AndroidEnabled": str(tailscale),
-                    "BOXFORGE_SingboxApi__Enabled": str(api),
+                    "BOXFORGE_features__tailscale__enabled": json.dumps(tailscale),
+                    "BOXFORGE_features__api__enabled": json.dumps(api),
                 })
                 subprocess.run([
                     "dotnet", str(cli), "generate", "--input-dir", str(fixtures),

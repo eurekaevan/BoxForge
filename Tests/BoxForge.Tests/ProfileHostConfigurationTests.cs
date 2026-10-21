@@ -1,4 +1,6 @@
+using System.Text.Json;
 using BoxForge.Configuration;
+using BoxForge.Models;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -7,143 +9,95 @@ namespace BoxForge.Tests;
 [TestFixture]
 public sealed class ProfileHostConfigurationTests
 {
-    [Test]
-    public void TailscaleIsEnabledByDefaultOnEveryPlatform()
+    [TestCase(TargetPlatform.Android)]
+    [TestCase(TargetPlatform.Linux)]
+    [TestCase(TargetPlatform.Windows)]
+    public void DefaultsEnableTailscaleAndDisableApiOnEveryPlatform(TargetPlatform platform)
     {
-        using ServiceProvider provider = CreateProvider(
-            new Dictionary<string, string?>());
-
-        var tailscale = provider.GetRequiredService<BoxForgeProfile>().Runtime.Tailscale;
-
+        using var provider = CreateProvider(new Dictionary<string, string?>());
+        var profile = provider.GetRequiredService<BoxForgeProfile>().ForPlatform(platform);
         Assert.Multiple(() =>
         {
-            Assert.That(tailscale.Enabled, Is.True);
-            Assert.That(tailscale.AndroidEnabled, Is.True);
+            Assert.That(profile.Features.Tailscale.Enabled, Is.True);
+            Assert.That(profile.Features.Api.Enabled, Is.False);
         });
     }
 
     [Test]
-    public void TailscaleCanBeDisabledForDesktopAndAndroidIndependently()
+    public void UnifiedKeysConfigureRootAndIndividualPlatforms()
     {
-        using ServiceProvider provider = CreateProvider(new Dictionary<string, string?>
+        using var provider = CreateProvider(new Dictionary<string, string?>
         {
-            ["Tailscale:Enabled"] = "false",
-            ["Tailscale:AndroidEnabled"] = "false"
+            ["features:tailscale:enabled"] = "false",
+            ["features:api:enabled"] = "true",
+            ["platforms:Android:features:tailscale:enabled"] = "true",
+            ["platforms:Linux:tuning:connect_timeout"] = "\"9s\""
         });
-
-        var tailscale = provider.GetRequiredService<BoxForgeProfile>().Runtime.Tailscale;
-
+        var profile = provider.GetRequiredService<BoxForgeProfile>();
         Assert.Multiple(() =>
         {
-            Assert.That(tailscale.Enabled, Is.False);
-            Assert.That(tailscale.AndroidEnabled, Is.False);
+            Assert.That(profile.ForPlatform(TargetPlatform.Linux).Features.Tailscale.Enabled, Is.False);
+            Assert.That(profile.ForPlatform(TargetPlatform.Windows).Features.Tailscale.Enabled, Is.False);
+            Assert.That(profile.ForPlatform(TargetPlatform.Android).Features.Tailscale.Enabled, Is.True);
+            Assert.That(profile.ForPlatform(TargetPlatform.Android).Features.Api.Enabled, Is.True);
+            Assert.That(profile.ForPlatform(TargetPlatform.Linux).Tuning.ConnectTimeout, Is.EqualTo("9s"));
+        });
+    }
+
+    [TestCase("9s")]
+    [TestCase("\"9s\"")]
+    public void HostValuesAcceptRawStringsAndJsonStringScalars(string timeout)
+    {
+        using var provider = CreateProvider(new Dictionary<string, string?> { ["tuning:connect_timeout"] = timeout });
+        Assert.That(provider.GetRequiredService<BoxForgeProfile>().ForPlatform(TargetPlatform.Linux).Tuning.ConnectTimeout,
+            Is.EqualTo("9s"));
+    }
+
+    [TestCase("features:api:enabled", "yes")]
+    [TestCase("features:tailscale:enabled", "null")]
+    [TestCase("features:tailscale:enabled", "\"true\"")]
+    [TestCase("dns:cache_capacity", "0")]
+    [TestCase("tuning:connect_timeout", "0s")]
+    [TestCase("route:typo", "true")]
+    [TestCase("platforms:MacOS:features:api:enabled", "true")]
+    [TestCase("platforms:Android:features:tailscale:android_enabled", "true")]
+    public void InvalidUnifiedSettingsFailDuringRegistration(string key, string value)
+    {
+        Assert.Throws<FormatException>(() =>
+        {
+            using var provider = CreateProvider(new Dictionary<string, string?> { [key] = value });
+        });
+    }
+
+    [TestCase("Tailscale:Enabled")]
+    [TestCase("Tailscale:AndroidEnabled")]
+    [TestCase("TailscaleEnabled")]
+    [TestCase("TailscaleAndroidEnabled")]
+    [TestCase("SingboxApi:Enabled")]
+    [TestCase("runtime:tailscale:enabled")]
+    [TestCase("policies:sniff_timeout")]
+    public void LegacyConfigurationKeysAreRejected(string key)
+    {
+        Assert.Throws<FormatException>(() =>
+        {
+            using var provider = CreateProvider(new Dictionary<string, string?> { [key] = "false" });
         });
     }
 
     [Test]
-    public void SingboxApiIsDisabledByDefault()
+    public void ArrayOperationsCanBeProvidedAsJsonHostValues()
     {
-        using ServiceProvider provider = CreateProvider(
-            new Dictionary<string, string?>());
-
-        var options = provider.GetRequiredService<BoxForgeProfile>().Runtime.SingboxApi;
-
-        Assert.That(options.Enabled, Is.False);
-    }
-
-    [Test]
-    public void SingboxApiCanBeEnabled()
-    {
-        using ServiceProvider provider = CreateProvider(new Dictionary<string, string?>
+        using var provider = CreateProvider(new Dictionary<string, string?>
         {
-            ["SingboxApi:Enabled"] = "true"
+            ["route:sniff_excluded_ports"] = "{\"replace\":[25,465]}"
         });
-
-        var options = provider.GetRequiredService<BoxForgeProfile>().Runtime.SingboxApi;
-
-        Assert.That(options.Enabled, Is.True);
+        var profile = provider.GetRequiredService<BoxForgeProfile>().ForPlatform(TargetPlatform.Linux);
+        using var json = JsonDocument.Parse(profile.ToResolvedJson());
+        Assert.That(json.RootElement.GetProperty("route").GetProperty("sniff_excluded_ports").EnumerateArray()
+            .Select(port => port.GetInt32()), Is.EqualTo(new[] { 25, 465 }));
     }
 
-    [Test]
-    public void InvalidSingboxApiBooleanFailsDuringCoreRegistration()
-    {
-        Assert.That(() =>
-        {
-            using ServiceProvider provider = CreateProvider(new Dictionary<string, string?>
-            {
-                ["SingboxApi:Enabled"] = "yes"
-            });
-        }, Throws.TypeOf<FormatException>()
-            .With.Message.EqualTo("配置项 'SingboxApi:Enabled' 必须是 true 或 false。"));
-    }
-
-    [Test]
-    public void NestedEnabledKeyTakesPriorityOverLegacyKey()
-    {
-        using ServiceProvider provider = CreateProvider(new Dictionary<string, string?>
-        {
-            ["Tailscale:Enabled"] = "true",
-            ["TailscaleEnabled"] = "false"
-        });
-
-        var tailscale = provider.GetRequiredService<BoxForgeProfile>().Runtime.Tailscale;
-
-        Assert.That(tailscale.Enabled, Is.True);
-    }
-
-    [Test]
-    public void LegacyEnabledKeyRemainsSupported()
-    {
-        using ServiceProvider provider = CreateProvider(new Dictionary<string, string?>
-        {
-            ["TailscaleEnabled"] = "true"
-        });
-
-        var tailscale = provider.GetRequiredService<BoxForgeProfile>().Runtime.Tailscale;
-
-        Assert.That(tailscale.Enabled, Is.True);
-    }
-
-    [Test]
-    public void AndroidEnabledUsesItsOwnPlatformSetting()
-    {
-        using ServiceProvider provider = CreateProvider(new Dictionary<string, string?>
-        {
-            ["Tailscale:Enabled"] = "true",
-            ["Tailscale:AndroidEnabled"] = "false",
-            ["TailscaleAndroidEnabled"] = "true"
-        });
-
-        var tailscale = provider.GetRequiredService<BoxForgeProfile>().Runtime.Tailscale;
-
-        Assert.Multiple(() =>
-        {
-            Assert.That(tailscale.Enabled, Is.True);
-            Assert.That(tailscale.AndroidEnabled, Is.False);
-        });
-    }
-
-    [Test]
-    public void InvalidBooleanValueFailsDuringCoreRegistration()
-    {
-        Assert.That(() =>
-        {
-            using ServiceProvider provider = CreateProvider(new Dictionary<string, string?>
-            {
-                ["Tailscale:Enabled"] = "yes"
-            });
-        }, Throws.TypeOf<FormatException>()
-            .With.Message.EqualTo("配置项 'Tailscale:Enabled' 必须是 true 或 false。"));
-    }
-
-    private static ServiceProvider CreateProvider(
-        IDictionary<string, string?> values)
-    {
-        IConfiguration configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(values)
-            .Build();
-        var services = new ServiceCollection();
-        services.AddBoxForgeCore(configuration);
-        return services.BuildServiceProvider();
-    }
+    private static ServiceProvider CreateProvider(IDictionary<string, string?> values) =>
+        new ServiceCollection().AddBoxForgeCore(new ConfigurationBuilder().AddInMemoryCollection(values).Build())
+            .BuildServiceProvider();
 }

@@ -8,9 +8,9 @@ internal sealed class TailscaleEndpointBuilder(BoxForgeProfile profile)
 {
     internal (bool Enabled, string TaildropDirectory) Plan(TargetPlatform platform, BoxForgeProfile? effectiveProfile = null)
     {
-        BoxForgeProfile selected = effectiveProfile ?? profile;
+        BoxForgeProfile selected = (effectiveProfile ?? profile).ForPlatform(platform);
         PlatformProfile settings = selected.GetPlatform(platform);
-        return (selected.Runtime.Tailscale.IsEnabled(settings), settings.TaildropDirectory);
+        return (selected.Features.Tailscale.Enabled, settings.TaildropDirectory);
     }
 
     internal static List<Endpoint> Emit(string taildropDirectory, bool enabled)

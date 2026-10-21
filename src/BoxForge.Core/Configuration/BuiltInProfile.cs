@@ -6,14 +6,12 @@ using BoxForge.Models;
 namespace BoxForge.Configuration;
 
 internal sealed record BuiltInProfile(
-    int Version,
-    ImmutableArray<BuiltInProfile.Region> Regions,
-    ImmutableArray<ServiceDefinition> Services,
-    ImmutableDictionary<TargetPlatform, PlatformProfile> Platforms,
-    ImmutableArray<BuiltInProfile.RuleSetSource> RuleSets,
-    ImmutableArray<BuiltInProfile.Resolver> Resolvers,
-    RuntimeProfile Runtime,
-    ProfilePolicies Policies)
+    ImmutableDictionary<TargetPlatform, JsonElement> Platforms,
+    FeaturesProfile Features,
+    DnsProfile Dns,
+    RouteProfile Route,
+    TuningProfile Tuning,
+    PrivacyProfile Privacy)
 {
     internal static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -31,8 +29,6 @@ internal sealed record BuiltInProfile(
     {
         var profile = JsonSerializer.Deserialize<BuiltInProfile>(source, JsonOptions)
             ?? throw new JsonException("内置 profile 不能为空。");
-        if (profile.Version != 1)
-            throw new JsonException($"不支持的内置 profile 版本：{profile.Version}。");
         if (!profile.Platforms.Keys.ToHashSet().SetEquals(Enum.GetValues<TargetPlatform>()))
             throw new JsonException("内置 profile 必须包含所有目标平台。");
         return profile;

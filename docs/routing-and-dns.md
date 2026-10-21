@@ -48,11 +48,11 @@ IPv6 早期拒绝 → 广告拒绝 → IPv6 兜底拒绝 → 代理服务 → �
 
 ## DNS 分类与控制面解析
 
-有效 `BoxForgeProfile` 中各平台的 `PlatformProfile.AddressFamily` 决定地址族；
+每个目标最终配置中的 `dns.address_family` 决定地址族；
 内置 JSON 为 Linux、Windows、Android 均设置 `Ipv4Only`。此模式生成
 `dns.strategy = ipv4_only`、最前面的全局 AAAA 空 `NOERROR`，以及 route 的早期和
 后置 IPv6 reject，后者也覆盖字面量 IPv6 和不经 sing-box DNS 的连接。
-通过 `platforms.<平台>.address_family` 可覆盖为 `DualStack`，此时不生成上述
+通过 `platforms.<平台>.dns.address_family` 可覆盖为 `DualStack`，此时不生成上述
 AAAA 阻断和 IPv6 reject，DNS 与控制面解析策略也随之切换；内置默认值没有启用双栈。
 
 控制平面域名由 `route.default_domain_resolver` 解析：直连
@@ -69,7 +69,7 @@ client DNS 依次分类：
 2. 启用 Tailscale 时，`preferred_by` 命中的 MagicDNS 和 split DNS 交给
    `dns-tailscale`，禁用 optimistic 缓存。
 3. `ads` 返回 `NXDOMAIN`。
-4. 从有效 `BoxForgeProfile.Services` 中所有服务导出 rule-set；默认 AI、Google、
+4. 从有效 profile 的 `route.services` 中所有服务导出 rule-set；默认 AI、Google、
    Spotify、Games 和 Microsoft 进入 GLOBAL pool，优先于 `cn`。
    与服务同时命中 `cn` 的域名也使用代理 DNS，保持与普通业务路由的服务优先级一致。
 5. `cn` 进入 DOMESTIC pool。
@@ -103,7 +103,7 @@ IPv4 地址（`ip_cidr: 0.0.0.0/0`）并启用 `race: true`。最快含地址的
 竞速，不要求响应含 IP；`Ipv4Only` 下 AAAA 在进入池前已返回空答。
 
 非 A 查询的 NXDOMAIN `respond` 同样不启用 race，等待未决的 NOERROR 竞速。
-所有查询的全局超时来自 `policies.dns_timeout`，默认 `5s`：快负答或空答与
+所有查询的全局超时来自 `dns.timeout`，默认 `5s`：快负答或空答与
 另一侧不响应的组合仍可能等满该预算。这是保留有效结果优先的代价。
 
 每个 pool 最后都有同 scope 的 `predefined SERVFAIL`。双方传输失败、超时、
@@ -111,8 +111,8 @@ SERVFAIL 或 REFUSED 时在本 pool 终止，priority 和 CN 不会穿透到后�
 `dns.final = dns-proxy-cloudflare` 仅为异常兜底，正常 client 查询由各自 pool
 结束。
 
-正常 TTL 缓存和 reverse mapping 保留；缓存容量来自 `policies.dns_cache_capacity`
-（默认 4096），optimistic 超时来自 `policies.dns_optimistic_timeout`（默认 `6h`）。
+正常 TTL 缓存和 reverse mapping 保留；缓存容量来自 `dns.cache_capacity`
+（默认 4096），optimistic 超时来自 `dns.optimistic_timeout`（默认 `6h`）。
 并行模式地址池的 A evaluate 单独设置
 `disable_optimistic_cache: true`，只使用正常 TTL 内的缓存，避免过期空答或旧
 地址抢赢新查询；它同时牺牲了 A 查询过期正向缓存的立即返回能力。其他查询

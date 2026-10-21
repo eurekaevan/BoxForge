@@ -1,14 +1,9 @@
 using System.Collections.Immutable;
-using System.Text.Json.Serialization;
 
 namespace BoxForge.Configuration;
 
 public sealed record PlatformProfile
 {
-    [JsonConstructor]
-    private PlatformProfile() { }
-
-    public required bool IsMobile { get; init; }
     public required ImmutableArray<string> TunAddresses { get; init; }
     public required AddressFamilyPolicy AddressFamily { get; init; }
     public required bool? StrictRoute { get; init; }

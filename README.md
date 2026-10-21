@@ -150,32 +150,30 @@ singboxConfigs/
 
 ## 运行时配置
 
-统一 profile 支持运行时开关、全局策略、平台参数，以及地区、服务、rule-set 来源和
-resolver。CLI 使用 `generate --profile profile.json`，Server 可在启动时加载同一文件，
-HTTP 请求也可提交内联 `profile`。优先级从低到高为：内置默认值 → profile 文件 →
-宿主环境配置 → 请求内联 profile；请求覆盖仅作用于本次转换。
-`profile show --resolved --profile profile.json` 输出最终有效快照。格式与合并规则见
+profile 按 `features`、`dns`、`route`、`tuning`、`privacy` 分区，
+`platforms` 为各平台的同结构稀疏覆盖。CLI 使用 `generate --profile profile.json`，
+Server 可在启动时加载同一文件，HTTP 请求也可提交内联 `profile`。
+对每个目标先合并内置、文件、统一环境的根值，再依来源顺序应用平台层，
+最后应用请求根值及请求自身的平台层；请求只影响本次转换。
+数组覆盖必须显式使用 `replace`、`append`、`remove` 操作，不按 ID 隐式合并。
+旧环境开关被拒绝。格式与合并规则见
 [统一 profile](docs/configuration.md#统一-profile)，请求格式见 [HTTP API](docs/http-api.md)。
+`profile show --resolved` 输出各平台完整快照，供检查和追溯，不能直接作为差异覆盖重载。
 
-以下 `BOXFORGE_` 环境开关同时适用于 CLI 和 HTTP Server；它们控制生成的
-sing-box 配置，不改变 BoxForge Server 自身的监听地址。
-
-Tailscale endpoint 默认在三个目标平台生成，并启用 `on_demand`。如需关闭
-Linux 和 Windows 的 Tailscale：
+统一 `BOXFORGE_` 环境键与实际 profile 路径对应，`__` 分隔层级，键名不区分大小写。
+它们控制生成的 sing-box 配置，不改变 BoxForge Server 自身的监听地址。例如关闭
+目标平台的 Tailscale（默认三个平台均启用 `on_demand`）：
 
 ```bash
-BOXFORGE_Tailscale__Enabled=false \
+BOXFORGE_features__tailscale__enabled=false \
 dotnet run --project src/BoxForge.Cli -- generate --platform Linux
 ```
 
-Android 使用独立开关；如需关闭，设置
-`BOXFORGE_Tailscale__AndroidEnabled=false`。两个开关互不继承，便于只在指定
-平台关闭 endpoint。
-
-sing-box API 默认关闭。需要在生成配置中加入本机 API 与 Dashboard 时设置：
+仅对 Android 覆盖时使用 `BOXFORGE_platforms__Android__features__tailscale__enabled`；
+不再提供独立的遗留 Android 开关键。sing-box API 默认关闭，启用示例：
 
 ```bash
-BOXFORGE_SingboxApi__Enabled=true \
+BOXFORGE_features__api__enabled=true \
 dotnet run --project src/BoxForge.Cli -- generate
 ```
 

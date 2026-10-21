@@ -19,7 +19,7 @@ internal sealed class ConversionService(
     IConfigSerializer configSerializer,
     BoxForgeProfile profile)
 {
-    internal BoxForgeProfile ResolveProfile(JsonObject overlay) => profile.ApplyOverrides(overlay);
+    internal BoxForgeProfile ResolveProfile(TargetPlatform platform, JsonObject? overlay = null) => profile.ForPlatform(platform, overlay);
 
     public PreparedConversion Prepare(
         string yamlContent,

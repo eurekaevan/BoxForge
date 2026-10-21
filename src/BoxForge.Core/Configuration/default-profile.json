@@ -1,196 +1,180 @@
 {
-  "version": 1,
-  "regions": [
-    {
-      "id": "us",
-      "display_name": "🇺🇸 US",
-      "pattern": "美国|america|洛杉矶|硅谷|🇺🇸|(?<![a-zA-Z])usa?\\d*(?![a-zA-Z])"
-    },
-    {
-      "id": "jp",
-      "display_name": "🇯🇵 JP",
-      "pattern": "日本|japan|tokyo|东京|大阪|🇯🇵|(?<![a-zA-Z])jpn?\\d*(?![a-zA-Z])"
-    },
-    {
-      "id": "hk",
-      "display_name": "🇭🇰 HK",
-      "pattern": "香港|hong\\s?kong|深港|🇭🇰|(?<![a-zA-Z])hkg?\\d*(?![a-zA-Z])"
-    },
-    {
-      "id": "sg",
-      "display_name": "🇸🇬 SG",
-      "pattern": "狮城|新加坡|singapore|🇸🇬|(?<![a-zA-Z])sgp?\\d*(?![a-zA-Z])"
-    }
-  ],
-  "services": [
-    {
-      "id": "ai",
-      "name": "🤖 AI",
-      "default_region": "us",
-      "rule_sets": [
-        "ai"
-      ],
-      "precedes_domestic_routes": true
-    },
-    {
-      "id": "google",
-      "name": "🔎 Google",
-      "default_region": "us",
-      "rule_sets": [
-        "google"
-      ],
-      "precedes_domestic_routes": true
-    },
-    {
-      "id": "spotify",
-      "name": "🎵 Spotify",
-      "default_region": "us",
-      "rule_sets": [
-        "spotify"
-      ],
-      "precedes_domestic_routes": false
-    },
-    {
-      "id": "games",
-      "name": "🎮 GAMES",
-      "default_region": "hk",
-      "rule_sets": [
-        "games"
-      ],
-      "precedes_domestic_routes": false
-    },
-    {
-      "id": "microsoft",
-      "name": "🪟 Microsoft",
-      "default_region": "us",
-      "rule_sets": [
-        "microsoft"
-      ],
-      "precedes_domestic_routes": false
-    }
-  ],
   "platforms": {
     "Android": {
-      "is_mobile": true,
-      "address_family": "Ipv4Only",
-      "strict_route": null,
-      "auto_redirect": null,
-      "multi_queue": null,
-      "use_direct_forwarding": false,
-      "tcp_keep_alive": null,
-      "tcp_keep_alive_interval": null,
-      "url_test_interval": "3m",
-      "dns_selection_mode": "SequentialFallback",
-      "taildrop_directory": "Taildrop",
-      "connect_timeout": "5s",
-      "tun_addresses": [
-        "172.19.0.1/30",
-        "fd00::1/126"
-      ]
+      "features": {
+        "tailscale": {
+          "taildrop_directory": "Taildrop"
+        }
+      },
+      "dns": {
+        "selection_mode": "SequentialFallback"
+      },
+      "route": {
+        "strict_route": null
+      },
+      "tuning": {
+        "tcp_keep_alive": null,
+        "tcp_keep_alive_interval": null,
+        "url_test_interval": "3m"
+      }
     },
     "Linux": {
-      "is_mobile": false,
-      "address_family": "Ipv4Only",
-      "strict_route": true,
-      "auto_redirect": true,
-      "multi_queue": true,
-      "use_direct_forwarding": true,
-      "tcp_keep_alive": "1m",
-      "tcp_keep_alive_interval": "30s",
-      "url_test_interval": "1m",
-      "dns_selection_mode": "ParallelFastest",
-      "taildrop_directory": "$HOME/Downloads/Taildrop",
-      "connect_timeout": "5s",
-      "tun_addresses": [
-        "172.19.0.1/30",
-        "fd00::1/126"
-      ]
+      "route": {
+        "auto_redirect": true,
+        "multi_queue": true,
+        "use_direct_forwarding": true
+      }
     },
     "Windows": {
-      "is_mobile": false,
-      "address_family": "Ipv4Only",
-      "strict_route": true,
-      "auto_redirect": null,
-      "multi_queue": null,
-      "use_direct_forwarding": false,
-      "tcp_keep_alive": "1m",
-      "tcp_keep_alive_interval": "30s",
-      "url_test_interval": "1m",
-      "dns_selection_mode": "ParallelFastest",
-      "taildrop_directory": "$USERPROFILE\\Downloads\\Taildrop",
-      "connect_timeout": "5s",
-      "tun_addresses": [
-        "172.19.0.1/30",
-        "fd00::1/126"
-      ]
+      "features": {
+        "tailscale": {
+          "taildrop_directory": "$USERPROFILE\\Downloads\\Taildrop"
+        }
+      }
     }
   },
-  "rule_sets": [
-    {
-      "tags": [
-        "ai",
-        "spotify",
-        "games",
-        "cn",
-        "cnip"
-      ],
-      "url": "https://github.com/DustinWin/ruleset_geodata/releases/download/sing-box-ruleset/{tag}.srs",
-      "update_interval": "1d"
-    },
-    {
-      "tags": [
-        "ads"
-      ],
-      "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/category-ads-and-telemetry.srs",
-      "update_interval": "1d"
-    },
-    {
-      "tags": [
-        "google"
-      ],
-      "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/google.srs",
-      "update_interval": "1d"
-    },
-    {
-      "tags": [
-        "microsoft"
-      ],
-      "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/microsoft.srs",
-      "update_interval": "1d"
-    }
-  ],
-  "resolvers": [
-    {
-      "id": "alidns",
-      "server": "223.5.5.5",
-      "server_name": "dns.alidns.com"
-    },
-    {
-      "id": "tencent",
-      "server": "119.29.29.29",
-      "server_name": "doh.pub"
-    },
-    {
-      "id": "cloudflare",
-      "server": "1.1.1.1",
-      "server_name": "cloudflare-dns.com"
-    },
-    {
-      "id": "google",
-      "server": "8.8.8.8",
-      "server_name": "dns.google"
-    }
-  ],
-  "runtime": {
+  "features": {
     "tailscale": {
       "enabled": true,
-      "android_enabled": true
+      "taildrop_directory": "$HOME/Downloads/Taildrop"
     },
-    "singbox_api": {
+    "api": {
       "enabled": false
     }
   },
-  "policies": {
+  "dns": {
+    "address_family": "Ipv4Only",
+    "selection_mode": "ParallelFastest",
+    "timeout": "5s",
+    "cache_capacity": 4096,
+    "optimistic_timeout": "6h",
+    "resolvers": [
+      {
+        "id": "alidns",
+        "server": "223.5.5.5",
+        "server_name": "dns.alidns.com"
+      },
+      {
+        "id": "tencent",
+        "server": "119.29.29.29",
+        "server_name": "doh.pub"
+      },
+      {
+        "id": "cloudflare",
+        "server": "1.1.1.1",
+        "server_name": "cloudflare-dns.com"
+      },
+      {
+        "id": "google",
+        "server": "8.8.8.8",
+        "server_name": "dns.google"
+      }
+    ]
+  },
+  "route": {
+    "regions": [
+      {
+        "id": "us",
+        "display_name": "🇺🇸 US",
+        "pattern": "美国|america|洛杉矶|硅谷|🇺🇸|(?<![a-zA-Z])usa?\\d*(?![a-zA-Z])"
+      },
+      {
+        "id": "jp",
+        "display_name": "🇯🇵 JP",
+        "pattern": "日本|japan|tokyo|东京|大阪|🇯🇵|(?<![a-zA-Z])jpn?\\d*(?![a-zA-Z])"
+      },
+      {
+        "id": "hk",
+        "display_name": "🇭🇰 HK",
+        "pattern": "香港|hong\\s?kong|深港|🇭🇰|(?<![a-zA-Z])hkg?\\d*(?![a-zA-Z])"
+      },
+      {
+        "id": "sg",
+        "display_name": "🇸🇬 SG",
+        "pattern": "狮城|新加坡|singapore|🇸🇬|(?<![a-zA-Z])sgp?\\d*(?![a-zA-Z])"
+      }
+    ],
+    "services": [
+      {
+        "id": "ai",
+        "name": "🤖 AI",
+        "default_region": "us",
+        "rule_sets": [
+          "ai"
+        ],
+        "precedes_domestic_routes": true
+      },
+      {
+        "id": "google",
+        "name": "🔎 Google",
+        "default_region": "us",
+        "rule_sets": [
+          "google"
+        ],
+        "precedes_domestic_routes": true
+      },
+      {
+        "id": "spotify",
+        "name": "🎵 Spotify",
+        "default_region": "us",
+        "rule_sets": [
+          "spotify"
+        ],
+        "precedes_domestic_routes": false
+      },
+      {
+        "id": "games",
+        "name": "🎮 GAMES",
+        "default_region": "hk",
+        "rule_sets": [
+          "games"
+        ],
+        "precedes_domestic_routes": false
+      },
+      {
+        "id": "microsoft",
+        "name": "🪟 Microsoft",
+        "default_region": "us",
+        "rule_sets": [
+          "microsoft"
+        ],
+        "precedes_domestic_routes": false
+      }
+    ],
+    "rule_sets": [
+      {
+        "tags": [
+          "ai",
+          "spotify",
+          "games",
+          "cn",
+          "cnip"
+        ],
+        "url": "https://github.com/DustinWin/ruleset_geodata/releases/download/sing-box-ruleset/{tag}.srs",
+        "update_interval": "1d"
+      },
+      {
+        "tags": [
+          "ads"
+        ],
+        "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/category-ads-and-telemetry.srs",
+        "update_interval": "1d"
+      },
+      {
+        "tags": [
+          "google"
+        ],
+        "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/google.srs",
+        "update_interval": "1d"
+      },
+      {
+        "tags": [
+          "microsoft"
+        ],
+        "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/microsoft.srs",
+        "update_interval": "1d"
+      }
+    ],
     "main_default_region": "us",
     "sniff_timeout": "300ms",
     "sniff_excluded_ports": [
@@ -199,11 +183,23 @@
       3306,
       5900
     ],
+    "tun_addresses": [
+      "172.19.0.1/30",
+      "fd00::1/126"
+    ],
+    "strict_route": true,
+    "auto_redirect": null,
+    "multi_queue": null,
+    "use_direct_forwarding": false
+  },
+  "tuning": {
+    "connect_timeout": "5s",
+    "tcp_keep_alive": "1m",
+    "tcp_keep_alive_interval": "30s",
+    "url_test_interval": "1m",
     "url_test_url": "https://www.gstatic.com/generate_204",
     "url_test_tolerance": 50,
-    "url_test_idle_timeout": "30m",
-    "dns_timeout": "5s",
-    "dns_cache_capacity": 4096,
-    "dns_optimistic_timeout": "6h"
-  }
+    "url_test_idle_timeout": "30m"
+  },
+  "privacy": {}
 }

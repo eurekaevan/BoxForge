@@ -18,9 +18,14 @@ public sealed class DnsProfileBuilderTests
     [TestCase(TargetPlatform.Windows, AddressFamilyPolicy.DualStack)]
     public void DnsPlanSnapshotsPolicyAndEmitsIndependentConfigurations(TargetPlatform platform, AddressFamilyPolicy addressFamily)
     {
-        var settings = BoxForgeProfile.Default.GetPlatform(platform) with { AddressFamily = addressFamily };
-        var profile = new BoxForgeProfile(BuiltInProfile.Default with
-        { Platforms = BuiltInProfile.Default.Platforms.SetItem(platform, settings) });
+        var profile = BoxForgeProfile.Default.ApplyOverrides(JsonSerializer.SerializeToNode(new
+        {
+            platforms = new Dictionary<string, object>
+            {
+                [platform.ToString()] = new { dns = new { address_family = addressFamily.ToString() } }
+            }
+        })!.AsObject());
+        var settings = profile.GetPlatform(platform);
         var builder = new DnsProfileBuilder(profile);
         var plan = builder.Plan(platform);
         string expected = JsonSerializer.Serialize(SingboxDnsEmitter.Emit(builder.Plan(platform)));
@@ -35,11 +40,10 @@ public sealed class DnsProfileBuilderTests
             rule.IpCidr?.Clear();
         }
         first.Rules.Clear();
-        var changedProfile = new BoxForgeProfile(BuiltInProfile.Default with
+        var changedProfile = profile.ApplyOverrides(JsonSerializer.SerializeToNode(new
         {
-            Platforms = BuiltInProfile.Default.Platforms.SetItem(platform, settings),
-            Runtime = profile.Runtime with { Tailscale = new(false, false) }
-        });
+            features = new { tailscale = new { enabled = false } }
+        })!.AsObject());
         Assert.Multiple(() =>
         {
             Assert.That(JsonSerializer.Serialize(SingboxDnsEmitter.Emit(plan)), Is.EqualTo(expected));
@@ -615,8 +619,8 @@ public sealed class DnsProfileBuilderTests
         rules.FindIndex(rule => rule.RuleSet?.Contains(ruleSet) == true);
 
     private static DnsProfileBuilder CreateBuilder(bool tailscaleEnabled = false) =>
-        new(new BoxForgeProfile(BuiltInProfile.Default with
+        new(BoxForgeProfile.Default.ApplyOverrides(JsonSerializer.SerializeToNode(new
         {
-            Runtime = BuiltInProfile.Default.Runtime with { Tailscale = new(tailscaleEnabled, tailscaleEnabled) }
-        }));
+            features = new { tailscale = new { enabled = tailscaleEnabled } }
+        })!.AsObject()));
 }

@@ -1,23 +1,39 @@
 using System.Collections.Immutable;
+using BoxForge.Models;
 
 namespace BoxForge.Configuration;
 
-public sealed record RuntimeProfile(TailscaleRuntimeProfile Tailscale, SingboxApiRuntimeProfile SingboxApi);
+public sealed record FeaturesProfile(TailscaleFeature Tailscale, ApiFeature Api);
+public sealed record TailscaleFeature(bool Enabled, string TaildropDirectory);
+public sealed record ApiFeature(bool Enabled);
+public sealed record PrivacyProfile;
 
-public sealed record TailscaleRuntimeProfile(bool Enabled, bool AndroidEnabled)
-{
-    public bool IsEnabled(PlatformProfile platform) => platform.IsMobile ? AndroidEnabled : Enabled;
-}
+internal sealed record DnsProfile(
+    AddressFamilyPolicy AddressFamily,
+    DnsResolverSelectionMode SelectionMode,
+    string Timeout,
+    uint CacheCapacity,
+    string OptimisticTimeout,
+    ImmutableArray<BuiltInProfile.Resolver> Resolvers);
 
-public sealed record SingboxApiRuntimeProfile(bool Enabled);
-
-public sealed record ProfilePolicies(
+internal sealed record RouteProfile(
+    ImmutableArray<BuiltInProfile.Region> Regions,
+    ImmutableArray<ServiceDefinition> Services,
+    ImmutableArray<BuiltInProfile.RuleSetSource> RuleSets,
     string MainDefaultRegion,
     string SniffTimeout,
     ImmutableArray<int> SniffExcludedPorts,
+    ImmutableArray<string> TunAddresses,
+    bool? StrictRoute,
+    bool? AutoRedirect,
+    bool? MultiQueue,
+    bool UseDirectForwarding);
+
+public sealed record TuningProfile(
+    string ConnectTimeout,
+    string? TcpKeepAlive,
+    string? TcpKeepAliveInterval,
+    string UrlTestInterval,
     string UrlTestUrl,
     int UrlTestTolerance,
-    string UrlTestIdleTimeout,
-    string DnsTimeout,
-    uint DnsCacheCapacity,
-    string DnsOptimisticTimeout);
+    string UrlTestIdleTimeout);

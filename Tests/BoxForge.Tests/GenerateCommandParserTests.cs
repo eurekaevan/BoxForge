@@ -101,6 +101,9 @@ public sealed class GenerateCommandParserTests
     [TestCase("BOXFORGE_TailscaleEnabled")]
     [TestCase("BOXFORGE_Tailscale__Enabled")]
     [TestCase("BOXFORGE_SingboxApi__Enabled")]
+    [TestCase("BOXFORGE_features__api__enabled")]
+    [TestCase("BOXFORGE_Profile__typo")]
+    [TestCase("BOXFORGE_typo")]
     public async Task InvalidEnvironmentConfigurationReturnsSafeFailure(string key)
     {
         const string invalidValue = "invalid-sensitive-value";
@@ -123,30 +126,23 @@ public sealed class GenerateCommandParserTests
         try
         {
             string path = Path.Combine(directory, "profile.json");
-            await File.WriteAllTextAsync(path,
-                """
-                {"version":1,"regions":[{"id":"tw","display_name":"🇹🇼 TW","pattern":"TW[0-9]+"}],
-                 "services":[{"id":"ai","name":"AI Taiwan","default_region":"tw"},
-                             {"id":"custom","name":"Custom Games","rule_sets":["games"],"precedes_domestic_routes":true}],
-                 "rule_sets":[{"tag":"ai","url":"https://rules.example.net/{tag}.srs","update_interval":"12h"}],
-                 "resolvers":[{"id":"alidns","server":"203.0.113.53","server_name":"dns.example.net"}]}
-                """);
+            await File.WriteAllTextAsync(path, ProfilePlannerTests.TaiwanProfileJson());
             var environment = new Dictionary<string, string>
             {
                 ["BOXFORGE_Profile"] = Path.Combine(directory, "missing.json"),
-                ["BOXFORGE_SingboxApi__Enabled"] = "true"
+                ["BOXFORGE_features__api__enabled"] = "true"
             };
             var shown = await RunCliAsync(["profile", "show", "--resolved", "--profile=" + path], environment);
             Assert.That(shown.ExitCode, Is.Zero, shown.Error);
             using var resolved = JsonDocument.Parse(shown.Output);
-            Assert.That(resolved.RootElement.GetProperty("regions")[4].GetProperty("id").GetString(), Is.EqualTo("tw"));
-            Assert.That(resolved.RootElement.GetProperty("services")[0].GetProperty("default_region").GetString(), Is.EqualTo("tw"));
-            Assert.That(resolved.RootElement.GetProperty("services")[5].GetProperty("id").GetString(), Is.EqualTo("custom"));
-            Assert.That(resolved.RootElement.GetProperty("rule_sets").EnumerateArray()
+            Assert.That(resolved.RootElement.GetProperty("route").GetProperty("regions")[4].GetProperty("id").GetString(), Is.EqualTo("tw"));
+            Assert.That(resolved.RootElement.GetProperty("route").GetProperty("services")[0].GetProperty("default_region").GetString(), Is.EqualTo("tw"));
+            Assert.That(resolved.RootElement.GetProperty("route").GetProperty("services")[5].GetProperty("id").GetString(), Is.EqualTo("custom"));
+            Assert.That(resolved.RootElement.GetProperty("route").GetProperty("rule_sets").EnumerateArray()
                 .Single(source => source.GetProperty("tags")[0].GetString() == "ai").GetProperty("url").GetString(),
                 Is.EqualTo("https://rules.example.net/ai.srs"));
-            Assert.That(resolved.RootElement.GetProperty("runtime").GetProperty("singbox_api").GetProperty("enabled").GetBoolean(), Is.True);
-            Assert.That(resolved.RootElement.GetProperty("resolvers")[0].GetProperty("server").GetString(), Is.EqualTo("203.0.113.53"));
+            Assert.That(resolved.RootElement.GetProperty("features").GetProperty("api").GetProperty("enabled").GetBoolean(), Is.True);
+            Assert.That(resolved.RootElement.GetProperty("dns").GetProperty("resolvers")[0].GetProperty("server").GetString(), Is.EqualTo("203.0.113.53"));
             string input = Directory.CreateDirectory(Path.Combine(directory, "input")).FullName;
             string output = Path.Combine(directory, "output");
             await File.WriteAllTextAsync(Path.Combine(input, "tw.yaml"), ProfileConfigurationTests.Yaml("TW01", "TW02"));
@@ -177,22 +173,22 @@ public sealed class GenerateCommandParserTests
                 Assert.That(document.RootElement.GetProperty("route").GetProperty("rules").EnumerateArray()
                     .Any(rule => rule.TryGetProperty("ip_cidr", out var cidrs) && cidrs[0].GetString() == "203.0.113.53/32"), Is.True);
             }
-            await File.WriteAllTextAsync(path, """{"version":1,"unknown":true}""");
+            await File.WriteAllTextAsync(path, """{"unknown":true}""");
             var rejected = await RunCliAsync(arguments, environment);
             Assert.That(rejected.ExitCode, Is.EqualTo(GenerateCommandRunner.FailureExitCode));
-            Assert.That(rejected.Error, Does.Contain("未知或重复"));
+            Assert.That(rejected.Error, Does.Contain("未知字段"));
             foreach (string file in files) Assert.That(await File.ReadAllBytesAsync(file), Is.EqualTo(before[file]));
-            await File.WriteAllTextAsync(path, """{"version":1,"resolvers":[{"id":"alidns","server":"dns.example.net"}]}""");
+            await File.WriteAllTextAsync(path, """{"dns":{"resolvers":{"replace":[{"id":"alidns","server":"dns.example.net","server_name":"dns.example.net"}]}}}""");
             rejected = await RunCliAsync(arguments, environment);
             Assert.That(rejected.ExitCode, Is.EqualTo(GenerateCommandRunner.FailureExitCode));
             Assert.That(rejected.Error, Does.Contain("resolvers.server"));
             foreach (string file in files) Assert.That(await File.ReadAllBytesAsync(file), Is.EqualTo(before[file]));
-            await File.WriteAllTextAsync(path, """{"version":1,"rule_sets":[{"tag":"missing","update_interval":"12h"}]}""");
+            await File.WriteAllTextAsync(path, """{"route":{"rule_sets":{"append":[{"tags":["missing"],"update_interval":"12h"}]}}}""");
             rejected = await RunCliAsync(arguments, environment);
             Assert.That(rejected.ExitCode, Is.EqualTo(GenerateCommandRunner.FailureExitCode));
-            Assert.That(rejected.Error, Does.Contain("rule_sets.url"));
+            Assert.That(rejected.Error, Does.Contain("缺失必填字段"));
             foreach (string file in files) Assert.That(await File.ReadAllBytesAsync(file), Is.EqualTo(before[file]));
-            await File.WriteAllTextAsync(path, """{"version":1,"services":[{"id":"ai","default_region":"missing"}]}""");
+            await File.WriteAllTextAsync(path, """{"route":{"services":{"replace":[{"id":"ai","name":"AI","rule_sets":["ai"],"precedes_domestic_routes":true,"default_region":"missing"}]}}}""");
             rejected = await RunCliAsync(arguments, environment);
             Assert.That(rejected.ExitCode, Is.EqualTo(GenerateCommandRunner.FailureExitCode));
             Assert.That(rejected.Error, Does.Contain("default_region"));

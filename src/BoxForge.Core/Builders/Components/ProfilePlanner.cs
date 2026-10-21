@@ -13,7 +13,7 @@ internal static class ProfilePlanner
         var probes = new List<ProbeGroupPlan>();
         var regions = BuildRegionGroups(
             inventory,
-            probes, probeInterval, profile.Policies);
+            probes, probeInterval, profile.Tuning);
         var main = BuildMainGroup(nodes, regions, profile);
         var services = BuildServiceGroups(nodes, inventory, regions, profile);
         var plan = new ProfileGroupPlan(
@@ -29,7 +29,7 @@ internal static class ProfilePlanner
 
     private static List<SelectionGroupPlan> BuildRegionGroups(
         IReadOnlyList<RegionInventory> inventory,
-        List<ProbeGroupPlan> probes, string? probeInterval, ProfilePolicies policies)
+        List<ProbeGroupPlan> probes, string? probeInterval, TuningProfile policies)
     {
         var groups = new List<SelectionGroupPlan>();
 
@@ -70,7 +70,7 @@ internal static class ProfilePlanner
                 : SingboxTags.DirectOutbound;
         string? preferredRegionName = regions.Count == 0
             ? null
-            : profile.Regions.Single(region => region.Id == profile.Policies.MainDefaultRegion).DisplayName;
+            : profile.Regions.Single(region => region.Id == profile.Route.MainDefaultRegion).DisplayName;
         string defaultSelection = regions.FirstOrDefault(group => group.Name == preferredRegionName)?.Name
             ?? fallbackSelection;
 
