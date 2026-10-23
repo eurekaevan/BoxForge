@@ -33,7 +33,7 @@ HTTP 错误格式保持不变。
 | `route.main_default_region` | `"us"` | — |
 | `route.sniff_timeout` | `"300ms"` | — |
 | `route.sniff_excluded_ports` | `[21,22,3306,5900]` | — |
-| `route.tun_addresses` | `["172.19.0.1/30","fd00::1/126"]` | — |
+| `route.tun_addresses` | `["172.19.0.1/30","fd32:f937:4cd0:1::1/126"]` | — |
 | `route.strict_route` | `true` | Android: `null` |
 | `route.auto_redirect` | `null` | Linux: `true` |
 | `route.multi_queue` | `null` | Linux: `true` |

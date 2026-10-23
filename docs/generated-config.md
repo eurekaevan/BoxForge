@@ -51,7 +51,9 @@ Windows/Android 省略该字段。实际吞吐收益尚未验证，可按
   在 UDP sniff 之后、各自原始规则所在位置增加仅匹配 `tun-in` + UDP 的 L3
   route。它们不会被搬到 sniff 之前，因此仍保留原有服务优先级和域名嗅探语义。
 
-TUN 默认 IPv6 地址为 `fd00::1/126`，可通过 `tun_addresses` 替换。
+TUN 默认 IPv6 地址为 `fd32:f937:4cd0:1::1/126`，可通过 `route.tun_addresses` 替换。
+ULA 前缀由安全随机源一次生成并固定在内置 profile 中，三个平台共用；生成配置时不会重新随机选择。
+该默认值降低与其他软件通用前缀碰撞的概率，不保证每个部署唯一；与已有网络冲突时应在部署 profile 中覆盖。
 默认 `Auto` 保留双栈捕获；仅在出口接口缺少 `2000::/3` 公网 IPv6 地址
 或无法取得接口信息时拒绝 IPv6，并对 AAAA 返回空答。IPv6 拒绝分别位于 DNS 劫持之后、
 任何 DIRECT、Tailscale、bridge、bypass 或 sniff 之前，以及服务分流之前。

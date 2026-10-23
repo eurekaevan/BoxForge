@@ -364,7 +364,7 @@ public sealed class SingboxConfigBuilderTests
             Assert.That(tunInbound.Type, Is.EqualTo("tun"));
             Assert.That(json, Does.Not.Contain("mixed-in"));
             Assert.That(tunInbound.Address,
-                Is.EqualTo(new[] { "172.19.0.1/30", "fd00::1/126" }));
+                Is.EqualTo(new[] { "172.19.0.1/30", "fd32:f937:4cd0:1::1/126" }));
             Assert.That(
                 hasBridge,
                 Is.EqualTo(platform == TargetPlatform.Linux));

@@ -197,7 +197,7 @@
     ],
     "tun_addresses": [
       "172.19.0.1/30",
-      "fd00::1/126"
+      "fd32:f937:4cd0:1::1/126"
     ],
     "strict_route": true,
     "auto_redirect": null,
