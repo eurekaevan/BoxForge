@@ -36,6 +36,7 @@ public record UrlTestOutbound : Outbound
 
 public record DirectOutbound : Outbound
 {
+    [JsonPropertyName("domain_resolver")] public DnsResolverOptions? DomainResolver { get; init; }
 }
 
 public record BridgeOutbound : Outbound;

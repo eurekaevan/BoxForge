@@ -34,6 +34,7 @@ internal static class ConfigurationPlanner
             nodes.Nodes.Select(node => OutboundTuningPolicy.Apply(node, platform)).ToArray(),
             groups, dns, route, settings.Features.Tailscale.Enabled, platform.TaildropDirectory, apiEnabled, clients)
         {
+            DirectResolver = new DomainResolverPlan(SingboxTags.DirectAliDns, platform.AddressFamily, true, true),
             NodeResolvers = nodes.Nodes.Where(node => node.AddressFamily == AddressFamilyPolicy.Ipv4Only
                     && platform.AddressFamily != AddressFamilyPolicy.Ipv4Only)
                 .DistinctBy(node => node.Name, StringComparer.Ordinal)

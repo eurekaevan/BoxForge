@@ -9,7 +9,7 @@ internal static class SingboxResolverEmitter
     internal static DnsResolverOptions Emit(DomainResolverPlan resolver) => new()
     {
         Server = resolver.Server,
-        Strategy = resolver.AddressFamily.ToDnsStrategy(),
+        Strategy = resolver.AddressFamily.ToDnsStrategy() ?? (resolver.PreferIpv4 ? DnsStrategy.PreferIpv4 : null),
         DisableOptimisticCache = resolver.DisableOptimisticCache
     };
 }

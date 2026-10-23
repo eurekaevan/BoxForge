@@ -652,6 +652,13 @@ public sealed class SingboxConfigBuilderTests
 
         Assert.Multiple(() =>
         {
+            Assert.That(config.Outbounds.OfType<DirectOutbound>().Single().DomainResolver,
+                Is.EqualTo(new DnsResolverOptions
+                {
+                    Server = SingboxTags.DirectAliDns,
+                    Strategy = DnsStrategy.Ipv4Only,
+                    DisableOptimisticCache = true
+                }));
             Assert.That(
                 config.Route.DefaultDomainResolver?.Server,
                 Is.EqualTo(SingboxTags.DirectAliDns));
@@ -839,6 +846,8 @@ public sealed class SingboxConfigBuilderTests
         SingboxConfig config = PlanAndBuild(
             new NodeCatalog([CreateProxy("ipv6-test", "2001:db8::1")], ["ipv6-test"]), resolved, new string('a', 64));
         Assert.That(config.Route.DefaultDomainResolver!.Strategy, Is.Null);
+        Assert.That(config.Outbounds.OfType<DirectOutbound>().Single().DomainResolver!.Strategy,
+            Is.EqualTo(DnsStrategy.PreferIpv4));
         Assert.That(config.Dns.Strategy, Is.Null);
         Assert.That(config.Dns.Rules.Any(rule => rule.QueryType?.Contains("AAAA") == true), Is.False);
         Assert.That(config.Route.Rules.Any(rule => rule.IpVersion == 6 && rule.Action == RouteRuleAction.Reject), Is.False);

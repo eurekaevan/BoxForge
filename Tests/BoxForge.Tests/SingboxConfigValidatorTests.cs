@@ -858,6 +858,21 @@ public sealed class SingboxConfigValidatorTests
         Assert.DoesNotThrow(() => validator.Validate(config, AddressFamilyPolicy.DualStack));
     }
 
+    [TestCase("missing", DnsStrategy.Ipv4Only, "SB004")]
+    [TestCase(SingboxTags.DirectAliDns, DnsStrategy.PreferIpv4, "SB061")]
+    public void DirectResolverMustExistAndRespectIpv4Only(string server, DnsStrategy strategy, string code)
+    {
+        SingboxConfig valid = CreateValidIpv4Config();
+        var config = valid with
+        {
+            Outbounds = valid.Outbounds.Select(outbound => outbound is DirectOutbound direct
+                ? direct with { DomainResolver = new DnsResolverOptions { Server = server, Strategy = strategy } }
+                : outbound).ToList()
+        };
+        var error = Assert.Throws<ConfigValidationException>(() => validator.Validate(config, AddressFamilyPolicy.Ipv4Only));
+        Assert.That(error!.Diagnostics.Select(diagnostic => diagnostic.Code), Does.Contain(code));
+    }
+
     [Test]
     public void AutoRequiresConditionalGuardsWithoutAnUnconditionalDnsFamilyRestriction()
     {

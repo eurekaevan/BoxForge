@@ -22,6 +22,7 @@ internal sealed record ConfigurationPlan(
     IReadOnlyList<HttpClientPlan> HttpClients)
 {
     internal required ImmutableDictionary<string, DomainResolverPlan> NodeResolvers { get; init; }
+    internal required DomainResolverPlan DirectResolver { get; init; }
 
     internal void Validate()
     {
@@ -93,6 +94,10 @@ internal sealed record ConfigurationPlan(
             bool BoundToService(string name) => Dns.Resolvers.Count(resolver => resolver.Name == name && resolver.Detour == service.Outbound) == 1;
         }
         var resolvers = Dns.Resolvers.Select(resolver => resolver.Name).ToHashSet(StringComparer.Ordinal);
+        ValidateResolver(DirectResolver, "plan.direct_resolver");
+        Require(resolvers, DirectResolver.Server, "IR006", "plan.direct_resolver.server");
+        if (DirectResolver != new DomainResolverPlan(SingboxTags.DirectAliDns, AddressFamily, true, true))
+            diagnostics.Add(new("IR011", "plan.direct_resolver", "直连解析器必须保留平台地址族限制并优先 IPv4。"));
         ValidateResolver(Route.DefaultDomainResolver, "plan.route.default_domain_resolver");
         Require(resolvers, Route.DefaultDomainResolver.Server, "IR006", "plan.route.default_domain_resolver");
         int resolverIndex = 0;
@@ -164,6 +169,6 @@ internal sealed record ConfigurationPlan(
 
 internal sealed record HttpClientPlan(string Name, string? Detour, DomainResolverPlan Resolver);
 
-internal sealed record DomainResolverPlan(string Server, AddressFamilyPolicy AddressFamily, bool DisableOptimisticCache);
+internal sealed record DomainResolverPlan(string Server, AddressFamilyPolicy AddressFamily, bool DisableOptimisticCache, bool PreferIpv4 = false);
 
 internal sealed record TunPlan(ImmutableArray<string> Addresses, bool? AutoRedirect, bool? MultiQueue, bool? StrictRoute);

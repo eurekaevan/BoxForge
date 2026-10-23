@@ -43,7 +43,10 @@ internal sealed class SingboxConfigBuilder : ISingboxConfigBuilder
                 Tag = SingboxTags.BridgeOutbound
             });
         }
-        orderedOutbounds.Add(profiles.DirectOutbound);
+        orderedOutbounds.Add(profiles.DirectOutbound with
+        {
+            DomainResolver = SingboxResolverEmitter.Emit(plan.DirectResolver)
+        });
 
         return new SingboxConfig
         {

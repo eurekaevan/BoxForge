@@ -239,6 +239,12 @@ internal sealed class SingboxConfigValidator : ISingboxConfigValidator
         {
             switch (outbounds[index])
             {
+                case DirectOutbound { DomainResolver: { } resolver }:
+                    ValidateReference(resolver.Server, context.DnsTags, "SB004",
+                        $"outbounds[{index}].domain_resolver.server", "引用了不存在的 DNS server。", context.Diagnostics);
+                    if (context.AddressFamily == AddressFamilyPolicy.Ipv4Only && resolver.Strategy != DnsStrategy.Ipv4Only)
+                        context.Diagnostics.Add(new("SB061", $"outbounds[{index}].domain_resolver.strategy", "直连域名必须使用 ipv4_only 解析策略。"));
+                    break;
                 case SelectorOutbound selector:
                     ValidateSelectorOutbound(selector, index, context);
                     break;

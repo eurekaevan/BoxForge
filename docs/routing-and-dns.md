@@ -78,6 +78,12 @@ libbox 正确提供当前物理默认接口和接口地址；不能据此认定�
 已核对锁定 alpha.12 的接口监视源码并检查生成配置；无法取得默认接口或地址的客户端
 会继续拒绝客户端 IPv6。Android 真机和网络切换行为尚未验证。
 
+DIRECT 出口显式绑定 AliDNS，并禁用 optimistic 过期缓存。Auto 和 DualStack 下，
+其域名拨号使用 `prefer_ipv4`，保留 IPv6 候选；Ipv4Only 下仍为 `ipv4_only`。
+此偏好不修改应用收到的 DNS 答案，也不会将已经确定的 IPv6 目标自动转换为 IPv4。
+它只在核心以域名进行直连拨号时生效，不能保证 TUN 流量的地址族回退。
+代理节点和控制面 HTTP client 的解析策略不受此偏好影响。
+
 控制平面域名由 `route.default_domain_resolver` 解析：直连
 `dns-direct-alidns`、随平台地址族选择的策略（默认 `Auto` 不强制地址族）、
 `disable_optimistic_cache = true`。
