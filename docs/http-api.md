@@ -153,7 +153,8 @@ HTTP 请求可通过内联 `profile` 覆盖运行时开关、策略、平台参�
 但不能指定服务器本地文件。文件与请求使用同一套合并和校验规则。
 对各目标先合并内置、文件、环境的根值，再依来源顺序应用各平台层；
 随后应用请求根值，最后应用请求自身 `platforms` 中的目标层。数组只接受显式
-`replace`、`append`、`remove`，不按 ID 隐式合并；旧环境键拒绝。
+整体 `replace`、`append`、`remove`，以及显式按键 `patch`、`set`、`remove_by_key`、
+`insert_before`，格式见[数组操作](configuration.md#数组操作)；旧环境键拒绝。
 每个请求使用独立的最终快照，不会更改宿主默认值或影响并发请求。
 
 Server 读取与 CLI 相同的 `BOXFORGE_` 环境配置，包括 Tailscale 和可选 sing-box API

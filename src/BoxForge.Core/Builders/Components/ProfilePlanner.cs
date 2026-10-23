@@ -6,30 +6,28 @@ namespace BoxForge.Builders.Components;
 
 internal static class ProfilePlanner
 {
-    internal static ProfileGroupPlan PlanGroups(NodeCatalog nodes, BoxForgeProfile profile, string? probeInterval)
+    internal static ProfileGroupPlan PlanGroups(NodeCatalog nodes, ResolvedProfile profile)
     {
         var inventory = profile.Regions.Select(definition => new RegionInventory(
             definition, nodes.Names.Where(name => definition.Pattern.IsMatch(name)).ToArray())).ToArray();
         var probes = new List<ProbeGroupPlan>();
         var regions = BuildRegionGroups(
             inventory,
-            probes, probeInterval, profile.Tuning);
+            probes, profile.Tuning);
         var main = BuildMainGroup(nodes, regions, profile);
         var services = BuildServiceGroups(nodes, inventory, regions, profile);
-        var plan = new ProfileGroupPlan(
+        return new ProfileGroupPlan(
             nodes.Names.ToArray(),
             SingboxTags.DirectOutbound,
             main,
             regions,
             probes,
             services);
-        plan.Validate();
-        return plan;
     }
 
     private static List<SelectionGroupPlan> BuildRegionGroups(
         IReadOnlyList<RegionInventory> inventory,
-        List<ProbeGroupPlan> probes, string? probeInterval, TuningProfile policies)
+        List<ProbeGroupPlan> probes, TuningProfile policies)
     {
         var groups = new List<SelectionGroupPlan>();
 
@@ -43,7 +41,7 @@ internal static class ProfilePlanner
             string autoTag = $"{region.Definition.DisplayName} AUTO";
             probes.Add(new ProbeGroupPlan(
                 autoTag, region.Leaves.ToArray(),
-                policies.UrlTestUrl, policies.UrlTestTolerance, policies.UrlTestIdleTimeout, probeInterval));
+                policies.UrlTestUrl, policies.UrlTestTolerance, policies.UrlTestIdleTimeout, policies.UrlTestInterval));
             groups.Add(new SelectionGroupPlan(
                 region.Definition.DisplayName, [autoTag, .. region.Leaves], autoTag));
         }
@@ -54,7 +52,7 @@ internal static class ProfilePlanner
     private static SelectionGroupPlan BuildMainGroup(
         NodeCatalog nodes,
         List<SelectionGroupPlan> regions,
-        BoxForgeProfile profile)
+        ResolvedProfile profile)
     {
         List<string> groupOptions =
         [
@@ -81,7 +79,7 @@ internal static class ProfilePlanner
         NodeCatalog nodes,
         IReadOnlyList<RegionInventory> inventory,
         IReadOnlyList<SelectionGroupPlan> regions,
-        BoxForgeProfile profile)
+        ResolvedProfile profile)
     {
         List<string> groupOptions =
         [

@@ -4,6 +4,10 @@ BoxForge 使用 profile 描述功能、DNS、路由和连接调优。
 CLI 与 HTTP Server 共用配置规则；未提供覆盖时保留内置生成策略。
 旧环境开关不再兼容；不会静默忽略旧键。
 
+Core 的 profile 错误使用 `ProfileValidationException`（仍可按 `FormatException` 捕获），
+其 `Diagnostics` 提供不含输入值的错误码和配置位置，详见[诊断与校验归属](architecture.md#诊断与校验归属)。
+HTTP 错误格式保持不变。
+
 ## 配置表
 
 <!-- BEGIN GENERATED:profile-defaults -->
@@ -17,7 +21,7 @@ CLI 与 HTTP Server 共用配置规则；未提供覆盖时保留内置生成策
 | `features.tailscale.enabled` | `true` | — |
 | `features.tailscale.taildrop_directory` | `"$HOME/Downloads/Taildrop"` | Android: `"Taildrop"`；Windows: `"$USERPROFILE\\Downloads\\Taildrop"` |
 | `features.api.enabled` | `false` | — |
-| `dns.address_family` | `"Ipv4Only"` | — |
+| `dns.address_family` | `"Auto"` | — |
 | `dns.selection_mode` | `"ParallelFastest"` | Android: `"SequentialFallback"` |
 | `dns.timeout` | `"5s"` | — |
 | `dns.cache_capacity` | `4096` | — |
@@ -25,7 +29,7 @@ CLI 与 HTTP Server 共用配置规则；未提供覆盖时保留内置生成策
 | `dns.resolvers` | 4 项（见内置 profile） | — |
 | `route.regions` | 4 项（见内置 profile） | — |
 | `route.services` | 5 项（见内置 profile） | — |
-| `route.rule_sets` | 4 项（见内置 profile） | — |
+| `route.rule_sets` | 6 项（见内置 profile） | — |
 | `route.main_default_region` | `"us"` | — |
 | `route.sniff_timeout` | `"300ms"` | — |
 | `route.sniff_excluded_ports` | `[21,22,3306,5900]` | — |
@@ -55,6 +59,13 @@ CLI 使用 `generate --profile profile.json`，Server 使用 `--profile profile.
 Server 启动后使用不可变宿主快照；修改文件或环境变量需要重启。
 HTTP 请求只接受内联 JSON，不能指定服务器路径或 URL。
 
+Core 注册只读取传入的 `IConfiguration`，不会自行读取进程环境变量。
+CLI、Server 在宿主边界加载并校验 `BOXFORGE_` 前缀的环境配置快照，再合并到宿主配置；
+显式 `--profile` 路径仍优先于环境路径。嵌入其他宿主时，普通 `runtime`、`policies`、
+`regions`、`services`、`rule_sets`、`resolvers` 节不属于 BoxForge 配置，也不会作为遗留键拒绝；
+专用旧开关 `Tailscale`、`TailscaleEnabled`、`TailscaleAndroidEnabled`、`SingboxApi` 仍拒绝。
+这不放宽 profile 文件或请求的严格结构校验；`BOXFORGE_regions` 等未知环境路径仍拒绝。
+
 文件与请求均使用 JSON 对象。根对象接受 `features`、`dns`、
 `route`、`tuning`、`privacy`、`platforms`。前五个分区保存跨平台值；
 `platforms.Android`、`platforms.Linux`、`platforms.Windows` 是同结构的稀疏覆盖层，
@@ -79,8 +90,11 @@ HTTP 请求只接受内联 JSON，不能指定服务器路径或 URL。
 }
 ```
 
-地址族接受 `Ipv4Only` 或 `DualStack`，DNS 模式接受 `SequentialFallback` 或
-`ParallelFastest`。超时和间隔必须是正 Go duration；DNS 缓存容量为正，URL test
+地址族接受 `Ipv4Only`、`DualStack` 或 `Auto`，默认使用 `Auto`。
+`Auto` 保留 TUN 双栈捕获，并按当前出口接口是否具有公网 IPv6 地址决定是否拒绝 IPv6；
+它不执行公网可达性探测。Android 依赖客户端提供默认物理接口信息，尚未完成真机验证；
+缺少接口信息时保守拒绝客户端 IPv6。详细边界见[DNS 与路由策略](routing-and-dns.md#dns-分类与控制面解析)。
+DNS 模式接受 `SequentialFallback` 或 `ParallelFastest`。超时和间隔必须是正 Go duration；DNS 缓存容量为正，URL test
 容差非负，探测 URL 只接受不带用户信息和片段的 HTTP(S) URL。
 TUN 地址须包含 IPv4 和 IPv6 CIDR；`multi_queue: true` 仅支持 Linux。
 排除端口为不重复的 1～65535 整数。调优只补齐来源节点缺失的值；
@@ -88,8 +102,8 @@ TUN 地址须包含 IPv4 和 IPv6 CIDR；`multi_queue: true` 仅支持 Linux。
 
 ### 数组操作
 
-覆盖已有数组路径时不能直接写数组，必须使用含 `replace`、`append`、`remove`
-中至少一项的操作对象。三项均接受数组，可组合，固定依次执行替换、追加、删除，
+覆盖已有数组路径时不能直接写数组，必须使用显式操作对象。
+整体操作 `replace`、`append`、`remove` 均接受数组，固定依次执行替换、追加、删除，
 与 JSON 键的书写顺序无关。`replace: []` 清空，`append: []` 和 `remove: []` 不改变值。
 空操作对象、未知操作、错误类型或找不到的删除项会拒绝整个覆盖。
 
@@ -101,16 +115,61 @@ TUN 地址须包含 IPv4 和 IPv6 CIDR；`multi_queue: true` 仅支持 Linux。
 }
 ```
 
-删除按元素完整 JSON 值深比较，不按 `id` 或 `tag` 匹配；对象属性顺序不影响匹配，
+`remove` 按元素完整 JSON 值深比较，不按 `id` 或 `tag` 匹配；对象属性顺序不影响匹配，
 数组顺序属于值的一部分。叠加及 `remove` 使用原始配置值：例如规则源的
 `update_interval: "1d"` 与 `"24h"` 不作为相同元素匹配，单 tag 的 URL 模板也不会提前展开。
-地区、服务、规则集来源和 resolver 同样遵循此规则，
-没有按 ID 隐式合并、自动补全字段或拆分批量来源的逻辑。改变已有实体时应提供
-完整替换列表，或删除完整旧对象再追加完整新对象；删除后仍须满足有效配置约束。
+整体操作不按 ID 隐式合并，也不拆分批量来源。
 
 操作 payload 中的新实体是完整数据对象，其内部数组是普通数据数组，
 例如追加服务的 `rule_sets: ["games"]`，或追加来源的 `tags: ["netflix"]`。
 这与对已有数组路径进行覆盖所需的操作包装不同。新增实体必须包含所有必填字段。
+
+对象数组另支持以下显式按键操作。地区、服务和 resolver 使用 `id`；规则集来源使用
+`tag` 选择其 `tags` 中包含该标签的整个来源对象，修改会影响该组全部标签，不自动拆组。
+
+| 操作 | 内容 | 位置语义 |
+| --- | --- | --- |
+| `patch` | 含选择键的部分对象，其余字段递归覆盖 | 保留原位置和未提供的字段 |
+| `set` | 含选择键的完整对象 | 在原位置替换；缺少必填字段拒绝 |
+| `remove_by_key` | 仅含选择键的对象 | 删除匹配项 |
+| `insert_before` | `before` 为选择器，`value` 为完整新对象 | 在匹配项前插入 |
+
+例如将 `ai` 的默认地区改成 `jp`，同时保留服务和同阶段路由顺序：
+
+```json
+{
+  "route": {
+    "services": { "patch": [{ "id": "ai", "default_region": "jp" }] }
+  }
+}
+```
+
+`patch` 中的嵌套数组仍使用显式操作，例如 `rule_sets: {"append":["games"]}`。
+`set` 和 `insert_before.value` 的内部数组则是完整数据，如 `rule_sets: ["games"]`。
+`id`/`tag` 作为选择器不能重命名实体。按 `tag` 操作分组来源时，`set` 仍需提供完整
+`tags` 数组，且 `patch`/`set` 后必须保留所选标签。例如：
+
+```json
+{
+  "route": {
+    "rule_sets": { "patch": [{ "tag": "games", "update_interval": "12h" }] },
+    "services": {
+      "insert_before": [{
+        "before": { "id": "google" },
+        "value": {
+          "id": "custom", "name": "Custom", "default_region": "jp",
+          "rule_sets": ["games"], "precedes_domestic_routes": true
+        }
+      }]
+    }
+  }
+}
+```
+
+多种操作组合时固定按 `replace → append → remove → patch → set → remove_by_key → insert_before`
+执行，每种操作内部按列表顺序执行。`patch`/`set` 不会创建不存在的项，新项使用 `append`
+或 `insert_before`。选择键区分大小写；缺失、空白、类型错误、找不到目标、匹配不唯一、
+未知字段、重复身份或无效引用均拒绝整个覆盖，不修改原 profile。标量数组不支持按键操作。
 
 ### 环境变量
 
@@ -218,8 +277,11 @@ URL 与时长文本，完整值覆盖和删除均使用这些原值，不比较�
 | --- | --- | --- |
 | `alidns` | `dns-direct-alidns` | 国内主解析器；控制面引导，直连 |
 | `tencent` | `dns-direct-tencent` | 国内备用解析器，直连 |
-| `cloudflare` | `dns-proxy-cloudflare` | GLOBAL/服务主解析器及 DNS final，经主代理组 |
-| `google` | `dns-proxy-google` | GLOBAL/服务备用解析器，经主代理组 |
+| `cloudflare` | `dns-proxy-cloudflare` | GLOBAL 主解析器及 DNS final，经主代理组 |
+| `google` | `dns-proxy-google` | GLOBAL 备用解析器，经主代理组 |
+
+每个服务另生成 `dns-service-{id}-cloudflare` 和 `dns-service-{id}-google`，
+复用对应 resolver 的地址和 TLS 名称，连接出口为该服务选择组。
 
 `server` 为规范单播 IPv4 字面量，允许私网/loopback，不接受域名、IPv6、URL、端口、
 CIDR、非规范数字、`0.*` 或首段大于等于 224 的地址。
@@ -257,19 +319,20 @@ kebab-case，并按对象用途区分。默认地区组如下，地区覆盖可�
 | Tailscale endpoint / DNS | `tailscale`、`dns-tailscale` |
 | 直连 DNS | `dns-direct-alidns`、`dns-direct-tencent` |
 | 代理 DNS | `dns-proxy-google`、`dns-proxy-cloudflare` |
+| 服务 DNS | `dns-service-{id}-cloudflare`、`dns-service-{id}-google` |
 | rule-set HTTP client | `http-ruleset-proxy` |
 | 可选 Dashboard HTTP client | `http-dashboard-direct` |
 | sing-box API service | `api` |
 
 DNS evaluate/respond 的响应 tag 使用 `response-范围-优先级`：
-`response-priority-primary`、`response-priority-secondary`、
+`response-service-{id}-primary`、`response-service-{id}-secondary`、
 `response-domestic-primary`、`response-domestic-secondary`、
 `response-global-primary`、`response-global-secondary`。
-Linux/Windows 的 A 查询另用独立响应 tag，在上述六个名称后追加 `-a`：
-`response-priority-primary-a`、`response-priority-secondary-a`、
+Linux/Windows 的 A 查询另用独立响应 tag，在上述名称后追加 `-a`：
+`response-service-{id}-primary-a`、`response-service-{id}-secondary-a`、
 `response-domestic-primary-a`、`response-domestic-secondary-a`、
 `response-global-primary-a`、`response-global-secondary-a`。
-这十二个响应 tag 均为全平台保留名称。
+这些响应 tag 均按有效 profile 的服务 ID 生成为全平台保留名称。
 内置规则集使用 BoxForge 语义 tag：`ads`、`ai`、`google`、`microsoft`、
 `spotify`、`games`、`cn`、`cnip`，可通过来源 profile 追加新 tag。外部文件名由来源映射决定，
 不作为内部命名约定。

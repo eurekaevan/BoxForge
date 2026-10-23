@@ -22,7 +22,10 @@ try
     using var host = Host.CreateDefaultBuilder([])
         .ConfigureAppConfiguration((context, config) =>
         {
-            config.AddEnvironmentVariables(prefix: "BOXFORGE_");
+            using var environment = new ConfigurationManager();
+            environment.AddEnvironmentVariables(prefix: "BOXFORGE_");
+            environment.ValidateBoxForgeEnvironment();
+            config.AddInMemoryCollection(environment.AsEnumerable().Where(pair => pair.Value is not null).ToArray());
             if (parsed.Options!.ProfilePath is { } path)
                 config.AddInMemoryCollection(new Dictionary<string, string?> { ["Profile"] = path });
         })

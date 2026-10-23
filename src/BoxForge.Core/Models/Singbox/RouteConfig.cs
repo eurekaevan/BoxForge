@@ -27,6 +27,7 @@ public record SingboxRuleSet
 
 public record RouteRule
 {
+    [JsonPropertyName("default_interface_address")] public List<string>? DefaultInterfaceAddress { get; init; }
     [JsonPropertyName("type")] public RouteRuleType? Type { get; init; }
     [JsonPropertyName("mode")] public RouteLogicalMode? Mode { get; init; }
     [JsonPropertyName("rules")] public List<RouteRule>? Rules { get; init; }
@@ -42,7 +43,6 @@ public record RouteRule
     [JsonPropertyName("preferred_by")] public List<string>? PreferredBy { get; init; }
     [JsonPropertyName("invert")] public bool? Invert { get; init; }
     [JsonPropertyName("outbound")] public string? Outbound { get; init; }
-    [JsonPropertyName("no_drop")] public bool? NoDrop { get; init; }
     [JsonPropertyName("sniffer")] public List<string>? Sniffer { get; init; }
     [JsonPropertyName("timeout")] public string? Timeout { get; init; }
     [JsonPropertyName("strategy")] public DnsStrategy? Strategy { get; init; }

@@ -1,4 +1,9 @@
 using BoxForge.Exceptions;
+using BoxForge.Builders;
+using BoxForge.Builders.Components;
+using BoxForge.Configuration;
+using BoxForge.Models.Intermediate;
+using BoxForge.Parsers;
 using BoxForge.Models;
 using BoxForge.Services;
 using YamlDotNet.Core;
@@ -7,8 +12,12 @@ using System.Text.RegularExpressions;
 namespace BoxForge.Engine;
 
 internal sealed class BoxForgeEngine(
-    ConversionService conversionService,
-    IConfigSerializer configSerializer) : IBoxForgeEngine
+    IClashParser clashParser,
+    IProxyCacheIdGenerator proxyCacheIdGenerator,
+    ISingboxConfigBuilder configBuilder,
+    ISingboxConfigValidator configValidator,
+    IConfigSerializer configSerializer,
+    BoxForgeProfile profile) : IBoxForgeEngine
 {
     private static readonly IReadOnlyList<TargetPlatform> PlatformOrder =
     [
@@ -26,13 +35,15 @@ internal sealed class BoxForgeEngine(
 
         var requestedPlatforms = request.Platforms.ToHashSet();
         var profiles = PlatformOrder.Where(requestedPlatforms.Contains)
-            .ToDictionary(platform => platform, platform => conversionService.ResolveProfile(platform, request.Profile));
-        PreparedConversion prepared;
+            .ToDictionary(platform => platform, platform => profile.Resolve(platform, request.Profile));
+        NodeCatalog nodes;
+        string cacheId;
         try
         {
-            prepared = conversionService.Prepare(
-                request.ClashYaml,
-                profiles.First().Value);
+            var clash = clashParser.Parse(request.ClashYaml)
+                ?? throw new NodeParseException("YAML 解析失败，请检查文件内容。");
+            nodes = NodeCatalogBuilder.Build(clash);
+            cacheId = proxyCacheIdGenerator.Generate(clash.Proxies);
         }
         catch (Exception ex) when (ex is NodeParseException or YamlException)
         {
@@ -52,11 +63,20 @@ internal sealed class BoxForgeEngine(
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                string content = conversionService.Convert(prepared, platform, profiles[platform]);
+                ConfigurationPlan plan = ConfigurationPlanner.Plan(nodes, profiles[platform]);
+                var config = configBuilder.Build(plan, cacheId);
+                configValidator.Validate(config, profiles[platform].Settings.AddressFamily);
+                string content = configSerializer.Serialize(config);
                 artifacts.Add(new ConversionArtifact(
                     platform,
                     content,
                     configSerializer.GetContentHash(content)));
+            }
+            // Preserve the existing error contract for a conflict on the first requested platform.
+            // Name binding belongs to platform planning even though this historical case is a conversion error.
+            catch (NodeParseException ex) when (platform == profiles.First().Key)
+            {
+                throw new BoxForgeConversionException("Clash YAML 转换失败。", ex);
             }
             catch (Exception ex) when (ex is ConfigValidationException or RegexMatchTimeoutException or NodeParseException)
             {

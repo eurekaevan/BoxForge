@@ -15,7 +15,10 @@ public sealed class Program
     public static WebApplication CreateApplication(string[] args)
     {
         WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
-        builder.Configuration.AddEnvironmentVariables(prefix: "BOXFORGE_");
+        using var environment = new ConfigurationManager();
+        environment.AddEnvironmentVariables(prefix: "BOXFORGE_");
+        environment.ValidateBoxForgeEnvironment();
+        builder.Configuration.AddInMemoryCollection(environment.AsEnumerable().Where(pair => pair.Value is not null).ToArray());
         string? profilePath = new ConfigurationBuilder().AddCommandLine(args).Build()["Profile"];
         if (profilePath != null)
             builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> { ["Profile"] = profilePath });

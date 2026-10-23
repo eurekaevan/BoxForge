@@ -19,8 +19,9 @@ public sealed class SingboxConfigBuilderTests
 {
     [TestCase("leaf", "IR002", "plan.groups.leaves[0]")]
     [TestCase("dns_detour", "IR003", "plan.dns.resolvers[0].detour")]
+    [TestCase("dns_rule_match", "IR005", "dns_rule")]
     [TestCase("dns_rule_set", "IR005", "plan.dns.pools[0].rule_sets[0]")]
-    [TestCase("service_selector", "IR003", "plan.route.priority_services[0].name")]
+    [TestCase("service_selector", "IR003", "service_rule")]
     [TestCase("route_final", "IR003", "plan.route.final_outbound")]
     [TestCase("resolver", "IR006", "plan.http_clients[0].resolver")]
     [TestCase("client_detour", "IR003", "plan.http_clients[0].detour")]
@@ -35,15 +36,21 @@ public sealed class SingboxConfigBuilderTests
     public void ConfigurationPlanRejectsBrokenCrossModuleBindings(string fault, string code, string path)
     {
         var nodes = new NodeCatalog([CreateProxy("US01", "us-1.example.com"), CreateProxy("US02", "us-2.example.com")], ["US01", "US02"]);
-        var plan = CreateBuilder(apiEnabled: true).Plan(new SingboxBuildRequest(nodes, TargetPlatform.Linux, new string('a', 64)));
+        var plan = ConfigurationPlanner.Plan(nodes, CreateProfile(TargetPlatform.Linux, apiEnabled: true));
+        if (fault == "service_selector")
+            path = $"plan.route.rules[{plan.Route.Rules.Select((rule, index) => (rule, index)).First(item => item.rule.Phase == RoutePhase.PriorityServices).index}].outbound";
+        int dnsRuleIndex = plan.Dns.Rules.Select((rule, index) => (rule, index)).First(item => !item.rule.RuleSet.IsDefaultOrEmpty).index;
+        if (fault == "dns_rule_match")
+            path = $"plan.dns.rules[{dnsRuleIndex}].rule_set[0]";
         plan = fault switch
         {
             "leaf" => plan with { Nodes = [] },
             "dns_detour" => plan with { Dns = plan.Dns with { Resolvers = [plan.Dns.Resolvers[0] with { Detour = "missing" }, .. plan.Dns.Resolvers.Skip(1)] } },
+            "dns_rule_match" => plan with { Dns = plan.Dns with { Rules = plan.Dns.Rules.SetItem(dnsRuleIndex, plan.Dns.Rules[dnsRuleIndex] with { RuleSet = ["missing"] }) } },
             "dns_rule_set" => plan with { Dns = plan.Dns with { Pools = [plan.Dns.Pools[0] with { RuleSets = ["missing"] }, .. plan.Dns.Pools.Skip(1)] } },
             "service_selector" => plan with { Groups = plan.Groups with { Services = [] } },
             "route_final" => plan with { Route = plan.Route with { FinalOutbound = "missing" } },
-            "resolver" => plan with { HttpClients = [plan.HttpClients[0] with { Resolver = "missing" }, .. plan.HttpClients.Skip(1)] },
+            "resolver" => plan with { HttpClients = [plan.HttpClients[0] with { Resolver = plan.HttpClients[0].Resolver with { Server = "missing" } }, .. plan.HttpClients.Skip(1)] },
             "client_detour" => plan with { HttpClients = [plan.HttpClients[0] with { Detour = "missing" }, .. plan.HttpClients.Skip(1)] },
             "download_client" => plan with { HttpClients = [plan.HttpClients[1]] },
             "dashboard_client" => plan with { HttpClients = [plan.HttpClients[0]] },
@@ -56,6 +63,7 @@ public sealed class SingboxConfigBuilderTests
                 Dns = plan.Dns with
                 {
                     Resolvers = [.. plan.Dns.Resolvers.Skip(1)],
+                    Rules = [.. plan.Dns.Rules.Select(ReplaceBootstrapResolver)],
                     Pools = [.. plan.Dns.Pools.Select(pool => pool with
                 { PrimaryResolver = pool.PrimaryResolver == SingboxTags.DirectAliDns ? SingboxTags.DirectTencentDns : pool.PrimaryResolver })]
                 }
@@ -65,19 +73,24 @@ public sealed class SingboxConfigBuilderTests
         var error = Assert.Throws<ConfigValidationException>(() => plan.Validate());
         Assert.That(error!.Diagnostics.Any(diagnostic => diagnostic.Code == code && diagnostic.Path == path), Is.True);
         Assert.That(error.Diagnostics.All(diagnostic => diagnostic.Code.StartsWith("IR", StringComparison.Ordinal)), Is.True);
+
+        static DnsRulePlan ReplaceBootstrapResolver(DnsRulePlan rule) => rule with
+        {
+            Server = rule.Server == SingboxTags.DirectAliDns ? SingboxTags.DirectTencentDns : rule.Server,
+            Rules = rule.Rules.IsDefault ? default : [.. rule.Rules.Select(ReplaceBootstrapResolver)]
+        };
     }
 
     [Test]
     public void ConfigurationPlanReportsAllBindingFailuresInStableOrder()
     {
-        var plan = CreateBuilder(apiEnabled: true).Plan(new SingboxBuildRequest(
-            new NodeCatalog([], []), TargetPlatform.Linux, new string('a', 64)));
+        var plan = ConfigurationPlanner.Plan(new NodeCatalog([], []), CreateProfile(TargetPlatform.Linux, apiEnabled: true));
         plan = plan with
         {
             TailscaleEndpointEnabled = false,
             Route = plan.Route with { FinalOutbound = "missing-outbound" },
             Dns = plan.Dns with { BlockedRuleSets = ["missing-rule-set"] },
-            HttpClients = [plan.HttpClients[0] with { Resolver = "missing-resolver" }]
+            HttpClients = [plan.HttpClients[0] with { Resolver = plan.HttpClients[0].Resolver with { Server = "missing-resolver" } }]
         };
         var first = Assert.Throws<ConfigValidationException>(() => plan.Validate())!;
         var second = Assert.Throws<ConfigValidationException>(() => plan.Validate())!;
@@ -94,16 +107,77 @@ public sealed class SingboxConfigBuilderTests
     }
 
     [Test]
-    public void BuildRejectsCatalogWithUndeclaredPlannedLeaves()
+    public void PlanCollectsLocalAndCrossModuleErrorsAndSnapshotsDiagnostics()
+    {
+        var plan = ConfigurationPlanner.Plan(new NodeCatalog([], []), CreateProfile(TargetPlatform.Linux));
+        plan = plan with
+        {
+            Groups = plan.Groups with { Main = plan.Groups.Main with { Preferred = "sensitive-group" } },
+            Dns = plan.Dns with { Rules = default },
+            Route = plan.Route with { Rules = default, FinalOutbound = "sensitive-outbound" }
+        };
+        var error = Assert.Throws<ConfigValidationException>(plan.Validate)!;
+        Assert.That(error.Diagnostics.Select(item => (item.Code, item.Path)), Is.EqualTo(new[]
+        {
+            ("IR010", "plan.groups.main.preferred"),
+            ("IR008", "plan.dns.rules"),
+            ("IR008", "plan.route.rules"),
+            ("IR003", "plan.route.final_outbound")
+        }));
+        Assert.That(JsonSerializer.Serialize(error.Diagnostics), Does.Not.Contain("sensitive"));
+        var mutable = error.Diagnostics.ToList();
+        var snapshot = new ConfigValidationException(mutable);
+        mutable.Clear();
+        Assert.That(snapshot.Diagnostics, Is.EqualTo(error.Diagnostics));
+        Assert.Throws<NotSupportedException>(() => ((IList<ConfigDiagnostic>)snapshot.Diagnostics).Clear());
+    }
+
+    [Test]
+    public void NodeResolverDiagnosticsUseSortedIndicesInsteadOfUntrustedNames()
+    {
+        var plan = ConfigurationPlanner.Plan(new NodeCatalog([], []), CreateProfile(TargetPlatform.Linux));
+        plan = plan with
+        {
+            NodeResolvers = System.Collections.Immutable.ImmutableDictionary<string, DomainResolverPlan>.Empty
+                .Add("z-sensitive\nname", new DomainResolverPlan("sensitive-resolver", AddressFamilyPolicy.Auto, true))
+                .Add("a-sensitive]name", new DomainResolverPlan("sensitive-resolver", AddressFamilyPolicy.Auto, true))
+        };
+        var error = Assert.Throws<ConfigValidationException>(plan.Validate)!;
+        Assert.That(error.Diagnostics.Select(item => (item.Code, item.Path)), Is.EqualTo(new[]
+        {
+            ("IR002", "plan.node_resolvers[0]"), ("IR006", "plan.node_resolvers[0].server"),
+            ("IR002", "plan.node_resolvers[1]"), ("IR006", "plan.node_resolvers[1].server")
+        }));
+        Assert.That(JsonSerializer.Serialize(error.Diagnostics), Does.Not.Contain("sensitive"));
+    }
+
+    [Test]
+    public void BuildValidatesTheCompletePlanBeforeEmission()
     {
         var nodes = new NodeCatalog([CreateProxy("actual", "node.example.com")], ["invented"]);
-        var exception = Assert.Throws<ConfigValidationException>(() => CreateBuilder().Build(
-            new SingboxBuildRequest(nodes, TargetPlatform.Linux, new string('a', 64))));
+        var exception = Assert.Throws<ConfigValidationException>(() => new SingboxConfigBuilder().Build(
+            ConfigurationPlanner.Plan(nodes, CreateProfile(TargetPlatform.Linux)), null));
         Assert.That(exception!.Diagnostics, Is.EqualTo(new[]
         {
-            new ConfigDiagnostic("IR002", "plan.groups.leaves[0]", "引用了未声明的目标 'invented'。"),
-            new ConfigDiagnostic("IR003", "plan.http_clients[0].detour", "引用了未声明的目标 'invented'。")
+            new ConfigDiagnostic("IR002", "plan.groups.leaves[0]", "引用了未声明的目标。"),
+            new ConfigDiagnostic("IR003", "plan.http_clients[0].detour", "引用了未声明的目标。")
         }));
+    }
+
+    [TestCase("groups", "IR010", "plan.groups.main.preferred")]
+    [TestCase("dns", "IR008", "plan.dns.rules")]
+    [TestCase("route", "IR010", "plan.route.phases")]
+    public void BuildRejectsInvalidComponentPlansBeforeMappingTargets(string component, string code, string path)
+    {
+        var plan = ConfigurationPlanner.Plan(new NodeCatalog([], []), CreateProfile(TargetPlatform.Linux));
+        plan = component switch
+        {
+            "groups" => plan with { Groups = plan.Groups with { Main = plan.Groups.Main with { Preferred = "missing" } } },
+            "dns" => plan with { Dns = plan.Dns with { Rules = default } },
+            _ => plan with { Route = plan.Route with { Phases = [] } }
+        };
+        var error = Assert.Throws<ConfigValidationException>(() => new SingboxConfigBuilder().Build(plan, null))!;
+        Assert.That(error.Diagnostics.Select(item => (item.Code, item.Path)), Is.EqualTo(new[] { (code, path) }));
     }
 
     [Test]
@@ -114,22 +188,21 @@ public sealed class SingboxConfigBuilderTests
         {
             platforms = new { Linux = new { features = new { tailscale = new { taildrop_directory = "EndpointTaildrop" } } } }
         })!.AsObject());
-        var effective = endpointProfile.ForPlatform(TargetPlatform.Linux, JsonSerializer.SerializeToNode(new
+        var effective = endpointProfile.Resolve(TargetPlatform.Linux, JsonSerializer.SerializeToNode(new
         {
             features = new { tailscale = new { taildrop_directory = "RequestTaildrop" } }
         })!.AsObject());
-        var builder = CreateBuilder(profile: profile);
-        var request = new SingboxBuildRequest(new NodeCatalog([], []), TargetPlatform.Linux, new string('a', 64))
-        { Profile = effective };
-        var plan = builder.Plan(request);
-        var config = builder.Build(request);
+        var builder = new SingboxConfigBuilder();
+        var nodes = new NodeCatalog([], []);
+        var plan = ConfigurationPlanner.Plan(nodes, effective);
+        var config = builder.Build(plan, new string('a', 64));
         Assert.Multiple(() =>
         {
             Assert.That(plan.TaildropDirectory, Is.EqualTo("RequestTaildrop"));
             Assert.That(config.Endpoints!.OfType<TailscaleEndpoint>().Single().TaildropDirectory, Is.EqualTo("RequestTaildrop"));
-            Assert.That(builder.Plan(request with { Profile = null }).TaildropDirectory,
-                Is.EqualTo(profile.GetPlatform(TargetPlatform.Linux).TaildropDirectory));
-            Assert.That(endpointProfile.GetPlatform(TargetPlatform.Linux).TaildropDirectory, Is.EqualTo("EndpointTaildrop"));
+            Assert.That(ConfigurationPlanner.Plan(nodes, profile.Resolve(TargetPlatform.Linux)).TaildropDirectory,
+                Is.EqualTo(profile.Resolve(TargetPlatform.Linux).Settings.TaildropDirectory));
+            Assert.That(endpointProfile.Resolve(TargetPlatform.Linux).Settings.TaildropDirectory, Is.EqualTo("EndpointTaildrop"));
         });
     }
 
@@ -144,8 +217,8 @@ public sealed class SingboxConfigBuilderTests
         {
             features = new { tailscale = new { enabled = false }, api = new { enabled = false } }
         })!.AsObject());
-        var request = new SingboxBuildRequest(new NodeCatalog([], []), TargetPlatform.Linux, new string('a', 64));
-        var plan = CreateBuilder(profile: enabled).Plan(request);
+        var nodes = new NodeCatalog([], []);
+        var plan = ConfigurationPlanner.Plan(nodes, enabled.Resolve(TargetPlatform.Linux));
         var endpoints = TailscaleEndpointBuilder.Emit(plan.TaildropDirectory, plan.TailscaleEndpointEnabled);
         var services = SingboxApiServiceBuilder.Emit(plan.ApiServiceEnabled);
         Assert.Multiple(() =>
@@ -153,14 +226,14 @@ public sealed class SingboxConfigBuilderTests
             Assert.That(endpoints.Single().Tag, Is.EqualTo(SingboxTags.TailscaleEndpoint));
             Assert.That(((ApiService)services.Single()).Dashboard!.HttpClient,
                 Is.EqualTo(plan.HttpClients.Single(client => client.Name == HttpClientTags.DashboardDirect).Name));
-            Assert.That(CreateBuilder(profile: disabled).Plan(request).TailscaleEndpointEnabled, Is.False);
-            Assert.That(CreateBuilder(profile: disabled).Plan(request).ApiServiceEnabled, Is.False);
+            Assert.That(ConfigurationPlanner.Plan(nodes, disabled.Resolve(TargetPlatform.Linux)).TailscaleEndpointEnabled, Is.False);
+            Assert.That(ConfigurationPlanner.Plan(nodes, disabled.Resolve(TargetPlatform.Linux)).ApiServiceEnabled, Is.False);
             Assert.That(plan.TailscaleEndpointEnabled, Is.True);
         });
     }
 
     [Test]
-    public async Task SharedCatalogGeneratesIndependentPlatformConfigurationsConcurrently()
+    public async Task SharedPlatformPlansEmitIndependentConfigurationsConcurrently()
     {
         var input = new ClashConfig { Proxies = [] };
         var parser = new ClashParser();
@@ -171,14 +244,16 @@ public sealed class SingboxConfigBuilderTests
                 yaml = yaml.Replace("    password: test-only", "    password: test-only\n    alpn: [h2, http/1.1]", StringComparison.Ordinal);
             input.Proxies.AddRange(parser.Parse(yaml)!.Proxies);
         }
-        var catalog = new NodeCatalogBuilder(BoxForgeProfile.Default).Build(input);
-        var builder = CreateBuilder();
+        var catalog = NodeCatalogBuilder.Build(input);
         var serializer = new ConfigSerializer();
         TargetPlatform[] platforms = Enum.GetValues<TargetPlatform>();
+        var plans = platforms.ToDictionary(platform => platform,
+            platform => ConfigurationPlanner.Plan(catalog, BoxForgeProfile.Default.Resolve(platform)));
+        var builder = new SingboxConfigBuilder();
         var expected = platforms.ToDictionary(platform => platform,
-            platform => serializer.Serialize(builder.Build(new SingboxBuildRequest(catalog, platform, new string('a', 64)))));
+            platform => serializer.Serialize(builder.Build(plans[platform], new string('a', 64))));
         var generated = await Task.WhenAll(Enumerable.Range(0, 3).SelectMany(_ => platforms.Reverse().Select(platform =>
-            Task.Run(() => (Platform: platform, Config: builder.Build(new SingboxBuildRequest(catalog, platform, new string('a', 64))))))));
+            Task.Run(() => (Platform: platform, Config: builder.Build(plans[platform], new string('a', 64)))))));
         foreach (var result in generated)
             Assert.That(serializer.Serialize(result.Config), Is.EqualTo(expected[result.Platform]));
         foreach (ProxyOutbound outbound in generated[0].Config.Outbounds.OfType<ProxyOutbound>())
@@ -197,7 +272,7 @@ public sealed class SingboxConfigBuilderTests
         foreach (var result in generated.Skip(1))
             Assert.That(serializer.Serialize(result.Config), Is.EqualTo(expected[result.Platform]));
         foreach (TargetPlatform platform in platforms)
-            Assert.That(serializer.Serialize(builder.Build(new SingboxBuildRequest(catalog, platform, new string('a', 64)))),
+            Assert.That(serializer.Serialize(builder.Build(plans[platform], new string('a', 64))),
                 Is.EqualTo(expected[platform]));
         foreach (ProxyNode node in catalog.Nodes)
         {
@@ -216,10 +291,9 @@ public sealed class SingboxConfigBuilderTests
     public void AllPlatformsGenerateOnlyTunInbound(
         TargetPlatform platform)
     {
-        SingboxConfig config = CreateBuilder().Build(new SingboxBuildRequest(
-            new NodeCatalog([], []),
-            platform,
-            new string('a', 64)));
+        SingboxConfig config = PlanAndBuild(
+            new NodeCatalog([], []), CreateProfile(platform),
+            new string('a', 64));
 
         Inbound tunInbound = config.Inbounds.Single(inbound =>
             inbound.Tag == SingboxTags.TunInbound);
@@ -262,7 +336,7 @@ public sealed class SingboxConfigBuilderTests
                 Is.EqualTo(platform == TargetPlatform.Linux));
         });
 
-        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Ipv4Only));
+        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Auto));
     }
 
     [TestCase(TargetPlatform.Android)]
@@ -270,10 +344,9 @@ public sealed class SingboxConfigBuilderTests
     [TestCase(TargetPlatform.Windows)]
     public void AllPlatformsEnableTailscaleByDefault(TargetPlatform platform)
     {
-        SingboxConfig config = CreateBuilder().Build(new SingboxBuildRequest(
-            new NodeCatalog([], []),
-            platform,
-            new string('b', 64)));
+        SingboxConfig config = PlanAndBuild(
+            new NodeCatalog([], []), CreateProfile(platform),
+            new string('b', 64));
 
         TailscaleEndpoint? endpoint = config.Endpoints?
             .OfType<TailscaleEndpoint>()
@@ -299,7 +372,7 @@ public sealed class SingboxConfigBuilderTests
             Assert.That(json, Does.Contain("\"on_demand\": true"));
         });
 
-        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Ipv4Only));
+        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Auto));
     }
 
     [TestCase(TargetPlatform.Android)]
@@ -307,11 +380,10 @@ public sealed class SingboxConfigBuilderTests
     [TestCase(TargetPlatform.Windows)]
     public void AllPlatformsCanDisableTailscaleExplicitly(TargetPlatform platform)
     {
-        SingboxConfig config = CreateBuilder(tailscaleEnabled: platform == TargetPlatform.Android,
-            androidEnabled: platform != TargetPlatform.Android).Build(new SingboxBuildRequest(
-            new NodeCatalog([], []),
-            platform,
-            new string('c', 64)));
+        SingboxConfig config = PlanAndBuild(
+            new NodeCatalog([], []), CreateProfile(platform, tailscaleEnabled: platform == TargetPlatform.Android,
+            androidEnabled: platform != TargetPlatform.Android),
+            new string('c', 64));
 
         Assert.Multiple(() =>
         {
@@ -326,7 +398,7 @@ public sealed class SingboxConfigBuilderTests
                 Is.False);
         });
 
-        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Ipv4Only));
+        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Auto));
     }
 
     [TestCase(TargetPlatform.Android)]
@@ -336,12 +408,12 @@ public sealed class SingboxConfigBuilderTests
     {
         ProxyNode first = CreateProxy("美国 01", "us-1.example.com");
         ProxyNode second = CreateProxy("美国 02", "us-2.example.com");
-        SingboxConfig config = CreateBuilder().Build(new SingboxBuildRequest(
+        SingboxConfig config = PlanAndBuild(
             new NodeCatalog(
                 [first, second],
-                [first.Name, second.Name]),
-            platform,
-            new string('a', 64)));
+                [first.Name, second.Name]), CreateProfile(platform, profile: BoxForgeProfile.Default.ApplyOverrides(
+            JsonSerializer.SerializeToNode(new { dns = new { address_family = "Ipv4Only" } })!.AsObject())),
+            new string('a', 64));
 
         HttpClientConfig proxyClient = config.HttpClients.Single();
         UrlTestOutbound regionAuto = config.Outbounds.OfType<UrlTestOutbound>().Single();
@@ -355,6 +427,9 @@ public sealed class SingboxConfigBuilderTests
             .GetProperty("rule_set");
         JsonElement serializedDustinWinTags = serializedRuleSets[0]
             .GetProperty("tag");
+        JsonElement serializedAds = serializedRuleSets.EnumerateArray().Single(ruleSet =>
+            ruleSet.GetProperty("tag").ValueKind == JsonValueKind.String
+            && ruleSet.GetProperty("tag").GetString() == RuleSetTags.Ads);
 
         Assert.Multiple(() =>
         {
@@ -382,18 +457,14 @@ public sealed class SingboxConfigBuilderTests
             Assert.That(json, Does.Not.Contain("anti-ad"));
             Assert.That(json, Does.Not.Contain("anti-ad.net"));
             Assert.That(json, Does.Not.Contain("adguard-dns"));
-            Assert.That(serializedRuleSets.GetArrayLength(), Is.EqualTo(4));
+            Assert.That(serializedRuleSets.GetArrayLength(), Is.EqualTo(6));
             Assert.That(serializedDustinWinTags.ValueKind, Is.EqualTo(JsonValueKind.Array));
-            Assert.That(serializedDustinWinTags.GetArrayLength(), Is.EqualTo(5));
+            Assert.That(serializedDustinWinTags.EnumerateArray().Select(tag => tag.GetString()),
+                Is.EqualTo(new[] { "games", RuleSetTags.Cn, RuleSetTags.CnIp }));
             Assert.That(
                 serializedRuleSets[0].GetProperty("url").GetString(),
                 Is.EqualTo("https://github.com/DustinWin/ruleset_geodata/releases/download/sing-box-ruleset/{tag}.srs"));
-            Assert.That(
-                serializedRuleSets[1].GetProperty("tag").ValueKind,
-                Is.EqualTo(JsonValueKind.String));
-            Assert.That(serializedRuleSets[1].GetProperty("tag").GetString(),
-                Is.EqualTo(RuleSetTags.Ads));
-            Assert.That(serializedRuleSets[1].GetProperty("url").GetString(),
+            Assert.That(serializedAds.GetProperty("url").GetString(),
                 Is.EqualTo("https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/category-ads-and-telemetry.srs"));
             Assert.That(json, Does.Not.Contain("SagerNet"));
             Assert.That(json, Does.Not.Contain("geosite-"));
@@ -409,10 +480,9 @@ public sealed class SingboxConfigBuilderTests
     public void RuleSetDownloadsUseLeafNodeWhenRegionAutoIsUnavailable()
     {
         ProxyNode node = CreateProxy("美国 01", "us-1.example.com");
-        SingboxConfig config = CreateBuilder().Build(new SingboxBuildRequest(
-            new NodeCatalog([node], [node.Name]),
-            TargetPlatform.Linux,
-            new string('a', 64)));
+        SingboxConfig config = PlanAndBuild(
+            new NodeCatalog([node], [node.Name]), CreateProfile(TargetPlatform.Linux),
+            new string('a', 64));
 
         Assert.Multiple(() =>
         {
@@ -422,23 +492,24 @@ public sealed class SingboxConfigBuilderTests
                 Is.EqualTo(HttpClientTags.RuleSetProxy));
         });
 
-        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Ipv4Only));
+        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Auto));
     }
 
     [Test]
-    public void RouteSerializesGlobalIpv6RejectAndQuicRejectSemantics()
+    public void DefaultRouteSerializesConditionalIpv6GuardsWithoutPortBasedQuicRejection()
     {
-        SingboxConfig config = CreateBuilder().Build(new SingboxBuildRequest(
-            new NodeCatalog([], []),
-            TargetPlatform.Linux,
-            new string('a', 64)));
+        SingboxConfig config = PlanAndBuild(
+            new NodeCatalog([], []), CreateProfile(TargetPlatform.Linux),
+            new string('a', 64));
 
         string json = new ConfigSerializer().Serialize(config);
         using JsonDocument document = JsonDocument.Parse(json);
         List<JsonElement> ipv6Rejects = document.RootElement.GetProperty("route")
             .GetProperty("rules").EnumerateArray()
-            .Where(rule => rule.TryGetProperty("ip_version", out JsonElement version)
-                && version.GetInt32() == 6).ToList();
+            .Where(rule => rule.GetProperty("action").GetString() == "reject"
+                && rule.TryGetProperty("rules", out JsonElement conditions)
+                && conditions.EnumerateArray().Any(child => child.TryGetProperty("ip_version", out JsonElement version)
+                    && version.GetInt32() == 6)).ToList();
 
         Assert.Multiple(() =>
         {
@@ -447,20 +518,23 @@ public sealed class SingboxConfigBuilderTests
                 json.Split("\"ip_version\": 6", StringSplitOptions.None).Length - 1,
                 Is.EqualTo(2));
             Assert.That(json, Does.Not.Contain("::/0"));
-            Assert.That(
-                json.Split("\"no_drop\": true", StringSplitOptions.None).Length - 1,
-                Is.EqualTo(3));
-            Assert.That(json, Does.Not.Contain("\"no_drop\": false"));
+            Assert.That(json, Does.Not.Contain("\"no_drop\""));
+            Assert.That(document.RootElement.GetProperty("route").GetProperty("rules").EnumerateArray()
+                .Any(rule => rule.GetProperty("action").GetString() == "reject"
+                    && rule.TryGetProperty("port", out JsonElement ports)
+                    && ports.EnumerateArray().Any(port => port.GetInt32() == 443)), Is.False);
             Assert.That(ipv6Rejects, Has.Count.EqualTo(2));
             Assert.That(ipv6Rejects.All(rule =>
                 rule.GetProperty("action").GetString() == "reject"
+                && rule.GetProperty("rules")[1].GetProperty("default_interface_address")[0].GetString() == "2000::/3"
+                && rule.GetProperty("rules")[1].GetProperty("invert").GetBoolean()
                 && !rule.TryGetProperty("invert", out _)
                 && !rule.TryGetProperty("inbound", out _)
                 && !rule.TryGetProperty("network", out _)), Is.True);
             Assert.That(json, Does.Not.Contain("\"invert\": false"));
         });
 
-        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Ipv4Only));
+        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Auto));
     }
 
     [TestCase(TargetPlatform.Android)]
@@ -468,15 +542,12 @@ public sealed class SingboxConfigBuilderTests
     [TestCase(TargetPlatform.Windows)]
     public void SingboxApiIsOptionalAndLoopbackOnly(TargetPlatform platform)
     {
-        SingboxConfig disabled = CreateBuilder().Build(new SingboxBuildRequest(
-            new NodeCatalog([], []),
-            platform,
-            new string('a', 64)));
-        SingboxConfig enabled = CreateBuilder(apiEnabled: true).Build(
-            new SingboxBuildRequest(
-                new NodeCatalog([], []),
-                platform,
-                new string('b', 64)));
+        SingboxConfig disabled = PlanAndBuild(
+            new NodeCatalog([], []), CreateProfile(platform),
+            new string('a', 64));
+        SingboxConfig enabled = PlanAndBuild(
+                new NodeCatalog([], []), CreateProfile(platform, apiEnabled: true),
+                new string('b', 64));
 
         ApiService api = enabled.Services?.OfType<ApiService>().Single()
             ?? throw new AssertionException("缺少 sing-box API service");
@@ -505,7 +576,7 @@ public sealed class SingboxConfigBuilderTests
                 client.Tag == HttpClientTags.DashboardDirect).Detour, Is.Null);
         });
 
-        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(enabled, AddressFamilyPolicy.Ipv4Only));
+        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(enabled, AddressFamilyPolicy.Auto));
     }
 
     [Test]
@@ -519,10 +590,10 @@ public sealed class SingboxConfigBuilderTests
             ["port"] = 443,
             ["uuid"] = "00000000-0000-4000-8000-000000000001"
         }));
-        SingboxConfig config = CreateBuilder().Build(new SingboxBuildRequest(
-            new NodeCatalog([proxy], [proxy.Name]),
-            TargetPlatform.Linux,
-            new string('b', 64)));
+        SingboxConfig config = PlanAndBuild(
+            new NodeCatalog([proxy], [proxy.Name]), CreateProfile(TargetPlatform.Linux, profile: BoxForgeProfile.Default.ApplyOverrides(
+            JsonSerializer.SerializeToNode(new { dns = new { address_family = "Ipv4Only" } })!.AsObject())),
+            new string('b', 64));
 
         string json = new ConfigSerializer().Serialize(config);
 
@@ -565,10 +636,9 @@ public sealed class SingboxConfigBuilderTests
             ["port"] = 443,
             ["password"] = "test-only"
         }));
-        SingboxConfig config = CreateBuilder().Build(new SingboxBuildRequest(
-            new NodeCatalog([source], [source.Name]),
-            platform,
-            new string('d', 64)));
+        SingboxConfig config = PlanAndBuild(
+            new NodeCatalog([source], [source.Name]), CreateProfile(platform),
+            new string('d', 64));
         Hysteria2Outbound outbound = config.Outbounds
             .OfType<Hysteria2Outbound>()
             .Single();
@@ -594,11 +664,11 @@ public sealed class SingboxConfigBuilderTests
         ProxyNode second = CreateProxy("美国 02", "us-2.example.com");
         ProfilePlan plan = SingboxGroupEmitter.Emit(ProfilePlanner.PlanGroups(new NodeCatalog(
             [first, second],
-            ["美国 01", "美国 02"]), BoxForgeProfile.Default, null));
+            ["美国 01", "美国 02"]), BoxForgeProfile.Default.Resolve(TargetPlatform.Linux)));
 
         SelectorOutbound google = plan.ServiceOutbounds.Single(outbound =>
-            outbound.Tag == ServiceGroupNames.Google);
-        string unitedStates = BoxForgeProfile.Default.Regions.Single(region =>
+            outbound.Tag == "🔎 Google");
+        string unitedStates = BoxForgeProfile.Default.Resolve(TargetPlatform.Linux).Regions.Single(region =>
             region.Id == "us").DisplayName;
 
         Assert.Multiple(() =>
@@ -616,33 +686,32 @@ public sealed class SingboxConfigBuilderTests
         var nodes = new NodeCatalog(
             [first, second],
             [first.Name, second.Name]);
-        ProfilePlan plan = SingboxGroupEmitter.Emit(ProfilePlanner.PlanGroups(nodes, BoxForgeProfile.Default, null));
-        SingboxConfig config = CreateBuilder().Build(new SingboxBuildRequest(
-            nodes,
-            TargetPlatform.Android,
-            new string('d', 64)));
+        ProfilePlan plan = SingboxGroupEmitter.Emit(ProfilePlanner.PlanGroups(nodes, BoxForgeProfile.Default.Resolve(TargetPlatform.Linux)));
+        SingboxConfig config = PlanAndBuild(
+            nodes, CreateProfile(TargetPlatform.Android),
+            new string('d', 64));
 
         SelectorOutbound games = plan.ServiceOutbounds.Single(outbound =>
-            outbound.Tag == ServiceGroupNames.Games);
-        string hongKong = BoxForgeProfile.Default.Regions.Single(region =>
+            outbound.Tag == "🎮 GAMES");
+        string hongKong = BoxForgeProfile.Default.Resolve(TargetPlatform.Linux).Regions.Single(region =>
             region.Id == "hk").DisplayName;
         RouteRule gamesRoute = config.Route.Rules.Single(rule =>
-            rule.Outbound == ServiceGroupNames.Games);
+            rule.Outbound == "🎮 GAMES");
         SingboxRuleSet dustinWin = config.Route.RuleSet.Single(ruleSet =>
-            ruleSet.Tag?.Contains(RuleSetTags.Games) == true);
+            ruleSet.Tag?.Contains("games") == true);
 
         Assert.Multiple(() =>
         {
             Assert.That(games.Default, Is.EqualTo(hongKong));
             Assert.That(games.Outbounds, Does.Contain(hongKong));
-            Assert.That(gamesRoute.RuleSet, Is.EqualTo(new[] { RuleSetTags.Games }));
+            Assert.That(gamesRoute.RuleSet, Is.EqualTo(new[] { "games" }));
             Assert.That(dustinWin.Url,
                 Is.EqualTo("https://github.com/DustinWin/ruleset_geodata/releases/download/sing-box-ruleset/{tag}.srs"));
             Assert.That(new ConfigSerializer().Serialize(config),
                 Does.Not.Contain("Steam"));
         });
 
-        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Ipv4Only));
+        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Auto));
     }
 
     [TestCase(TargetPlatform.Android)]
@@ -658,10 +727,9 @@ public sealed class SingboxConfigBuilderTests
             [usFirst, usSecond, jpFirst, jpSecond],
             [usFirst.Name, usSecond.Name, jpFirst.Name, jpSecond.Name]);
 
-        SingboxConfig config = CreateBuilder().Build(new SingboxBuildRequest(
-            nodes,
-            platform,
-            new string('c', 64)));
+        SingboxConfig config = PlanAndBuild(
+            nodes, CreateProfile(platform),
+            new string('c', 64));
         HashSet<string> leafTags = config.Outbounds
             .OfType<ProxyOutbound>()
             .Select(outbound => outbound.Tag)
@@ -703,28 +771,31 @@ public sealed class SingboxConfigBuilderTests
                 Is.True);
         });
 
-        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Ipv4Only));
+        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Auto));
     }
 
-    [Test]
-    public void BuilderAndValidatorShareTheInjectedProfileAddressFamily()
+    [TestCase(AddressFamilyPolicy.DualStack)]
+    [TestCase(AddressFamilyPolicy.Auto)]
+    public void BuilderAndValidatorShareTheResolvedProfileAddressFamily(AddressFamilyPolicy addressFamily)
     {
         var profile = BoxForgeProfile.Default.ApplyOverrides(JsonSerializer.SerializeToNode(new
         {
-            platforms = new { Linux = new { dns = new { address_family = "DualStack" } } }
+            platforms = new { Linux = new { dns = new { address_family = addressFamily.ToString() } } }
         })!.AsObject());
-        var request = new SingboxBuildRequest(
-            new NodeCatalog([CreateProxy("ipv6-test", "2001:db8::1")], ["ipv6-test"]),
-            TargetPlatform.Linux, new string('a', 64));
-        SingboxConfig config = CreateBuilder(profile: profile).Build(request);
+        var resolved = profile.Resolve(TargetPlatform.Linux);
+        SingboxConfig config = PlanAndBuild(
+            new NodeCatalog([CreateProxy("ipv6-test", "2001:db8::1")], ["ipv6-test"]), resolved, new string('a', 64));
         Assert.That(config.Route.DefaultDomainResolver!.Strategy, Is.Null);
         Assert.That(config.Dns.Strategy, Is.Null);
         Assert.That(config.Dns.Rules.Any(rule => rule.QueryType?.Contains("AAAA") == true), Is.False);
         Assert.That(config.Route.Rules.Any(rule => rule.IpVersion == 6 && rule.Action == RouteRuleAction.Reject), Is.False);
         Assert.That(config.HttpClients.All(client => client.DomainResolver!.Strategy is null), Is.True);
-        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, profile.GetPlatform(request.Platform).AddressFamily));
+        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, resolved.Settings.AddressFamily));
         Assert.Throws<Exceptions.ConfigValidationException>(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Ipv4Only));
     }
+
+    private static SingboxConfig PlanAndBuild(NodeCatalog nodes, ResolvedProfile profile, string? cacheId) =>
+        new SingboxConfigBuilder().Build(ConfigurationPlanner.Plan(nodes, profile), cacheId);
 
     private static ShadowsocksNode CreateProxy(string tag, string server) =>
         (ShadowsocksNode)ProxyNodeParser.Parse(new ClashProxyNode(new Hashtable
@@ -737,7 +808,8 @@ public sealed class SingboxConfigBuilderTests
             ["password"] = "test-only"
         }));
 
-    private static SingboxConfigBuilder CreateBuilder(
+    private static ResolvedProfile CreateProfile(
+        TargetPlatform platform,
         bool? tailscaleEnabled = null,
         bool? androidEnabled = null,
         bool? apiEnabled = null,
@@ -754,10 +826,9 @@ public sealed class SingboxConfigBuilderTests
                 },
                 platforms = new
                 {
-                    Android = new { features = new { tailscale = new { enabled = androidEnabled ?? profile.ForPlatform(TargetPlatform.Android).Features.Tailscale.Enabled } } }
+                    Android = new { features = new { tailscale = new { enabled = androidEnabled ?? profile.Resolve(TargetPlatform.Android).Features.Tailscale.Enabled } } }
                 }
             })!.AsObject());
-        return new SingboxConfigBuilder(new TailscaleEndpointBuilder(profile),
-            new DnsProfileBuilder(profile), new RouteProfileBuilder(profile), profile);
+        return profile.Resolve(platform);
     }
 }

@@ -210,7 +210,7 @@ public sealed class SingboxConfigValidatorTests
         };
         AssertDiagnostics(config,
             new("SB086", "dns.rules[0].match_response", "必须引用前置 evaluate 规则定义的响应标签。"),
-            new("SB085", "dns.rules[1].tag", "evaluate 响应标签 'same' 重复。"));
+            new("SB085", "dns.rules[1].tag", "evaluate 响应标签重复。"));
     }
 
     [Test]
@@ -303,8 +303,8 @@ public sealed class SingboxConfigValidatorTests
             config,
             new("SB008", "route.rule_set[0].tag", "标签不能为空。"),
             new("SB008", "route.rule_set[1].tag[1]", "标签不能为空。"),
-            new("SB009", "route.rule_set[1].tag[2]", "标签 'duplicate' 重复。"),
-            new("SB009", "route.rule_set[2].tag", "标签 'duplicate' 重复。"));
+            new("SB009", "route.rule_set[1].tag[2]", "标签重复。"),
+            new("SB009", "route.rule_set[2].tag", "标签重复。"));
     }
 
     [Test]
@@ -323,7 +323,7 @@ public sealed class SingboxConfigValidatorTests
         AssertDiagnostics(
             config,
             new("SB008", "http_clients[0].tag", "标签不能为空。"),
-            new("SB009", "http_clients[2].tag", "标签 'http' 重复。"));
+            new("SB009", "http_clients[2].tag", "标签重复。"));
     }
 
     [Test]
@@ -340,7 +340,7 @@ public sealed class SingboxConfigValidatorTests
             new ConfigDiagnostic(
                 "SB009",
                 "outbounds[2].tag",
-                "标签 'direct' 重复。"));
+                "标签重复。"));
     }
 
     [Test]
@@ -356,7 +356,7 @@ public sealed class SingboxConfigValidatorTests
             new ConfigDiagnostic(
                 "SB009",
                 "endpoints[1].tag",
-                "标签 'endpoint' 重复。"));
+                "标签重复。"));
     }
 
     [Test]
@@ -373,7 +373,7 @@ public sealed class SingboxConfigValidatorTests
             new ConfigDiagnostic(
                 "SB009",
                 "inbounds[1].tag",
-                "标签 'tun' 重复。"));
+                "标签重复。"));
     }
 
     [Test]
@@ -389,7 +389,7 @@ public sealed class SingboxConfigValidatorTests
             new ConfigDiagnostic(
                 "SB009",
                 "endpoints[0].tag",
-                "标签 'direct' 与 outbound tag 重复。"));
+                "标签与 outbound tag 重复。"));
     }
 
     [Test]
@@ -855,6 +855,107 @@ public sealed class SingboxConfigValidatorTests
             Outbounds = [.. valid.Outbounds, CreateProxyOutbound("ipv6") with { Server = "2001:db8::1" }]
         };
         Assert.DoesNotThrow(() => validator.Validate(config, AddressFamilyPolicy.DualStack));
+    }
+
+    [Test]
+    public void AutoRequiresConditionalGuardsWithoutAnUnconditionalDnsFamilyRestriction()
+    {
+        SingboxConfig valid = CreateValidAutoConfig();
+        Assert.DoesNotThrow(() => validator.Validate(valid, AddressFamilyPolicy.Auto));
+        foreach (RouteRule restricted in new[]
+        {
+            new RouteRule { IpVersion = 6, Action = RouteRuleAction.Reject },
+            valid.Route.Rules[0] with { Mode = RouteLogicalMode.Or },
+            valid.Route.Rules[0] with { Network = ["tcp"] },
+            valid.Route.Rules[0] with { Rules = [valid.Route.Rules[0].Rules![0]] },
+            valid.Route.Rules[0] with
+            {
+                Rules = [valid.Route.Rules[0].Rules![0], valid.Route.Rules[0].Rules![1] with { Invert = false }]
+            }
+        })
+        {
+            var config = valid with { Route = valid.Route with { Rules = [restricted, .. valid.Route.Rules.Skip(1)] } };
+            var error = Assert.Throws<ConfigValidationException>(() => validator.Validate(config, AddressFamilyPolicy.Auto));
+            Assert.That(error!.Diagnostics.Select(diagnostic => diagnostic.Code), Does.Contain("SB080"));
+        }
+        foreach (DnsRule restricted in new[]
+        {
+            new DnsRule { QueryType = ["AAAA"], Action = DnsRuleAction.Predefined, Rcode = DnsResponseCode.NoError },
+            valid.Dns.Rules[0] with { Mode = RouteLogicalMode.Or },
+            valid.Dns.Rules[0] with { Domain = ["example.com"] },
+            valid.Dns.Rules[0] with
+            {
+                Rules = [valid.Dns.Rules[0].Rules![0], valid.Dns.Rules[0].Rules![1] with { DefaultInterfaceAddress = ["::/0"] }]
+            }
+        })
+        {
+            var config = valid with { Dns = valid.Dns with { Rules = [restricted, .. valid.Dns.Rules.Skip(1)] } };
+            var error = Assert.Throws<ConfigValidationException>(() => validator.Validate(config, AddressFamilyPolicy.Auto));
+            Assert.That(error!.Diagnostics.Select(diagnostic => diagnostic.Code), Does.Contain("SB092"));
+        }
+        var forcedIpv4 = valid with { Dns = valid.Dns with { Strategy = DnsStrategy.Ipv4Only } };
+        var forcedError = Assert.Throws<ConfigValidationException>(() => validator.Validate(forcedIpv4, AddressFamilyPolicy.Auto));
+        Assert.That(forcedError!.Diagnostics.Select(diagnostic => diagnostic.Code), Does.Contain("SB092"));
+    }
+
+    [TestCase("server", "SB007")]
+    [TestCase("rule_set", "SB011")]
+    [TestCase("match_response", "SB086")]
+    [TestCase("action", "SB091")]
+    public void DnsLogicalChildrenCannotHideInvalidReferencesOrDefineResponses(string fault, string expectedCode)
+    {
+        SingboxConfig valid = CreateValidConfig();
+        DnsRule child = fault switch
+        {
+            "server" => new DnsRule { Server = "missing" },
+            "rule_set" => new DnsRule { RuleSet = ["missing"] },
+            "match_response" => new DnsRule { MatchResponse = "missing" },
+            _ => new DnsRule { Action = DnsRuleAction.Evaluate, Tag = "nested" }
+        };
+        var config = valid with
+        {
+            Dns = valid.Dns with
+            {
+                Rules = [new DnsRule
+                {
+                    Type = RouteRuleType.Logical, Mode = RouteLogicalMode.And, Rules = [child],
+                    Action = DnsRuleAction.Route, Server = "dns"
+                }]
+            }
+        };
+        var error = Assert.Throws<ConfigValidationException>(() => validator.Validate(config, AddressFamilyPolicy.DualStack));
+        Assert.That(error!.Diagnostics.Single().Code, Is.EqualTo(expectedCode));
+        Assert.That(error.Diagnostics.Single().Path, Does.StartWith("dns.rules[0].rules[0]"));
+    }
+
+    private static SingboxConfig CreateValidAutoConfig()
+    {
+        SingboxConfig valid = CreateValidIpv4Config();
+        return valid with
+        {
+            Dns = valid.Dns with
+            {
+                Strategy = null,
+                Rules = [new DnsRule
+                {
+                    Type = RouteRuleType.Logical, Mode = RouteLogicalMode.And,
+                    Rules = [new DnsRule { QueryType = ["AAAA"] },
+                        new DnsRule { DefaultInterfaceAddress = ["2000::/3"], Invert = true }],
+                    Action = DnsRuleAction.Predefined, Rcode = DnsResponseCode.NoError
+                }, .. valid.Dns.Rules.Skip(1)]
+            },
+            Route = valid.Route with
+            {
+                Rules = valid.Route.Rules.Select(rule => rule.IpVersion == 6 ? new RouteRule
+                {
+                    Type = RouteRuleType.Logical,
+                    Mode = RouteLogicalMode.And,
+                    Rules = [new RouteRule { IpVersion = 6 },
+                        new RouteRule { DefaultInterfaceAddress = ["2000::/3"], Invert = true }],
+                    Action = RouteRuleAction.Reject
+                } : rule).ToList()
+            }
+        };
     }
 
     private void AssertDiagnostics(

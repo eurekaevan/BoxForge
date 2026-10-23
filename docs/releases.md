@@ -25,8 +25,8 @@ PR 摘要和比较链接。这不是 Copilot AI 总结，也不需要额外凭�
 | --- | --- | --- |
 | Input | 读取 Clash/Mihomo YAML 的 `proxies`；支持 Trojan、VLESS、Hysteria2、Shadowsocks、AnyTLS 的已声明子集。任一无法安全映射的节点使引擎请求失败；不转换来源 rules/proxy-groups | [来源字段与 strict conversion](architecture.md#来源语义与调优优先级)、[字段与拒绝项](generated-config.md) |
 | Target | 最低支持与资格验证版本见下方自动生成的核心门禁；覆盖 Tailscale `on_demand` 与 Linux TUN `multi_queue`，不代表验证了所有后续版本或定制构建 | [验证边界](protocol-validation.md) |
-| CLI | `generate`；既有参数、退出码、三平台目录结构与整批事务替换语义保持稳定 | [CLI 契约](../README.md#输出与事务语义) |
-| Behavior | IPv4-only、DNS/route 顺序、地区 selector/URLTest、平台 TUN/bridge、默认 Tailscale 与缺失字段 tuning 均是 BoxForge 策略 | [生成配置](generated-config.md)、[DNS 与路由](routing-and-dns.md)、[开关与默认值](configuration.md) |
+| CLI | `generate` 与 `profile show --resolved`；既有参数、退出码、三平台目录结构与整批事务替换语义保持稳定 | [CLI 契约](../README.md#输出与事务语义) |
+| Behavior | 默认 Auto 地址族及显式 Ipv4Only/DualStack、DNS/route 顺序、地区 selector/URLTest、平台 TUN/bridge、默认 Tailscale 与缺失字段 tuning 均是 BoxForge 策略 | [生成配置](generated-config.md)、[DNS 与路由](routing-and-dns.md)、[开关与默认值](configuration.md) |
 
 手动补充发布说明时，建议记录 Input、Target、CLI、Behavior，尤其说明策略变化
 影响的平台、触发条件、前后行为，以及同一 YAML 是否会产生不同配置。

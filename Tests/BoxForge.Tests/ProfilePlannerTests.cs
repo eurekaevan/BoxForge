@@ -1,3 +1,4 @@
+using BoxForge.Exceptions;
 using BoxForge.Models.Intermediate;
 using BoxForge.Builders;
 using BoxForge.Builders.Components;
@@ -23,7 +24,7 @@ public sealed class ProfilePlannerTests
             {"route":{"sniff_excluded_ports":{"replace":[]}}}
             """));
         var profile = BoxForgeProfile.Load(source);
-        var route = SingboxRouteEmitter.Emit(new RouteProfileBuilder(profile).Plan(TargetPlatform.Linux));
+        var route = SingboxRouteEmitter.Emit(RouteProfileBuilder.Plan(profile.Resolve(TargetPlatform.Linux)));
         var tcpSniff = route.Rules.Single(rule => rule.Action == RouteRuleAction.Sniff && rule.Rules is not null);
         Assert.Multiple(() =>
         {
@@ -41,18 +42,18 @@ public sealed class ProfilePlannerTests
         using var source = new MemoryStream(Encoding.UTF8.GetBytes("""
             {
              "route":{"main_default_region":"jp","sniff_timeout":"450ms","sniff_excluded_ports":{"replace":[25,465]}},
-             "tuning":{"url_test_url":"https://probe.example.com/check","url_test_tolerance":80,"url_test_idle_timeout":"45m"},
+             "tuning":{"url_test_url":"https://probe.example.com/check","url_test_tolerance":80,"url_test_idle_timeout":"45m","url_test_interval":"2m"},
              "dns":{"timeout":"7s","cache_capacity":8192,"optimistic_timeout":"3h"},
-             "platforms":{"Linux":{"tuning":{"connect_timeout":"9s"},"route":{"tun_addresses":{"replace":["172.20.0.1/30","fd01::1/126"]}}}}}
+             "platforms":{"Linux":{"tuning":{"connect_timeout":"9s","url_test_interval":"7m"},"route":{"tun_addresses":{"replace":["172.20.0.1/30","fd01::1/126"]}}}}}
             """));
         var profile = BoxForgeProfile.Load(source);
         var nodes = CreateCatalog("美国 01", "美国 02", "日本 01", "日本 02");
-        var parsedNodes = new NodeCatalogBuilder(profile)
+        var parsedNodes = NodeCatalogBuilder
             .Build(new ClashParser().Parse(ProfileConfigurationTests.Yaml("parsed"))!);
-        var settings = profile.GetPlatform(TargetPlatform.Linux);
-        var groups = ProfilePlanner.PlanGroups(nodes, profile, settings.UrlTestInterval);
-        var dns = SingboxDnsEmitter.Emit(new DnsProfileBuilder(profile).Plan(TargetPlatform.Linux));
-        var route = SingboxRouteEmitter.Emit(new RouteProfileBuilder(profile).Plan(TargetPlatform.Linux));
+        var settings = profile.Resolve(TargetPlatform.Linux).Settings;
+        var groups = ProfilePlanner.PlanGroups(nodes, profile.Resolve(TargetPlatform.Linux));
+        var dns = SingboxDnsEmitter.Emit(DnsProfileBuilder.Plan(profile.Resolve(TargetPlatform.Linux)));
+        var route = SingboxRouteEmitter.Emit(RouteProfileBuilder.Plan(profile.Resolve(TargetPlatform.Linux)));
         var tcpSniff = route.Rules.Single(rule => rule.Action == RouteRuleAction.Sniff && rule.Rules is not null);
         Assert.Multiple(() =>
         {
@@ -60,6 +61,7 @@ public sealed class ProfilePlannerTests
             Assert.That(groups.Probes.Select(probe => probe.TestUrl), Is.All.EqualTo("https://probe.example.com/check"));
             Assert.That(groups.Probes.Select(probe => probe.Tolerance), Is.All.EqualTo(80));
             Assert.That(groups.Probes.Select(probe => probe.IdleTimeout), Is.All.EqualTo("45m"));
+            Assert.That(groups.Probes.Select(probe => probe.Interval), Is.All.EqualTo("7m"));
             Assert.That(dns.Timeout, Is.EqualTo("7s"));
             Assert.That(dns.CacheCapacity, Is.EqualTo(8192));
             Assert.That(dns.Optimistic.Timeout, Is.EqualTo("3h"));
@@ -78,8 +80,8 @@ public sealed class ProfilePlannerTests
     {
         string[] names = ["美国 01", "美国 02", "香港 01"];
         var nodes = new NodeCatalog([], names);
-        var platform = BoxForgeProfile.Default.GetPlatform(TargetPlatform.Linux);
-        var plan = ProfilePlanner.PlanGroups(nodes, BoxForgeProfile.Default, platform.UrlTestInterval);
+        var platform = BoxForgeProfile.Default.Resolve(TargetPlatform.Linux).Settings;
+        var plan = ProfilePlanner.PlanGroups(nodes, BoxForgeProfile.Default.Resolve(TargetPlatform.Linux));
         var first = SingboxGroupEmitter.Emit(plan);
         first.MainOutbound.Outbounds.Clear();
         first.RegionOutbounds.Single().Outbounds.Clear();
@@ -99,13 +101,32 @@ public sealed class ProfilePlannerTests
         });
     }
 
+    [Test]
+    public void GroupDiagnosticsCollectIndependentErrorsWithoutDisclosingNames()
+    {
+        const string hostile = "secret\nforged-path";
+        var plan = ProfilePlanner.PlanGroups(CreateCatalog("美国 01", "美国 02"),
+            BoxForgeProfile.Default.Resolve(TargetPlatform.Linux));
+        plan = plan with { Main = plan.Main with { Preferred = "missing-preference", Candidates = [hostile] } };
+        var exception = Assert.Throws<ConfigValidationException>(() => plan.Validate())!;
+        Assert.Multiple(() =>
+        {
+            Assert.That(exception.Diagnostics.Select(item => (item.Code, item.Path)), Is.EqualTo(new[]
+            {
+                ("IR010", "plan.groups.main.preferred"),
+                ("IR003", "plan.groups.main.candidates[0]")
+            }));
+            Assert.That(exception.Message, Does.Not.Contain(hostile));
+        });
+    }
+
     [TestCase("default")]
     [TestCase("target")]
     [TestCase("probe_group")]
     [TestCase("probe_single_leaf")]
     public void InvalidGroupIrFailsBeforeTargetEmission(string fault)
     {
-        var plan = ProfilePlanner.PlanGroups(CreateCatalog("美国 01", "美国 02"), BoxForgeProfile.Default, "3m");
+        var plan = ProfilePlanner.PlanGroups(CreateCatalog("美国 01", "美国 02"), BoxForgeProfile.Default.Resolve(TargetPlatform.Linux));
         plan = fault switch
         {
             "default" => plan with { Main = plan.Main with { Preferred = "missing" } },
@@ -113,7 +134,15 @@ public sealed class ProfilePlannerTests
             "probe_group" => plan with { Probes = [plan.Probes[0] with { Candidates = [plan.Main.Name, "美国 01"] }] },
             _ => plan with { Probes = [plan.Probes[0] with { Candidates = ["美国 01"] }] }
         };
-        Assert.Throws<InvalidOperationException>(() => SingboxGroupEmitter.Emit(plan));
+        var exception = Assert.Throws<ConfigValidationException>(() => plan.Validate())!;
+        var expected = fault switch
+        {
+            "default" => ("IR010", "plan.groups.main.preferred"),
+            "target" => ("IR003", $"plan.groups.main.candidates[{plan.Main.Candidates.Count - 1}]"),
+            "probe_group" => ("IR002", "plan.groups.probes[0].candidates[0]"),
+            _ => ("IR008", "plan.groups.probes[0].candidates")
+        };
+        Assert.That(exception.Diagnostics.Select(item => (item.Code, item.Path)), Does.Contain(expected));
     }
 
     [TestCase("", "SINGAPORE", true)]
@@ -131,7 +160,7 @@ public sealed class ProfilePlannerTests
             var definition = profile.Route.Regions.Single(region => region.Id == "sg");
             // Recreate the production pattern under this culture, regardless of static initialization order.
             var pattern = new System.Text.RegularExpressions.Regex(definition.Pattern,
-                BoxForgeProfile.Default.Regions.Single(region => region.Id == "sg").Pattern.Options);
+                BoxForgeProfile.Default.Resolve(TargetPlatform.Linux).Regions.Single(region => region.Id == "sg").Pattern.Options);
             Assert.That(pattern.IsMatch(name), Is.EqualTo(matches));
         }
         finally
@@ -161,7 +190,11 @@ public sealed class ProfilePlannerTests
         target["typo"] = true;
         using var source = new MemoryStream(Encoding.UTF8.GetBytes(root.ToJsonString()));
         if (level == "platform")
-            Assert.Throws<FormatException>(() => new BoxForgeProfile(BuiltInProfile.Load(source)));
+        {
+            var exception = Assert.Throws<ProfileValidationException>(() => new BoxForgeProfile(BuiltInProfile.Load(source)))!;
+            Assert.That(exception.Diagnostics.Select(item => (item.Code, item.Path)),
+                Is.EqualTo(new[] { ("PF001", "profile.platform_layers[0].Android[unknown]") }));
+        }
         else
             Assert.Throws<JsonException>(() => BuiltInProfile.Load(source));
     }
@@ -402,7 +435,7 @@ public sealed class ProfilePlannerTests
     }
 
     private static ProfilePlan Plan(NodeCatalog nodes, BoxForgeProfile profile) =>
-        SingboxGroupEmitter.Emit(ProfilePlanner.PlanGroups(nodes, profile, probeInterval: null));
+        SingboxGroupEmitter.Emit(ProfilePlanner.PlanGroups(nodes, profile.Resolve(TargetPlatform.Linux)));
 
     private static NodeCatalog CreateCatalog(params string[] names)
     {
@@ -412,6 +445,6 @@ public sealed class ProfilePlannerTests
     }
 
     private static string RegionName(string regionId) =>
-        BoxForgeProfile.Default.Regions.Single(definition =>
+        BoxForgeProfile.Default.Resolve(TargetPlatform.Linux).Regions.Single(definition =>
             definition.Id == regionId).DisplayName;
 }

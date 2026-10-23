@@ -1,4 +1,4 @@
-using BoxForge.Builders.Components;
+using BoxForge.Builders;
 using BoxForge.Configuration;
 using BoxForge.Models;
 using BoxForge.Models.Singbox;
@@ -16,8 +16,8 @@ public sealed class TailscaleEndpointBuilderTests
         TargetPlatform platform,
         string expectedDirectory)
     {
-        var plan = new TailscaleEndpointBuilder(BoxForgeProfile.Default).Plan(platform);
-        var endpoint = (TailscaleEndpoint)TailscaleEndpointBuilder.Emit(plan.TaildropDirectory, plan.Enabled).Single();
+        var plan = ConfigurationPlanner.Plan(new NodeCatalog([], []), BoxForgeProfile.Default.Resolve(platform));
+        var endpoint = (TailscaleEndpoint)new SingboxConfigBuilder().Build(plan, null).Endpoints!.Single();
 
         string json = new ConfigSerializer().Serialize(new SingboxConfig
         {

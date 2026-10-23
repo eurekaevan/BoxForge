@@ -1,18 +1,10 @@
 using BoxForge.Configuration;
-using BoxForge.Models;
 using BoxForge.Models.Singbox;
 
 namespace BoxForge.Builders.Components;
 
-internal sealed class TailscaleEndpointBuilder(BoxForgeProfile profile)
+internal static class TailscaleEndpointBuilder
 {
-    internal (bool Enabled, string TaildropDirectory) Plan(TargetPlatform platform, BoxForgeProfile? effectiveProfile = null)
-    {
-        BoxForgeProfile selected = (effectiveProfile ?? profile).ForPlatform(platform);
-        PlatformProfile settings = selected.GetPlatform(platform);
-        return (selected.Features.Tailscale.Enabled, settings.TaildropDirectory);
-    }
-
     internal static List<Endpoint> Emit(string taildropDirectory, bool enabled)
     {
         if (!enabled)

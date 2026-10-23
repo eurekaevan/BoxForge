@@ -7,7 +7,7 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
 ## 路由规则顺序
 
 以下按 `RoutePlan` 的阶段列出实际执行顺序，由 `SingboxRouteEmitter` 展开为目标规则。修改路由规则时，
-需同步维护本节说明。IPv6 守卫仅在 `Ipv4Only` 下生成，Tailscale 阶段仅在
+需同步维护本节说明。IPv6 守卫在 `Ipv4Only` 下无条件生效，在 `Auto` 下按出口接口状态生效；Tailscale 阶段仅在
 对应平台启用 Tailscale 时生成规则；最终出口由 `route.final` 指定。
 
 仅 Linux 使用显式阶段扩展 `DIRECT` 规则。私网地址和主 DoH bootstrap 地址（默认 `223.5.5.5`）在
@@ -17,18 +17,17 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
 伴随规则。每条原 `DIRECT` 都保留为回退。
 
 1. **`DnsHijack`**：劫持 TUN inbound 的 DNS 流量。
-2. **`EarlyIpv6Guard`**（在 `DnsHijack` 之后）：Ipv4Only 时，以全局 ip_version: 6 拒绝全部 IPv6，先于 sniff、DIRECT、bridge 和 bypass。
+2. **`EarlyIpv6Guard`**（在 `DnsHijack` 之后）：`Ipv4Only` 时，以全局 `ip_version: 6` 拒绝全部 IPv6；`Auto` 时仅在缺少公网 IPv6 的出口上拒绝，先于 sniff、DIRECT、bridge 和 bypass。
 3. **`Tailscale`**（在 `EarlyIpv6Guard` 之后）：启用 Tailscale 时，路由 endpoint 声明为首选的目标，优先于私网直连。
 4. **`PreSniffDirect`**（在 `Tailscale` 之后）：直连私网地址和有效 profile 的 `alidns.server`（默认 223.5.5.5）；Linux 在每条 DIRECT 前依次展开 bypass、bridge。
 5. **`Sniff`**（在 `PreSniffDirect` 之后）：依次嗅探 TCP HTTP/TLS 与 UDP QUIC/STUN；TCP 跳过 FTP、SSH、MySQL、VNC 常用端口 21/22/3306/5900，继续后续路由，8080/8443 仍嗅探。
 6. **`BlockStunAndAds`**（在 `Sniff` 之后）：依次拒绝识别出的 UDP STUN 和 ads。
-7. **`PriorityUdp443Reject`**（在 `BlockStunAndAds` 之后）：按服务定义顺序拒绝 🤖 AI、🔎 Google 的 UDP/443，设置 no_drop: true，促使 QUIC 回退 TCP。
-8. **`LateIpv6Guard`**（在 `PriorityUdp443Reject` 之后）：Ipv4Only 时，保留独立的全局 ip_version: 6 后置拒绝，先于所有代理服务路由。
-9. **`PriorityServices`**（在 `LateIpv6Guard` 之后）：按服务定义顺序路由 🤖 AI、🔎 Google，优先于国内 UDP/443 例外。
-10. **`DomesticUdp443`**（在 `PriorityServices` 之后）：依次放行 cn、cnip 的 UDP/443，再以 no_drop: true 拒绝其他 UDP/443；Linux 的 DIRECT 伴随规则仅匹配 TUN UDP。
-11. **`OtherServices`**（在 `DomesticUdp443` 之后）：按服务定义顺序生成其他服务分流：🎵 Spotify、🎮 GAMES、🪟 Microsoft。
-12. **`DomesticDirect`**（在 `OtherServices` 之后）：依次按 cn、cnip 直连国内目标；Linux 的 DIRECT 伴随规则仅匹配 TUN UDP，TCP 仍由原 DIRECT 处理。
-13. **`FinalOutbound`**（在 `DomesticDirect` 之后）：未命中规则的流量使用 route.final 的 🚀 PROXIES；不额外生成 catch-all 规则。
+7. **`LateIpv6Guard`**（在 `BlockStunAndAds` 之后）：`Ipv4Only` 时，保留独立的全局 `ip_version: 6` 后置拒绝；`Auto` 时使用相同出口条件，先于所有代理服务路由。
+8. **`PriorityServices`**（在 `LateIpv6Guard` 之后）：按服务定义顺序路由 🤖 AI、🔎 Google，优先于国内 UDP/443 例外。
+9. **`DomesticUdp443`**（在 `PriorityServices` 之后）：依次放行 cn、cnip 的 UDP/443；Linux 的 DIRECT 伴随规则仅匹配 TUN UDP。其他 UDP/443 继续后续服务分流和最终代理。
+10. **`OtherServices`**（在 `DomesticUdp443` 之后）：按服务定义顺序生成其他服务分流：🎵 Spotify、🎮 GAMES、🪟 Microsoft。
+11. **`DomesticDirect`**（在 `OtherServices` 之后）：依次按 cn、cnip 直连国内目标；Linux 的 DIRECT 伴随规则仅匹配 TUN UDP，TCP 仍由原 DIRECT 处理。
+12. **`FinalOutbound`**（在 `DomesticDirect` 之后）：未命中规则的流量使用 route.final 的 🚀 PROXIES；不额外生成 catch-all 规则。
 
 `DomesticUdp443`、`DomesticDirect` 阶段中的国内 `DIRECT` 在 Linux 会紧邻原规则之前生成 L3
 伴随规则：bypass 后接 bridge。伴随规则仅匹配
@@ -37,6 +36,16 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
 
 全平台仅生成 TUN inbound；不再生成 mixed 入口、其专用的域名 `resolve`、
 解析后 Tailscale 复检或私网回退规则。TUN 原有的路由顺序保持不变。
+
+嗅探覆盖提前放行路径之外的大多数 TUN TCP 和 UDP，发生在业务分流之前。
+`route.sniff_timeout` 默认为 `300ms`，表示嗅探的超时预算，并非每条连接固定增加
+300ms；能快速识别或结束嗅探的连接可提前继续，等待数据或识别的连接则可能增加首包等待。
+该预算也不代表连接建立的总耗时上限。参见官方 [sniff 说明](https://sing-box.sagernet.org/configuration/route/rule_action/#sniff)。
+
+可通过统一 profile 调整 `route.sniff_timeout`；`route.sniff_excluded_ports` 仅排除 TCP
+目标端口，不影响 UDP QUIC/STUN 嗅探。缩短预算或增加排除端口可能降低协议和域名识别率，
+进而影响依赖嗅探结果的分流；仅保留常见 Web 端口也会遗漏非标准端口上的 HTTP/TLS。
+评估调整时应分别测量快速识别、无法识别和等待服务端先发数据的连接，不能从配置值推导固定延迟。
 
 对业务分流而言，核心优先级是：
 
@@ -49,29 +58,46 @@ IPv6 早期拒绝 → 广告拒绝 → IPv6 兜底拒绝 → 代理服务 → �
 ## DNS 分类与控制面解析
 
 每个目标最终配置中的 `dns.address_family` 决定地址族；
-内置 JSON 为 Linux、Windows、Android 均设置 `Ipv4Only`。此模式生成
+内置 JSON 为 Linux、Windows、Android 均设置 `Auto`。显式选择 `Ipv4Only` 时生成
 `dns.strategy = ipv4_only`、最前面的全局 AAAA 空 `NOERROR`，以及 route 的早期和
 后置 IPv6 reject，后者也覆盖字面量 IPv6 和不经 sing-box DNS 的连接。
 通过 `platforms.<平台>.dns.address_family` 可覆盖为 `DualStack`，此时不生成上述
-AAAA 阻断和 IPv6 reject，DNS 与控制面解析策略也随之切换；内置默认值没有启用双栈。
+AAAA 阻断和 IPv6 reject，DNS 与控制面解析策略也随之切换。
+
+默认 `Auto` 保留 TUN 的 IPv4 和 IPv6 捕获地址，通过反转
+`default_interface_address: ["2000::/3"]` 条件判断当前默认出口接口，
+不按网络类型合并其他接口的地址。默认出口存在 `2000::/3` 公网 IPv6 地址时正常处理 AAAA 和 IPv6 业务分流；
+缺少该地址或无法取得接口信息时，AAAA 返回空 `NOERROR`，并在早期及后置守卫拒绝 IPv6。
+链路本地地址和 ULA 不满足此条件。该检查不是公网可达性探测：有地址但缺少有效路由、
+上游黑洞等情况仍可能失败。已有 DNS 缓存不会随接口变化主动清空，现有连接也不会
+因此即时切换；网络切换后的实际行为仍需在目标设备上验证。
+
+[官方字段说明](https://sing-box.sagernet.org/configuration/route/rule/#default_interface_address)
+列出 Linux、Windows 和 macOS 支持。Android 使用相同条件，但依赖客户端通过
+libbox 正确提供当前物理默认接口和接口地址；不能据此认定所有 Android 图形客户端都支持。
+已核对锁定 alpha.12 的接口监视源码并检查生成配置；无法取得默认接口或地址的客户端
+会继续拒绝客户端 IPv6。Android 真机和网络切换行为尚未验证。
 
 控制平面域名由 `route.default_domain_resolver` 解析：直连
-`dns-direct-alidns`、随平台地址族选择的策略（默认 `ipv4_only`）、
+`dns-direct-alidns`、随平台地址族选择的策略（默认 `Auto` 不强制地址族）、
 `disable_optimistic_cache = true`。
 代理节点、直连出站和 Tailscale endpoint 继承该设置；rule-set 和 Dashboard
 HTTP client 显式使用相同 resolver。节点域名不加入 client DNS 规则。
-该固定 tag 的 IP 和 TLS 名称可通过 [resolver profile](configuration.md#resolver-profile)
+`Auto` 不为控制面 resolver 设置 `ipv4_only`；上述条件 AAAA 规则针对 client DNS，
+不保证控制面解析和连接自动限制为 IPv4。来源节点显式的 `ip-version: ipv4` 约束
+仍会保留。该固定 tag 的 IP 和 TLS 名称可通过 [resolver profile](configuration.md#resolver-profile)
 覆盖；连接仍使用 IPv4 字面量直连，引导不依赖系统 DNS 或代理 DNS。
 
 client DNS 依次分类：
 
-1. `Ipv4Only` 下，所有 AAAA 查询返回空 `NOERROR`。
+1. `Ipv4Only` 下，所有 AAAA 查询返回空 `NOERROR`；`Auto` 下仅在出口缺少公网 IPv6 地址时返回空答。
 2. 启用 Tailscale 时，`preferred_by` 命中的 MagicDNS 和 split DNS 交给
    `dns-tailscale`，禁用 optimistic 缓存。
 3. `ads` 返回 `NXDOMAIN`。
-4. 从有效 profile 的 `route.services` 中所有服务导出 rule-set；默认 AI、Google、
-   Spotify、Games 和 Microsoft 进入 GLOBAL pool，优先于 `cn`。
-   与服务同时命中 `cn` 的域名也使用代理 DNS，保持与普通业务路由的服务优先级一致。
+4. 从有效 profile 的 `route.services` 为每个服务生成独立 pool；默认 AI、Google、
+   Spotify、Games 和 Microsoft 分别通过自己的服务选择组解析，优先于 `cn`。
+   服务顺序与路由一致：`PrecedesDomesticRoutes` 为真的服务在前，各阶段保留列表顺序。
+   同时命中多个服务时采用最先匹配的服务；同时命中 `cn` 时仍采用该服务的 DNS。
 5. `cn` 进入 DOMESTIC pool。
 6. 其余查询进入 GLOBAL pool。
 
@@ -81,8 +107,14 @@ client DNS 依次分类：
 ## Resolver pool 响应语义
 
 DOMESTIC 的首选为直连 AliDNS、备用为直连 Tencent；GLOBAL 的首选为经主代理
-Cloudflare、备用为经主代理 Google。DNS 构建器从注入的 `BoxForgeProfile` 读取
-平台的 `DnsSelectionMode`：默认 Android 使用 `SequentialFallback`，Linux/Windows 使用
+Cloudflare、备用为经主代理 Google。每个服务也使用 Cloudflare 和 Google，
+但两者的连接出口均为该服务的选择组，跟随服务组的手动切换；选择 DIRECT 时 DNS 也直连。
+缓存策略保持不变，切换出口不会自动刷新已有答案；旧答案仍可能在 TTL 或配置的
+optimistic 缓存窗口内复用。
+按端口或 IP 分流的例外（包括国内 UDP/443）不由域名 DNS 分类决定，仍可能采用不同出口。
+解析出口对齐不能保证 CDN 最优；并行模式比较 DNS 响应速度，不探测答案中服务器的连接速度。
+DNS 构建器从本次编译的 `ResolvedProfile.Settings` 读取
+`DnsSelectionMode`：默认 Android 使用 `SequentialFallback`，Linux/Windows 使用
 `ParallelFastest`。
 
 顺序回退模式（默认 Android）先 `evaluate` primary（`timeout: 2s`），随后按顺序判断 primary 的
@@ -100,14 +132,15 @@ IPv4 地址（`ip_cidr: 0.0.0.0/0`）并启用 `race: true`。最快含地址的
 两条地址竞速均未命中后，依次接受 primary/secondary 的 NOERROR 后备，再依次
 接受 primary/secondary 的 NXDOMAIN。地址池以同 scope 的 SERVFAIL 结束，
 不会进入后续通用池重复查询。HTTPS、SVCB、MX 等非 A 查询保持原有 NOERROR
-竞速，不要求响应含 IP；`Ipv4Only` 下 AAAA 在进入池前已返回空答。
+竞速，不要求响应含 IP；`Ipv4Only` 下 AAAA 在进入池前已返回空答，
+`Auto` 下则由前述出口条件决定是否允许进入池。
 
 非 A 查询的 NXDOMAIN `respond` 同样不启用 race，等待未决的 NOERROR 竞速。
 所有查询的全局超时来自 `dns.timeout`，默认 `5s`：快负答或空答与
 另一侧不响应的组合仍可能等满该预算。这是保留有效结果优先的代价。
 
 每个 pool 最后都有同 scope 的 `predefined SERVFAIL`。双方传输失败、超时、
-SERVFAIL 或 REFUSED 时在本 pool 终止，priority 和 CN 不会穿透到后一分类。
+SERVFAIL 或 REFUSED 时在本 pool 终止，服务和 CN 不会穿透到后一分类。
 `dns.final = dns-proxy-cloudflare` 仅为异常兜底，正常 client 查询由各自 pool
 结束。
 

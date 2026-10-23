@@ -1,5 +1,6 @@
 using BoxForge.Models.Clash;
 using BoxForge.Exceptions;
+using BoxForge.Models;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
@@ -31,8 +32,16 @@ internal sealed class ClashParser : IClashParser
         {
             Dictionary<string, object>? proxy = rawConfig.Proxies[index];
             if (proxy == null)
-                throw new NodeParseException($"proxies[{index}] 必须是节点对象，不能为 null。");
-            proxies.Add(new ClashProxyNode(proxy, budget));
+                throw new NodeParseException($"proxies[{index}] 必须是节点对象，不能为 null。",
+                    new ConfigDiagnostic("SRC001", $"source.proxies[{index}]", "来源节点必须是对象。"));
+            try
+            {
+                proxies.Add(new ClashProxyNode(proxy, budget));
+            }
+            catch (NodeParseException ex)
+            {
+                throw ex.AtPath($"source.proxies[{index}]");
+            }
         }
         return new ClashConfig { Proxies = proxies };
     }

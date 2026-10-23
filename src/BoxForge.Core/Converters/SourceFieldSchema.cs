@@ -1,5 +1,6 @@
 using BoxForge.Exceptions;
 using BoxForge.Models.Clash;
+using BoxForge.Models;
 
 namespace BoxForge.Converters;
 
@@ -141,15 +142,15 @@ internal sealed class SourceFieldSchema
 
             if (definition.Disposition == SourceFieldDisposition.UnsupportedSemantic)
             {
-                throw new NodeParseException(
-                    $"包含尚未支持的语义字段 '{path}'；{definition.Reason}");
+                throw FieldError(
+                    $"包含尚未支持的语义字段 '{path}'；{definition.Reason}", path);
             }
 
             string canonical = definition.CanonicalName ?? name;
             if (present.TryGetValue(canonical, out string? previous))
             {
-                throw new NodeParseException(
-                    $"字段 '{previous}' 与 '{path}' 同时指定同一语义，请只保留一个");
+                throw FieldError(
+                    $"字段 '{previous}' 与 '{path}' 同时指定同一语义，请只保留一个", path);
             }
 
             present.Add(canonical, path);
@@ -159,14 +160,14 @@ internal sealed class SourceFieldSchema
             string? error = definition.ValidateValue?.Invoke(node, value);
             if (error is not null)
             {
-                throw new NodeParseException($"字段 '{path}' {error}");
+                throw FieldError($"字段 '{path}' {error}", path);
             }
 
             if (definition.NestedSchema is not null)
             {
                 if (value is not ClashObject nested)
                 {
-                    throw new NodeParseException($"字段 '{path}' 必须是对象");
+                    throw FieldError($"字段 '{path}' 必须是对象", path);
                 }
 
                 definition.NestedSchema.ValidateObject(nested, node, path);
@@ -197,9 +198,12 @@ internal sealed class SourceFieldSchema
                 SourceFieldValueKind.Sequence => "列表",
                 _ => "标量值"
             };
-            throw new NodeParseException($"字段 '{path}' 必须是{expected}");
+            throw FieldError($"字段 '{path}' 必须是{expected}", path);
         }
     }
+
+    private static NodeParseException FieldError(string message, string path) =>
+        new(message, new ConfigDiagnostic("SRC002", $"source.{path}", "来源字段不受支持、存在冲突或值无效。"));
 
     private void Add(SourceFieldDefinition definition)
     {

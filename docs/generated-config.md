@@ -15,8 +15,8 @@
 
 ## 平台差异
 
-平台默认值来自内嵌的 `Configuration/default-profile.json`，加载为不可变
-`BoxForgeProfile` 中的各平台有效配置。CLI 的 `--profile`、
+平台默认值来自内嵌的 `Configuration/default-profile.json`，由配置文档
+`BoxForgeProfile` 叠加后解析成不可变的单平台 `ResolvedProfile`。CLI 的 `--profile`、
 `BOXFORGE_Profile` 和 HTTP 请求内联 profile 均可覆盖平台参数，具体优先级见配置参考。
 用户显式提供的节点参数优先于平台调优默认值，Tailscale 启用状态仍由
 `features.tailscale.enabled` 及平台层覆盖控制；地址族使用有效 profile 的平台值。
@@ -51,14 +51,19 @@ Windows/Android 省略该字段。实际吞吐收益尚未验证，可按
   在 UDP sniff 之后、各自原始规则所在位置增加仅匹配 `tun-in` + UDP 的 L3
   route。它们不会被搬到 sniff 之前，因此仍保留原有服务优先级和域名嗅探语义。
 
-TUN 默认 IPv6 地址为 `fd00::1/126`，可通过 `tun_addresses` 替换。默认
-`Ipv4Only` 下，该地址只用于让操作系统把 IPv6 流量送入 sing-box，
-不是 IPv6 连通能力。DNS 劫持之后立即生成全局 `ip_version: 6` 拒绝，在任何
-DIRECT、Tailscale、bridge、bypass 或 sniff 之前终止 IPv6。服务分流之前再生成
-同样的兜底拒绝，保留后置 IPv6 防护。覆盖为 `DualStack` 时不生成这些拒绝规则。
+TUN 默认 IPv6 地址为 `fd00::1/126`，可通过 `tun_addresses` 替换。
+默认 `Auto` 保留双栈捕获；仅在出口接口缺少 `2000::/3` 公网 IPv6 地址
+或无法取得接口信息时拒绝 IPv6，并对 AAAA 返回空答。IPv6 拒绝分别位于 DNS 劫持之后、
+任何 DIRECT、Tailscale、bridge、bypass 或 sniff 之前，以及服务分流之前。
+有地址不保证公网可达，该策略不探测链路质量，也不主动刷新已有 DNS 缓存。
+Android 依赖客户端提供当前默认物理接口和地址，尚未完成真机验证；
+未提供信息时保守拒绝客户端 IPv6。
+覆盖为 `Ipv4Only` 时，AAAA 空答和两道 IPv6 拒绝无条件生效；
+覆盖为 `DualStack` 时不生成这些拒绝规则。TUN 捕获地址本身不代表 IPv6 连通能力。
+详见[地址族策略](routing-and-dns.md#dns-分类与控制面解析)。
 
 源节点显式提供 `ip-version: ipv4` 时，仍保留该节点的 IPv4 解析约束：
-`DualStack` 下为该节点设置独立的 `domain_resolver`，绑定 `dns-direct-alidns`、
+`DualStack` 或 `Auto` 下为该节点设置独立的 `domain_resolver`，绑定 `dns-direct-alidns`、
 `strategy: ipv4_only` 并禁用 optimistic cache。省略该字段的节点继承平台策略；
 `Ipv4Only` 下使用已有的全局限制，不重复生成节点 resolver。其他 `ip-version` 值仍拒绝。
 
@@ -88,15 +93,15 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
   NXDOMAIN 不参与竞速，双方没有 `NOERROR` 时依次接受 primary、secondary 的
   NXDOMAIN。两家都失败时明确返回 `SERVFAIL`；详见
   [DNS 分类与回退](routing-and-dns.md)。
-- DNS 默认使用 `ipv4_only`，缓存容量为 `4096`，并启用超时为 `6h` 的
-  optimistic 缓存和 reverse mapping。
+- DNS 默认使用 `Auto`，不强制解析地址族；出口缺少公网 IPv6 地址时对客户端 AAAA 返回空答。
+  缓存容量为 `4096`，并启用超时为 `6h` 的 optimistic 缓存和 reverse mapping。
 - 代理节点、Tailscale endpoint 和直连出站继承
-  `route.default_domain_resolver`：直连固定 tag `dns-direct-alidns`（默认 AliDNS，可覆盖端点）、`ipv4_only`、禁用 optimistic
-  过期缓存。它们的域名解析不进入 client DNS 分类规则。IPv6 字面量代理节点
-  会在生成时被校验器拒绝。
+  `route.default_domain_resolver`：直连固定 tag `dns-direct-alidns`（默认 AliDNS，可覆盖端点）、禁用 optimistic
+  过期缓存。默认 `Auto` 不强制该 resolver 的地址族，其域名解析不进入 client DNS 分类规则。
+  仅 `Ipv4Only` 模式强制 `ipv4_only` 并在生成时拒绝 IPv6 字面量代理节点。
 - rule-set 和 Dashboard HTTP client 显式使用同一引导解析设置；
   Tailscale split DNS 也禁用 optimistic 过期缓存。
-- 所有 AAAA 查询在规则链首部返回空 `NOERROR`，国内 DNS 也只提供 IPv4。
+- 默认仅在出口缺少公网 IPv6 地址或接口信息未知时，客户端 AAAA 查询在规则链首部返回空 `NOERROR`。
 - `experimental.cache_file` 使用 `cache.db`，并通过 `store_dns` 持久化 DNS 缓存。
 - `cache_id` 是 YAML `proxies` 列表的规范化 SHA-256；字段顺序不影响身份。
   只要核心代理列表相同，不同平台或其他 Clash 配置项会复用同一缓存身份。
@@ -158,8 +163,8 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
 - 远程 rule-set 默认每天更新，通过默认 HTTP client `http-ruleset-proxy` 走代理下载。
   有地区 AUTO 时选择首个地区 AUTO，否则选择首个真实节点；即使主组被手动切到
   `DIRECT`，rule-set 下载也不会随之改走直连。下载域名仍由
-  `dns-direct-alidns` 以
-  `ipv4_only` 解析，以免代理 DNS 成为冷启动依赖。
+  `dns-direct-alidns` 直连解析，以免代理 DNS 成为冷启动依赖；
+  默认 `Auto` 不强制解析地址族，`Ipv4Only` 模式才设置 `ipv4_only`。
 - 规则集来源与内部 tag 的映射如下；代码中的 DNS/route 引用只使用内部 tag，
   不依赖上游文件名。八个 tag 均唯一声明，默认按 `1d` 更新；可通过
   [profile 显式数组操作](configuration.md#数组操作)替换完整来源实体，不自动拆分批量来源。
@@ -168,10 +173,12 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
 
   | 来源 | 内部 tag → 文件名 | URL 基础路径 |
   | --- | --- | --- |
-  | DustinWin release | `ai→ai.srs`、`spotify→spotify.srs`、`games→games.srs`、`cn→cn.srs`、`cnip→cnip.srs` | `https://github.com/DustinWin/ruleset_geodata/releases/download/sing-box-ruleset/` |
-  | MetaCubeX `sing` 分支 | `ads→category-ads-and-telemetry.srs`、`google→google.srs`、`microsoft→microsoft.srs` | `https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/` |
+  | DustinWin release | `games→games.srs`、`cn→cn.srs`、`cnip→cnip.srs` | `https://github.com/DustinWin/ruleset_geodata/releases/download/sing-box-ruleset/` |
+  | MetaCubeX `sing` 分支 | `ai→category-ai-!cn.srs`、`spotify→spotify.srs`、`ads→category-ads-and-telemetry.srs`、`google→google.srs`、`microsoft→microsoft.srs` | `https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/` |
 
   DustinWin 同名文件共用 `{tag}.srs` 模板；MetaCubeX 的文件逐项声明。
+  AI 使用 MetaCubeX 的国外 AI 分类，Spotify 使用其明确域名集合；不额外叠加
+  DustinWin 的关键词及独有条目。服务组名称、默认地区和 DNS 出口绑定保持不变。
   广告与遥测过滤的内部 tag 仍为 `ads`，使用 MetaCubeX 的
   `category-ads-and-telemetry`，替代 DustinWin 的 anti-AD 来源。该集合合并
   `category-ads` 与 `category-telemetry`，拦截广告、追踪及上游收录的软件遥测、
@@ -189,8 +196,9 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
 - 未被前置 Tailscale、私网或 bootstrap 直连规则处理的 UDP 流量会同时嗅探
   QUIC 和 STUN，并拒绝识别出的 STUN 协议；不根据 3478、3479、19302 或
   19303 等固定端口拒绝普通 UDP 流量。
-- AI、Google 和最终兜底的 UDP/443 拒绝规则写入 `no_drop: true`，持续返回拒绝
-  响应以促使 QUIC 回退 TCP；STUN、广告和两道 IPv6 拒绝不启用该字段。
+- UDP/443 按服务规则和最终出口正常分流，不因端口统一拒绝，也不强制 QUIC 回退 TCP。
+  国内 UDP/443 保留原有直连特例；STUN、广告和 `Ipv4Only` 的两道 IPv6 拒绝仍生效。
+  实际 QUIC/HTTP/3 可用性取决于所选代理和网络的 UDP 支持。
 
 ## TCP、TLS 与 Reality
 

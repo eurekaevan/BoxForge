@@ -98,13 +98,8 @@ internal static class TlsConfigHelper
             return false;
         }
 
-        string normalized = publicKey
-            .Replace('-', '+')
-            .Replace('_', '/');
-        int paddingLength = (4 - normalized.Length % 4) % 4;
-        normalized = normalized.PadRight(
-            normalized.Length + paddingLength,
-            '=');
+        // A 43-character Base64URL key always needs one padding character.
+        string normalized = publicKey.Replace('-', '+').Replace('_', '/') + "=";
 
         try
         {

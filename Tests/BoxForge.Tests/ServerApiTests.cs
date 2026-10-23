@@ -7,9 +7,9 @@ using System.Text;
 using System.Text.Json;
 using BoxForge.Engine;
 using BoxForge.Builders;
-using BoxForge.Builders.Components;
 using BoxForge.Configuration;
 using BoxForge.Models.Singbox;
+using BoxForge.Models.Intermediate;
 using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
 using BoxForge.Models;
@@ -104,7 +104,7 @@ public sealed class ServerApiTests
             using HttpResponseMessage response = await client.PostAsJsonAsync("/api/v1/convert", new
             {
                 name = $"profile-{index}",
-                yaml = ValidYaml,
+                yaml = ProfileConfigurationTests.Yaml("US01", "US02", "JP01", "JP02"),
                 platforms = new[] { "Linux", "Android" },
                 profile = new
                 {
@@ -112,6 +112,10 @@ public sealed class ServerApiTests
                     {
                         api = new { enabled },
                         tailscale = new { enabled }
+                    },
+                    route = new
+                    {
+                        services = new { patch = new[] { new { id = "ai", default_region = enabled ? "jp" : "us" } } }
                     },
                     platforms = new Dictionary<string, object>
                     {
@@ -129,6 +133,9 @@ public sealed class ServerApiTests
                 using JsonDocument config = JsonDocument.Parse(artifact.Content);
                 Assert.That(config.RootElement.TryGetProperty("services", out _), Is.EqualTo(enabled));
                 Assert.That(config.RootElement.TryGetProperty("endpoints", out _), Is.EqualTo(enabled));
+                Assert.That(config.RootElement.GetProperty("outbounds").EnumerateArray()
+                    .Single(outbound => outbound.GetProperty("tag").GetString() == "🤖 AI").GetProperty("default").GetString(),
+                    Is.EqualTo(BoxForgeProfile.Default.Resolve(TargetPlatform.Linux).Regions.Single(region => region.Id == (enabled ? "jp" : "us")).DisplayName));
                 if (artifact.Platform == "Linux")
                     Assert.That(config.RootElement.GetProperty("inbounds")[0]
                         .GetProperty("multi_queue").GetBoolean(), Is.EqualTo(enabled));
@@ -156,6 +163,7 @@ public sealed class ServerApiTests
     [TestCase("{\"features\":{\"api\":{\"enabled\":\"secret-profile-value\"}}}")]
     [TestCase("{\"platforms\":{\"Linux\":{\"route\":{\"multi_queue\":\"secret-profile-value\"}}}}")]
     [TestCase("{\"unknown-secret-profile-value\":true}")]
+    [TestCase("{\"route\":{\"services\":{\"patch\":[{\"id\":\"secret-profile-value\",\"default_region\":\"jp\"}]}}}")]
     [TestCase("{\"platforms\":{\"Windows\":{\"features\":{\"api\":{\"enabled\":\"secret-profile-value\"}}}}}")]
     [TestCase("{\"platforms\":{\"Windows\":{\"route\":{\"sniff_timeout\":[]}}}}")]
     [TestCase("{\"platforms\":{\"Windows\":{\"features\":null}}}")]
@@ -314,12 +322,16 @@ public sealed class ServerApiTests
     [TestCase(true, "profile")]
     [TestCase(true, "tailscale")]
     [TestCase(true, "singbox_api")]
+    [TestCase(true, "unknown_environment")]
+    [TestCase(true, "structured_profile_environment")]
     public async Task KestrelValidatesDeploymentConfigurationBeforeServingRequests(
         bool tailscaleEnabled, string? invalidConfiguration)
     {
         string directory = Directory.CreateTempSubdirectory("boxforge-server-profile-").FullName;
         string profile = Path.Combine(directory, "profile.json");
         await File.WriteAllTextAsync(profile, ProfilePlannerTests.TaiwanProfileJson());
+        await File.WriteAllTextAsync(Path.Combine(directory, "appsettings.json"),
+            """{"regions":{"host_only":true},"services":{"host_only":true}}""");
         if (invalidConfiguration == "profile")
         {
             await File.WriteAllTextAsync(profile,
@@ -340,6 +352,8 @@ public sealed class ServerApiTests
         startInfo.ArgumentList.Add(typeof(ServerProgram).Assembly.Location);
         startInfo.ArgumentList.Add("--urls");
         startInfo.ArgumentList.Add("http://127.0.0.1:0");
+        startInfo.ArgumentList.Add("--contentRoot");
+        startInfo.ArgumentList.Add(directory);
         foreach (string key in startInfo.Environment.Keys.ToArray())
         {
             if (key.StartsWith("BOXFORGE_", StringComparison.OrdinalIgnoreCase))
@@ -363,6 +377,10 @@ public sealed class ServerApiTests
             startInfo.Environment["BOXFORGE_features__tailscale__enabled"] = "invalid";
         if (invalidConfiguration == "singbox_api")
             startInfo.Environment["BOXFORGE_features__api__enabled"] = "invalid";
+        if (invalidConfiguration == "unknown_environment")
+            startInfo.Environment["BOXFORGE_regions__host_only"] = "private-environment-value";
+        if (invalidConfiguration == "structured_profile_environment")
+            startInfo.Environment["BOXFORGE_Profile__child"] = "private-environment-value";
         startInfo.Environment["Logging__LogLevel__Default"] = "Information";
         startInfo.Environment["Logging__LogLevel__Microsoft.Hosting.Lifetime"] = "Information";
         using var process = Process.Start(startInfo)!;
@@ -381,14 +399,17 @@ public sealed class ServerApiTests
                 string expectedDiagnostic = invalidConfiguration switch
                 {
                     "profile" => "dns.timeout",
-                    "tailscale" => "$.features.tailscale.enabled",
-                    _ => "$.features.api.enabled"
+                    "tailscale" => "profile.host.features.tailscale.enabled",
+                    "unknown_environment" => "BOXFORGE_ 环境变量必须映射到 profile 键",
+                    "structured_profile_environment" => "BOXFORGE_Profile 只接受文件路径",
+                    _ => "profile.host.features.api.enabled"
                 };
                 Assert.Multiple(() =>
                 {
                     Assert.That(process.ExitCode, Is.Not.EqualTo(0));
                     Assert.That(output, Does.Not.Contain(listeningPrefix));
                     Assert.That(output + errors, Does.Contain(expectedDiagnostic));
+                    Assert.That(output + errors, Does.Not.Contain("private-environment-value"));
                 });
                 return;
             }
@@ -740,14 +761,8 @@ public sealed class ServerApiTests
         {
             services.AddSingleton<ILoggerProvider>(logs);
             services.RemoveAll<ISingboxConfigBuilder>();
-            services.AddSingleton<ISingboxConfigBuilder>(provider =>
-            {
-                var profile = provider.GetRequiredService<BoxForgeProfile>();
-                return new BoxForgeEngineTests.InvalidPlanConfigBuilder(new SingboxConfigBuilder(
-                    provider.GetRequiredService<TailscaleEndpointBuilder>(),
-                    provider.GetRequiredService<DnsProfileBuilder>(), provider.GetRequiredService<RouteProfileBuilder>(),
-                    profile));
-            });
+            services.AddSingleton<ISingboxConfigBuilder>(
+                new BoxForgeEngineTests.InvalidPlanConfigBuilder(new SingboxConfigBuilder()));
         }));
         using HttpClient client = failingFactory.CreateClient();
         const string secret = "secret-plan-node-marker";
@@ -871,7 +886,7 @@ public sealed class ServerApiTests
 
     private sealed class ThrowingConfigBuilder(bool argumentError) : ISingboxConfigBuilder
     {
-        public SingboxConfig Build(SingboxBuildRequest request) => throw (argumentError
+        public SingboxConfig Build(ConfigurationPlan plan, string? cacheId) => throw (argumentError
             ? new ArgumentException("unexpected test failure")
             : new InvalidOperationException("unexpected test failure"));
     }

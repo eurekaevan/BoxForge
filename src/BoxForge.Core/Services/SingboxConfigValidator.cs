@@ -437,12 +437,11 @@ internal sealed class SingboxConfigValidator : ISingboxConfigValidator
         var preferredDomainTags = new HashSet<string>(
             dns.Servers.OfType<TailscaleDnsServer>().Select(server => server.Tag!),
             StringComparer.Ordinal);
-        List<DnsRule> rules = dns.Rules;
-        for (var index = 0; index < rules.Count; index++)
-        {
-            DnsRule rule = rules[index];
-            string path = $"dns.rules[{index}]";
+        for (var index = 0; index < dns.Rules.Count; index++)
+            ValidateRule(dns.Rules[index], $"dns.rules[{index}]", isChild: false);
 
+        void ValidateRule(DnsRule rule, string path, bool isChild)
+        {
             ValidateReference(
                 rule.Server,
                 context.DnsTags,
@@ -474,6 +473,18 @@ internal sealed class SingboxConfigValidator : ISingboxConfigValidator
             ValidateReference(rule.MatchResponse, evaluatedTags, "SB086", $"{path}.match_response",
                 "必须引用前置 evaluate 规则定义的响应标签。", context.Diagnostics);
 
+            if (rule.Rules is { } children)
+                for (int index = 0; index < children.Count; index++)
+                    ValidateRule(children[index], $"{path}.rules[{index}]", isChild: true);
+
+            if (isChild)
+            {
+                if (rule.Action is not null || rule.Tag is not null)
+                    context.Diagnostics.Add(new ConfigDiagnostic("SB091", path,
+                        "DNS 逻辑规则的子条件不得定义动作或响应标签。"));
+                return;
+            }
+
             if (rule.Action == DnsRuleAction.Evaluate
                 && string.IsNullOrWhiteSpace(rule.Tag))
             {
@@ -485,7 +496,7 @@ internal sealed class SingboxConfigValidator : ISingboxConfigValidator
             else if (rule.Action == DnsRuleAction.Evaluate && !evaluatedTags.Add(rule.Tag!))
             {
                 context.Diagnostics.Add(new ConfigDiagnostic("SB085", $"{path}.tag",
-                    $"evaluate 响应标签 '{rule.Tag}' 重复。"));
+                    "evaluate 响应标签重复。"));
             }
         }
     }
@@ -532,14 +543,15 @@ internal sealed class SingboxConfigValidator : ISingboxConfigValidator
 
     private static void ValidateAddressFamilyGuards(SingboxConfig config, ValidationContext context)
     {
-        if (context.AddressFamily != AddressFamilyPolicy.Ipv4Only) return;
+        if (context.AddressFamily == AddressFamilyPolicy.DualStack) return;
+        bool automatic = context.AddressFamily == AddressFamilyPolicy.Auto;
         bool forwardingSeen = false;
         bool hasEarlyGuard = false;
         int guardCount = 0;
         bool guardAfterLastScopedResolve = false;
         foreach (RouteRule rule in config.Route.Rules)
         {
-            if (IsIpv6RejectGuard(rule, context.InboundTags))
+            if (automatic ? IsAutoIpv6RejectGuard(rule, context.InboundTags) : IsIpv6RejectGuard(rule, context.InboundTags))
             {
                 if (guardCount == 0) hasEarlyGuard = !forwardingSeen;
                 guardCount++;
@@ -554,29 +566,72 @@ internal sealed class SingboxConfigValidator : ISingboxConfigValidator
 
         if (!hasEarlyGuard)
             context.Diagnostics.Add(new ConfigDiagnostic("SB080", "route.rules",
-                "Ipv4Only 必须在 sniff、resolve 或转发之前包含全局 IPv6 reject guard。"));
+                $"{context.AddressFamily} 必须在 sniff、resolve 或转发之前包含相应的 IPv6 reject guard。"));
         if (!guardAfterLastScopedResolve || (hasEarlyGuard && guardCount < 2))
             context.Diagnostics.Add(new ConfigDiagnostic("SB081", "route.rules",
-                "Ipv4Only 必须在规则集 resolve 之后保留独立的 IPv6 reject guard。"));
+                $"{context.AddressFamily} 必须在规则集 resolve 之后保留独立的 IPv6 reject guard。"));
 
         DnsRule? first = config.Dns.Rules.FirstOrDefault();
+        if (automatic)
+        {
+            if (config.Dns.Strategy is not null || first is null || !IsAutoAaaaGuard(first))
+                context.Diagnostics.Add(new ConfigDiagnostic("SB092", "dns.rules[0]",
+                    "Auto 必须允许双栈解析，并首先在默认出口无公网 IPv6 地址时以空 NOERROR 响应 AAAA。"));
+            return;
+        }
         if (first is null || first.Action != DnsRuleAction.Predefined || first.Rcode != DnsResponseCode.NoError
             || first.QueryType is not { Count: 1 } || first.QueryType[0] != "AAAA"
             || first.RuleSet is { Count: > 0 } || first.Domain is { Count: > 0 }
             || first.DomainSuffix is { Count: > 0 } || first.PreferredBy is { Count: > 0 }
-            || first.MatchResponse is not null || first.ResponseRcode is not null)
+            || first.MatchResponse is not null || first.ResponseRcode is not null
+            || first.Type is not null || first.Mode is not null || first.Rules is { Count: > 0 }
+            || first.Invert == true || first.DefaultInterfaceAddress is { Count: > 0 })
             context.Diagnostics.Add(new ConfigDiagnostic("SB082", "dns.rules[0]",
                 "Ipv4Only 必须首先无条件以空 NOERROR 响应拦截 AAAA 查询。"));
     }
 
     private static bool IsIpv6RejectGuard(RouteRule rule, HashSet<string> inboundTags) =>
-        rule.IpVersion == 6 && rule.Action == RouteRuleAction.Reject && rule.Invert != true
+        rule.Action == RouteRuleAction.Reject && IsIpv6Condition(rule, inboundTags);
+
+    private static bool IsIpv6Condition(RouteRule rule, HashSet<string> inboundTags) =>
+        rule.IpVersion == 6 && rule.Invert != true && rule.DefaultInterfaceAddress is not { Count: > 0 }
         && rule.Type is null && rule.Mode is null && rule.Rules is not { Count: > 0 }
-        && rule.RuleSet is not { Count: > 0 } && rule.Protocol is not { Count: > 0 }
+        && HasUnrestrictedRouteScope(rule, inboundTags);
+
+    private static bool HasUnrestrictedRouteScope(RouteRule rule, HashSet<string> inboundTags) =>
+        rule.RuleSet is not { Count: > 0 } && rule.Protocol is not { Count: > 0 }
         && rule.Port is not { Count: > 0 } && rule.Network is not { Count: > 0 }
         && rule.IpCidr is not { Count: > 0 } && rule.IpIsPrivate != true
         && rule.PreferredBy is not { Count: > 0 }
         && (rule.Inbound is not { Count: > 0 } || inboundTags.IsSubsetOf(rule.Inbound));
+
+    private static bool IsAutoIpv6RejectGuard(RouteRule rule, HashSet<string> inboundTags) =>
+        rule.Action == RouteRuleAction.Reject && rule.Type == RouteRuleType.Logical
+        && rule.Mode == RouteLogicalMode.And && rule.Invert != true && rule.IpVersion is null
+        && rule.DefaultInterfaceAddress is not { Count: > 0 } && HasUnrestrictedRouteScope(rule, inboundTags)
+        && rule.Rules is { Count: 2 } children
+        && children.Any(child => child.Action is null && IsIpv6Condition(child, inboundTags))
+        && children.Any(child => child.Action is null && child.Type is null && child.Mode is null
+            && child.Rules is not { Count: > 0 } && child.IpVersion is null && child.Invert == true
+            && child.DefaultInterfaceAddress?.SequenceEqual([AddressFamilyPolicies.GlobalIpv6Prefix]) == true
+            && HasUnrestrictedRouteScope(child, inboundTags));
+
+    private static bool HasUnrestrictedDnsScope(DnsRule rule) =>
+        rule.RuleSet is not { Count: > 0 } && rule.Domain is not { Count: > 0 }
+        && rule.DomainSuffix is not { Count: > 0 } && rule.PreferredBy is not { Count: > 0 }
+        && rule.MatchResponse is null && rule.ResponseRcode is null && rule.IpCidr is not { Count: > 0 };
+
+    private static bool IsAutoAaaaGuard(DnsRule rule) =>
+        rule.Action == DnsRuleAction.Predefined && rule.Rcode == DnsResponseCode.NoError
+        && rule.Type == RouteRuleType.Logical && rule.Mode == RouteLogicalMode.And && rule.Invert != true
+        && rule.QueryType is not { Count: > 0 } && rule.DefaultInterfaceAddress is not { Count: > 0 }
+        && HasUnrestrictedDnsScope(rule) && rule.Rules is { Count: 2 } children
+        && children.All(child => child.Action is null && child.Type is null && child.Mode is null
+            && child.Rules is not { Count: > 0 } && HasUnrestrictedDnsScope(child))
+        && children.Any(child => child.QueryType?.SequenceEqual(["AAAA"]) == true
+            && child.Invert != true && child.DefaultInterfaceAddress is not { Count: > 0 })
+        && children.Any(child => child.QueryType is not { Count: > 0 } && child.Invert == true
+            && child.DefaultInterfaceAddress?.SequenceEqual([AddressFamilyPolicies.GlobalIpv6Prefix]) == true);
 
     private sealed record ValidationContext(
         List<ConfigDiagnostic> Diagnostics,
@@ -644,7 +699,7 @@ internal sealed class SingboxConfigValidator : ISingboxConfigValidator
         if (string.IsNullOrWhiteSpace(tag))
             diagnostics.Add(new ConfigDiagnostic("SB008", path, "标签不能为空。"));
         else if (!tags.Add(tag))
-            diagnostics.Add(new ConfigDiagnostic("SB009", path, $"标签 '{tag}' 重复。"));
+            diagnostics.Add(new ConfigDiagnostic("SB009", path, "标签重复。"));
     }
 
     private static void ValidateEndpointTagCollisions(
@@ -660,7 +715,7 @@ internal sealed class SingboxConfigValidator : ISingboxConfigValidator
                 diagnostics.Add(new ConfigDiagnostic(
                     "SB009",
                     $"endpoints[{index}].tag",
-                    $"标签 '{tag}' 与 outbound tag 重复。"));
+                    "标签与 outbound tag 重复。"));
             }
 
             index++;

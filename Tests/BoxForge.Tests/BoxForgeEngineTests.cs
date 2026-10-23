@@ -3,12 +3,13 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using BoxForge.Builders;
-using BoxForge.Builders.Components;
 using BoxForge.Configuration;
 using BoxForge.Engine;
 using BoxForge.Exceptions;
 using BoxForge.Models;
 using BoxForge.Models.Singbox;
+using BoxForge.Models.Intermediate;
+using BoxForge.Models.Clash;
 using BoxForge.Parsers;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -90,8 +91,8 @@ public sealed class BoxForgeEngineTests
     public async Task SourceAddressFamilyResolversBelongToEachNodeAndEachOutput(string protocol)
     {
         RecordingConfigBuilder? recordingBuilder = null;
-        using ServiceProvider provider = CreateProvider(services =>
-            recordingBuilder = new RecordingConfigBuilder(CreateConfigBuilder(services)));
+        using ServiceProvider provider = CreateProvider(_ =>
+            recordingBuilder = new RecordingConfigBuilder(new SingboxConfigBuilder()));
         var engine = provider.GetRequiredService<IBoxForgeEngine>();
         var request = new ConversionRequest("isolated-resolvers",
             AddressFamilyYaml(protocol, ("first", "ipv4"), ("second", "ipv4")),
@@ -268,9 +269,9 @@ public sealed class BoxForgeEngineTests
     public async Task ConvertsEachOfThreePlatformsExactlyOnce()
     {
         RecordingConfigBuilder? recordingBuilder = null;
-        using ServiceProvider provider = CreateProvider(serviceProvider =>
+        using ServiceProvider provider = CreateProvider(_ =>
             recordingBuilder = new RecordingConfigBuilder(
-                CreateConfigBuilder(serviceProvider)));
+                new SingboxConfigBuilder()));
         var engine = provider.GetRequiredService<IBoxForgeEngine>();
 
         ConversionBundle bundle = await engine.ConvertAsync(
@@ -381,6 +382,38 @@ public sealed class BoxForgeEngineTests
             new ConversionRequest("empty-platforms", ValidYaml, [])));
     }
 
+    [TestCase(AddressFamilyPolicy.Auto, "ipv4")]
+    [TestCase(AddressFamilyPolicy.Auto, null)]
+    [TestCase(AddressFamilyPolicy.DualStack, "ipv4")]
+    [TestCase(AddressFamilyPolicy.DualStack, null)]
+    public void DuplicateNodeNamesRetainTheTargetValidationErrorContract(AddressFamilyPolicy family, string? secondFamily)
+    {
+        using ServiceProvider provider = CreateProvider();
+        var engine = provider.GetRequiredService<IBoxForgeEngine>();
+        var request = new ConversionRequest("duplicates",
+            AddressFamilyYaml("trojan", ("duplicate", "ipv4"), ("duplicate", secondFamily)), [TargetPlatform.Linux])
+        { Profile = AddressFamilyProfile(family) };
+        var error = Assert.ThrowsAsync<BoxForgePlatformConversionException>(async () => await engine.ConvertAsync(request));
+        Assert.That(error!.Platform, Is.EqualTo(TargetPlatform.Linux));
+        Assert.That(error.InnerException, Is.TypeOf<ConfigValidationException>());
+        Assert.That(((ConfigValidationException)error.InnerException!).Diagnostics,
+            Has.Some.Matches<ConfigDiagnostic>(diagnostic => diagnostic.Code == "SB009" && diagnostic.Message == "标签重复。"));
+    }
+
+    [Test]
+    public void TargetDiagnosticsDoNotEchoSensitiveDuplicateNodeNames()
+    {
+        const string sensitiveName = "sensitive-credential\n]name";
+        string quoted = JsonSerializer.Serialize(sensitiveName);
+        using ServiceProvider provider = CreateProvider();
+        var engine = provider.GetRequiredService<IBoxForgeEngine>();
+        var error = Assert.ThrowsAsync<BoxForgePlatformConversionException>(async () => await engine.ConvertAsync(
+            new ConversionRequest("safe-target", AddressFamilyYaml("trojan", (quoted, "ipv4"), (quoted, "ipv4")), [TargetPlatform.Linux])))!;
+        Assert.That(error.Diagnostics, Has.Some.Matches<ConfigDiagnostic>(item => item.Code == "SB009" && item.Message == "标签重复。"));
+        Assert.That(JsonSerializer.Serialize(error.Diagnostics), Does.Not.Contain("sensitive"));
+        Assert.That(error.Diagnostics.Select(item => item.Path), Is.All.Not.Contains("name"));
+    }
+
     [Test]
     public void RejectsDuplicatePlatforms()
     {
@@ -405,6 +438,18 @@ public sealed class BoxForgeEngineTests
                 "undefined",
                 ValidYaml,
                 [(TargetPlatform)999])));
+    }
+
+    [TestCase("proxies:\n  - name: [", "SRC001", "source")]
+    [TestCase("proxies:\n  - name: sensitive-name\n    type: sensitive-type", "SRC002", "source.proxies[0].type")]
+    public void ConversionErrorsExposeSafeDiagnosticsWithoutChangingTheirCategory(string yaml, string code, string path)
+    {
+        using ServiceProvider provider = CreateProvider();
+        var engine = provider.GetRequiredService<IBoxForgeEngine>();
+        var error = Assert.ThrowsAsync<BoxForgeConversionException>(async () => await engine.ConvertAsync(
+            new ConversionRequest("diagnostics", yaml, [TargetPlatform.Linux])))!;
+        Assert.That(error.Diagnostics.Select(item => (item.Code, item.Path)), Is.EqualTo(new[] { (code, path) }));
+        Assert.That(JsonSerializer.Serialize(error.Diagnostics), Does.Not.Contain("sensitive"));
     }
 
     [Test]
@@ -449,13 +494,51 @@ public sealed class BoxForgeEngineTests
         Assert.That(exception!.InnerException, Is.Not.Null);
     }
 
+    [TestCase(TargetPlatform.Android)]
+    [TestCase(TargetPlatform.Linux)]
+    public void PlatformReservedNamesBindAfterOneSourceParseAndPreserveFailureClassification(TargetPlatform conflictingPlatform)
+    {
+        var parser = new CountingParser();
+        RecordingConfigBuilder? recording = null;
+        using ServiceProvider provider = CreateProvider(
+            _ => recording = new RecordingConfigBuilder(new SingboxConfigBuilder()), parser);
+        var engine = provider.GetRequiredService<IBoxForgeEngine>();
+        var overlay = new JsonObject
+        {
+            ["platforms"] = new JsonObject
+            {
+                [conflictingPlatform.ToString()] = JsonNode.Parse("""
+                    {"route":{"services":{"patch":[{"id":"ai","name":"test"}]}}}
+                    """)
+            }
+        };
+        var error = Assert.CatchAsync(async () => await engine.ConvertAsync(new ConversionRequest(
+            "platform-name-binding", ValidYaml, [TargetPlatform.Android, TargetPlatform.Linux, TargetPlatform.Windows])
+        { Profile = overlay }));
+        Assert.Multiple(() =>
+        {
+            Assert.That(parser.Calls, Is.EqualTo(1));
+            Assert.That(error!.InnerException, Is.TypeOf<NodeParseException>());
+            Assert.That(error.InnerException!.Message, Is.EqualTo("节点名称 'test' 与 BoxForge 保留 tag 冲突"));
+            Assert.That(recording!.Calls, Is.EqualTo(conflictingPlatform == TargetPlatform.Android
+                ? Array.Empty<TargetPlatform>() : new[] { TargetPlatform.Android }));
+        });
+        if (conflictingPlatform == TargetPlatform.Android)
+            Assert.That(error, Is.TypeOf<BoxForgeConversionException>());
+        else
+        {
+            Assert.That(error, Is.TypeOf<BoxForgePlatformConversionException>());
+            Assert.That(((BoxForgePlatformConversionException)error!).Platform, Is.EqualTo(TargetPlatform.Linux));
+        }
+    }
+
     [Test]
     public void PlatformFailureDoesNotReturnPartialBundle()
     {
         RecordingConfigBuilder? recordingBuilder = null;
-        using ServiceProvider provider = CreateProvider(serviceProvider =>
+        using ServiceProvider provider = CreateProvider(_ =>
             recordingBuilder = new RecordingConfigBuilder(
-                CreateConfigBuilder(serviceProvider),
+                new SingboxConfigBuilder(),
                 TargetPlatform.Linux));
         var engine = provider.GetRequiredService<IBoxForgeEngine>();
         ConversionBundle? bundle = null;
@@ -494,8 +577,8 @@ public sealed class BoxForgeEngineTests
     public void PlanFailurePreservesStructuredDiagnosticsAndStopsPlatformGeneration()
     {
         InvalidPlanConfigBuilder? recording = null;
-        using ServiceProvider provider = CreateProvider(services =>
-            recording = new InvalidPlanConfigBuilder((SingboxConfigBuilder)CreateConfigBuilder(services)));
+        using ServiceProvider provider = CreateProvider(_ =>
+            recording = new InvalidPlanConfigBuilder(new SingboxConfigBuilder()));
         var engine = provider.GetRequiredService<IBoxForgeEngine>();
         ConversionBundle? bundle = null;
         var error = Assert.ThrowsAsync<BoxForgePlatformConversionException>(async () =>
@@ -586,7 +669,8 @@ public sealed class BoxForgeEngineTests
             + (node.Family is null ? "" : $"    ip-version: {node.Family}\n")));
 
     private static ServiceProvider CreateProvider(
-        Func<IServiceProvider, ISingboxConfigBuilder>? configBuilderFactory = null)
+        Func<IServiceProvider, ISingboxConfigBuilder>? configBuilderFactory = null,
+        IClashParser? parser = null)
     {
         IConfiguration configuration = new ConfigurationBuilder().Build();
         var services = new ServiceCollection();
@@ -599,30 +683,38 @@ public sealed class BoxForgeEngineTests
             services.AddSingleton(configBuilderFactory);
         }
 
+        if (parser is not null)
+        {
+            services.RemoveAll<IClashParser>();
+            services.AddSingleton(parser);
+        }
+
         return services.BuildServiceProvider();
     }
 
-    private static ISingboxConfigBuilder CreateConfigBuilder(
-        IServiceProvider serviceProvider) =>
-        new SingboxConfigBuilder(
-            serviceProvider.GetRequiredService<TailscaleEndpointBuilder>(),
-            serviceProvider.GetRequiredService<DnsProfileBuilder>(),
-            serviceProvider.GetRequiredService<RouteProfileBuilder>(),
-            serviceProvider.GetRequiredService<BoxForgeProfile>());
+    private sealed class CountingParser : IClashParser
+    {
+        public int Calls { get; private set; }
+        public ClashConfig? Parse(string yamlContent)
+        {
+            Calls++;
+            return new ClashParser().Parse(yamlContent);
+        }
+    }
 
     internal sealed class InvalidPlanConfigBuilder(SingboxConfigBuilder inner) : ISingboxConfigBuilder
     {
         public List<TargetPlatform> Calls { get; } = [];
 
-        public SingboxConfig Build(SingboxBuildRequest request)
+        public SingboxConfig Build(ConfigurationPlan plan, string? cacheId)
         {
-            Calls.Add(request.Platform);
-            if (request.Platform == TargetPlatform.Linux)
+            Calls.Add(plan.Platform);
+            if (plan.Platform == TargetPlatform.Linux)
             {
-                var plan = inner.Plan(request) with { TailscaleEndpointEnabled = false };
+                plan = plan with { TailscaleEndpointEnabled = false };
                 plan.Validate();
             }
-            return inner.Build(request);
+            return inner.Build(plan, cacheId);
         }
     }
 
@@ -633,16 +725,16 @@ public sealed class BoxForgeEngineTests
         public List<TargetPlatform> Calls { get; } = [];
         public List<SingboxConfig> Configurations { get; } = [];
 
-        public SingboxConfig Build(SingboxBuildRequest request)
+        public SingboxConfig Build(ConfigurationPlan plan, string? cacheId)
         {
-            Calls.Add(request.Platform);
-            if (request.Platform == failingPlatform)
+            Calls.Add(plan.Platform);
+            if (plan.Platform == failingPlatform)
             {
                 throw new ConfigValidationException([
-                    new ConfigDiagnostic("TEST", "outbounds", $"模拟 {request.Platform} 校验失败。")]);
+                    new ConfigDiagnostic("TEST", "outbounds", $"模拟 {plan.Platform} 校验失败。")]);
             }
 
-            SingboxConfig config = inner.Build(request);
+            SingboxConfig config = inner.Build(plan, cacheId);
             Configurations.Add(config);
             return config;
         }

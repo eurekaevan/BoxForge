@@ -1,4 +1,3 @@
-using BoxForge.Configuration;
 using BoxForge.Converters;
 using BoxForge.Exceptions;
 using BoxForge.Models.Clash;
@@ -6,25 +5,26 @@ using BoxForge.Models.Intermediate;
 
 namespace BoxForge.Builders.Components;
 
-internal sealed class NodeCatalogBuilder(BoxForgeProfile profile)
+internal static class NodeCatalogBuilder
 {
-    internal NodeCatalog Build(
-        ClashConfig clashConfig,
-        BoxForgeProfile? effectiveProfile = null)
+    internal static NodeCatalog Build(
+        ClashConfig clashConfig)
     {
-        var settings = effectiveProfile ?? profile;
         var nodes = new List<ProxyNode>();
         var names = new List<string>();
 
-        foreach (var proxy in clashConfig.Proxies)
+        for (int index = 0; index < clashConfig.Proxies.Count; index++)
         {
-            ProxyNode node = ProxyNodeParser.Parse(proxy);
-            string tag = node.Name;
-            if (settings.IsReservedTag(tag))
+            ProxyNode node;
+            try
             {
-                throw new NodeParseException($"节点名称 '{tag}' 与 BoxForge 保留 tag 冲突");
+                node = ProxyNodeParser.Parse(clashConfig.Proxies[index]);
             }
-
+            catch (NodeParseException ex)
+            {
+                throw ex.AtPath($"source.proxies[{index}]");
+            }
+            string tag = node.Name;
             names.Add(tag);
             nodes.Add(node);
         }

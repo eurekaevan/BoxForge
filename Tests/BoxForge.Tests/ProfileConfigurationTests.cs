@@ -5,7 +5,6 @@ using BoxForge.Configuration;
 using BoxForge.Engine;
 using BoxForge.Exceptions;
 using BoxForge.Models;
-using BoxForge.Models.Singbox;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -33,6 +32,78 @@ public sealed class ProfileConfigurationTests
             JsonNode.Parse(BoxForgeProfile.Default.ToResolvedJson())), Is.True);
     }
 
+    [TestCase(TargetPlatform.Android)]
+    [TestCase(TargetPlatform.Linux)]
+    [TestCase(TargetPlatform.Windows)]
+    public async Task AutoAddressFamilyWorksThroughFilesEnvironmentAndRequestsWithoutChangingDefaults(TargetPlatform platform)
+    {
+        var overlay = JsonNode.Parse("""{"dns":{"address_family":"Auto"}}""")!.AsObject();
+        string path = Path.Combine(directory, "auto.json");
+        File.WriteAllText(path, overlay.ToJsonString());
+        var environment = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["dns:address_family"] = "Auto"
+        }).Build();
+        foreach (BoxForgeProfile profile in new[]
+        {
+            BoxForgeProfile.Load(path),
+            ProfileConfiguration.ResolveProfile(environment)
+        })
+        {
+            using var document = await Generate(profile, platform, Yaml("US01"));
+            JsonElement root = document.RootElement;
+            JsonElement dns = root.GetProperty("dns");
+            Assert.Multiple(() =>
+            {
+                Assert.That(profile.Resolve(platform).Settings.AddressFamily, Is.EqualTo(AddressFamilyPolicy.Auto));
+                Assert.That(dns.TryGetProperty("strategy", out _), Is.False);
+                Assert.That(dns.GetProperty("rules")[0].GetProperty("rules")[1]
+                    .GetProperty("default_interface_address")[0].GetString(), Is.EqualTo("2000::/3"));
+                Assert.That(root.GetProperty("inbounds")[0].GetProperty("address").EnumerateArray()
+                    .Select(value => value.GetString()).Any(value => value!.Contains(':')), Is.True);
+            });
+        }
+        using var provider = CreateProvider(null);
+        var engine = provider.GetRequiredService<IBoxForgeEngine>();
+        var request = new ConversionRequest("auto", Yaml("US01"), [platform]);
+        var custom = await engine.ConvertAsync(request with
+        {
+            Profile = JsonNode.Parse("""{"dns":{"address_family":"Ipv4Only"}}""")!.AsObject()
+        });
+        var explicitAuto = await engine.ConvertAsync(request with { Profile = overlay });
+        var ordinary = await engine.ConvertAsync(request);
+        using var customJson = JsonDocument.Parse(custom.Artifacts.Single().Content);
+        using var ordinaryJson = JsonDocument.Parse(ordinary.Artifacts.Single().Content);
+        Assert.That(explicitAuto.Artifacts.Single().Content, Is.EqualTo(ordinary.Artifacts.Single().Content));
+        Assert.Multiple(() =>
+        {
+            Assert.That(customJson.RootElement.GetProperty("dns").GetProperty("strategy").GetString(), Is.EqualTo("ipv4_only"));
+            Assert.That(ordinaryJson.RootElement.GetProperty("dns").TryGetProperty("strategy", out _), Is.False);
+            Assert.That(ordinaryJson.RootElement.GetProperty("dns").GetProperty("rules")[0]
+                .GetProperty("rules")[1].GetProperty("default_interface_address")[0].GetString(), Is.EqualTo("2000::/3"));
+            Assert.That(BoxForgeProfile.Default.Resolve(platform).Settings.AddressFamily, Is.EqualTo(AddressFamilyPolicy.Auto));
+        });
+    }
+
+    [TestCase(TargetPlatform.Android)]
+    [TestCase(TargetPlatform.Linux)]
+    [TestCase(TargetPlatform.Windows)]
+    public async Task AutoRetainsExplicitNodeIpv4ResolutionWithoutConstrainingOtherNodes(TargetPlatform platform)
+    {
+        var profile = Load("""{"dns":{"address_family":"Auto"}}""");
+        string yaml = Yaml("constrained") + "    ip-version: ipv4\n" + Yaml("unconstrained")["proxies:\n".Length..];
+        using var document = await Generate(profile, platform, yaml);
+        JsonElement[] proxies = document.RootElement.GetProperty("outbounds").EnumerateArray()
+            .Where(node => node.TryGetProperty("server", out _)).ToArray();
+        JsonElement constrained = proxies.Single(node => node.GetProperty("tag").GetString() == "constrained");
+        JsonElement unconstrained = proxies.Single(node => node.GetProperty("tag").GetString() == "unconstrained");
+        Assert.Multiple(() =>
+        {
+            Assert.That(constrained.GetProperty("domain_resolver").GetProperty("strategy").GetString(), Is.EqualTo("ipv4_only"));
+            Assert.That(unconstrained.TryGetProperty("domain_resolver", out _), Is.False);
+        });
+    }
+
     [Test]
     public void RootPlatformAndRequestLayersApplyInOrderWithoutMutatingTheirInputs()
     {
@@ -48,20 +119,29 @@ public sealed class ProfileConfigurationTests
              "platforms":{"Linux":{"tuning":{"connect_timeout":"13s"}}}}
             """)!.AsObject();
         string requestInput = request.ToJsonString();
+        ResolvedProfile resolved = profile.Resolve(TargetPlatform.Linux, request);
+        string resolvedSnapshot = resolved.ToResolvedJson();
         Assert.Multiple(() =>
         {
-            Assert.That(profile.ForPlatform(TargetPlatform.Windows).Tuning.ConnectTimeout, Is.EqualTo("7s"));
-            Assert.That(profile.ForPlatform(TargetPlatform.Linux).Tuning.ConnectTimeout, Is.EqualTo("9s"));
-            Assert.That(profile.ForPlatform(TargetPlatform.Linux, request).Tuning.ConnectTimeout, Is.EqualTo("13s"));
-            Assert.That(profile.ForPlatform(TargetPlatform.Windows, request).Tuning.ConnectTimeout, Is.EqualTo("11s"));
-            Assert.That(profile.ForPlatform(TargetPlatform.Linux).Tuning.ConnectTimeout, Is.EqualTo("9s"));
+            Assert.That(profile.Resolve(TargetPlatform.Windows).Tuning.ConnectTimeout, Is.EqualTo("7s"));
+            Assert.That(profile.Resolve(TargetPlatform.Linux).Tuning.ConnectTimeout, Is.EqualTo("9s"));
+            Assert.That(profile.Resolve(TargetPlatform.Linux, request).Tuning.ConnectTimeout, Is.EqualTo("13s"));
+            Assert.That(profile.Resolve(TargetPlatform.Windows, request).Tuning.ConnectTimeout, Is.EqualTo("11s"));
+            Assert.That(profile.Resolve(TargetPlatform.Linux).Tuning.ConnectTimeout, Is.EqualTo("9s"));
             Assert.That(overlay.ToJsonString(), Is.EqualTo(input));
             Assert.That(request.ToJsonString(), Is.EqualTo(requestInput));
             Assert.That(BoxForgeProfile.Default.ToResolvedJson(), Is.EqualTo(defaults));
         });
         overlay["tuning"]!["connect_timeout"] = "19s";
         request["tuning"]!["connect_timeout"] = "23s";
-        Assert.That(profile.ForPlatform(TargetPlatform.Linux).Tuning.ConnectTimeout, Is.EqualTo("9s"));
+        request["platforms"]!["Linux"]!["tuning"]!["connect_timeout"] = "29s";
+        Assert.Multiple(() =>
+        {
+            Assert.That(profile.Resolve(TargetPlatform.Linux).Tuning.ConnectTimeout, Is.EqualTo("9s"));
+            Assert.That(resolved.Platform, Is.EqualTo(TargetPlatform.Linux));
+            Assert.That(resolved.Settings.ConnectTimeout, Is.EqualTo("13s"));
+            Assert.That(resolved.ToResolvedJson(), Is.EqualTo(resolvedSnapshot));
+        });
     }
 
     [Test]
@@ -70,7 +150,7 @@ public sealed class ProfileConfigurationTests
         var request = JsonNode.Parse("""
             {"platforms":{"Windows":{"typo":true}}}
             """)!.AsObject();
-        Assert.Throws<FormatException>(() => BoxForgeProfile.Default.ForPlatform(TargetPlatform.Linux, request));
+        Assert.Throws<ProfileValidationException>(() => BoxForgeProfile.Default.Resolve(TargetPlatform.Linux, request));
     }
 
     [Test]
@@ -81,7 +161,7 @@ public sealed class ProfileConfigurationTests
               {"tags":[null],"url":"https://rules.example.net/custom.srs","update_interval":"1d"}
             ]}}}}}
             """)!.AsObject();
-        Assert.Throws<FormatException>(() => BoxForgeProfile.Default.ForPlatform(TargetPlatform.Linux, request));
+        Assert.Throws<ProfileValidationException>(() => BoxForgeProfile.Default.Resolve(TargetPlatform.Linux, request));
     }
 
     [Test]
@@ -92,16 +172,16 @@ public sealed class ProfileConfigurationTests
                 "route":{"strict_route":null,"auto_redirect":null,"multi_queue":null},
                 "tuning":{"tcp_keep_alive":null,"tcp_keep_alive_interval":null}}}}
             """);
-        var effective = profile.ForPlatform(TargetPlatform.Linux);
+        var effective = profile.Resolve(TargetPlatform.Linux);
         Assert.Multiple(() =>
         {
-            Assert.That(effective.GetPlatform(TargetPlatform.Linux).StrictRoute, Is.Null);
-            Assert.That(effective.GetPlatform(TargetPlatform.Linux).AutoRedirect, Is.Null);
-            Assert.That(effective.GetPlatform(TargetPlatform.Linux).MultiQueue, Is.Null);
+            Assert.That(effective.Settings.StrictRoute, Is.Null);
+            Assert.That(effective.Settings.AutoRedirect, Is.Null);
+            Assert.That(effective.Settings.MultiQueue, Is.Null);
             Assert.That(effective.Tuning.TcpKeepAlive, Is.Null);
             Assert.That(effective.Tuning.TcpKeepAliveInterval, Is.Null);
-            Assert.That(profile.GetPlatform(TargetPlatform.Windows).StrictRoute, Is.True);
-            Assert.That(BoxForgeProfile.Default.GetPlatform(TargetPlatform.Linux).MultiQueue, Is.True);
+            Assert.That(profile.Resolve(TargetPlatform.Windows).Settings.StrictRoute, Is.True);
+            Assert.That(BoxForgeProfile.Default.Resolve(TargetPlatform.Linux).Settings.MultiQueue, Is.True);
         });
         using var document = await Generate(profile, TargetPlatform.Linux, Yaml("US01"));
         JsonElement tun = document.RootElement.GetProperty("inbounds")[0];
@@ -125,8 +205,8 @@ public sealed class ProfileConfigurationTests
         var profile = provider.GetRequiredService<BoxForgeProfile>();
         Assert.Multiple(() =>
         {
-            Assert.That(profile.ForPlatform(TargetPlatform.Windows).Tuning.ConnectTimeout, Is.EqualTo("11s"));
-            Assert.That(profile.ForPlatform(TargetPlatform.Linux).Tuning.ConnectTimeout, Is.EqualTo("9s"));
+            Assert.That(profile.Resolve(TargetPlatform.Windows).Tuning.ConnectTimeout, Is.EqualTo("11s"));
+            Assert.That(profile.Resolve(TargetPlatform.Linux).Tuning.ConnectTimeout, Is.EqualTo("9s"));
         });
     }
 
@@ -143,9 +223,9 @@ public sealed class ProfileConfigurationTests
         var added = BoxForgeProfile.Default.ApplyOverrides(ArrayOperation("route", "regions", "append", item));
         var equalValue = JsonNode.Parse("""{"pattern":"taiwan","display_name":"TW","id":"tw"}""")!;
         var removed = added.ApplyOverrides(ArrayOperation("route", "regions", "remove", equalValue));
-        Assert.That(removed.Regions.Select(region => region.Id), Is.EqualTo(BoxForgeProfile.Default.Regions.Select(region => region.Id)));
+        Assert.That(removed.Resolve(TargetPlatform.Linux).Regions.Select(region => region.Id), Is.EqualTo(BoxForgeProfile.Default.Resolve(TargetPlatform.Linux).Regions.Select(region => region.Id)));
         var changedValue = JsonNode.Parse("""{"id":"tw","display_name":"Changed","pattern":"taiwan"}""")!;
-        Assert.Throws<FormatException>(() => added.ApplyOverrides(ArrayOperation("route", "regions", "remove", changedValue)));
+        Assert.Throws<ProfileValidationException>(() => added.ApplyOverrides(ArrayOperation("route", "regions", "remove", changedValue)));
     }
 
     [TestCase("https://rules.example.net/{tag}.srs", "1d")]
@@ -171,10 +251,10 @@ public sealed class ProfileConfigurationTests
         await File.WriteAllTextAsync(path, overlay.ToJsonString());
         var fromFile = BoxForgeProfile.Load(path);
         var fromOverride = BoxForgeProfile.Default.ApplyOverrides(overlay);
-        var fromRequest = BoxForgeProfile.Default.ForPlatform(TargetPlatform.Linux, overlay);
-        var expected = Resolved(BoxForgeProfile.Default.ForPlatform(TargetPlatform.Linux));
-        foreach (var profile in new[] { fromFile, fromOverride, fromRequest })
-            Assert.That(JsonNode.DeepEquals(Resolved(profile.ForPlatform(TargetPlatform.Linux)), expected), Is.True);
+        var fromRequest = BoxForgeProfile.Default.Resolve(TargetPlatform.Linux, overlay);
+        var expected = Resolved(BoxForgeProfile.Default.Resolve(TargetPlatform.Linux));
+        foreach (var profile in new[] { fromFile.Resolve(TargetPlatform.Linux), fromOverride.Resolve(TargetPlatform.Linux), fromRequest })
+            Assert.That(JsonNode.DeepEquals(Resolved(profile), expected), Is.True);
         Assert.That(Resolved(fromFile)["route"]!["rule_sets"]!.AsArray().Any(item => JsonNode.DeepEquals(item, source)), Is.True);
 
         string yaml = Yaml("US01");
@@ -212,14 +292,14 @@ public sealed class ProfileConfigurationTests
         JsonObject original = Entity("route", "regions", "us");
         var changed = (JsonObject)original.DeepClone();
         changed["display_name"] = "Custom US";
-        Assert.Throws<FormatException>(() => BoxForgeProfile.Default.ApplyOverrides(ArrayOperation("route", "regions", "append", changed)));
+        Assert.Throws<ProfileValidationException>(() => BoxForgeProfile.Default.ApplyOverrides(ArrayOperation("route", "regions", "append", changed)));
         var profile = ReplaceEntity("route", "regions", "us", new JsonObject { ["display_name"] = "Custom US" });
         Assert.Multiple(() =>
         {
-            Assert.That(profile.Regions.Single(region => region.Id == "us").DisplayName, Is.EqualTo("Custom US"));
-            Assert.That(profile.Regions.Select(region => region.Id), Is.EqualTo(BoxForgeProfile.Default.Regions.Select(region => region.Id)));
-            Assert.That(profile.Regions.Single(region => region.Id == "jp").DisplayName,
-                Is.EqualTo(BoxForgeProfile.Default.Regions.Single(region => region.Id == "jp").DisplayName));
+            Assert.That(profile.Resolve(TargetPlatform.Linux).Regions.Single(region => region.Id == "us").DisplayName, Is.EqualTo("Custom US"));
+            Assert.That(profile.Resolve(TargetPlatform.Linux).Regions.Select(region => region.Id), Is.EqualTo(BoxForgeProfile.Default.Resolve(TargetPlatform.Linux).Regions.Select(region => region.Id)));
+            Assert.That(profile.Resolve(TargetPlatform.Linux).Regions.Single(region => region.Id == "jp").DisplayName,
+                Is.EqualTo(BoxForgeProfile.Default.Resolve(TargetPlatform.Linux).Regions.Single(region => region.Id == "jp").DisplayName));
         });
     }
 
@@ -232,7 +312,7 @@ public sealed class ProfileConfigurationTests
     [TestCase("{\"remove\":[65535]}")]
     [TestCase("{\"replace\":[25],\"remove\":[25,25]}")]
     [TestCase("{\"replace\":[25],\"replace\":[465]}")]
-    public void RejectsInvalidArrayOperations(string operation) => Assert.Throws<FormatException>(() =>
+    public void RejectsInvalidArrayOperations(string operation) => Assert.Throws<ProfileValidationException>(() =>
         Load("{\"route\":{\"sniff_excluded_ports\":" + operation + "}}"));
 
     [TestCase("{\"features\":{\"tailscale\":{\"typo\":true}}}")]
@@ -267,7 +347,7 @@ public sealed class ProfileConfigurationTests
     public void RejectsInvalidLayeredSettings(string fields)
     {
         var overlay = JsonNode.Parse(fields)!.AsObject();
-        Assert.Throws<FormatException>(() => Load(overlay.ToJsonString()));
+        Assert.Throws<ProfileValidationException>(() => Load(overlay.ToJsonString()));
     }
 
     [TestCase("null")]
@@ -282,19 +362,19 @@ public sealed class ProfileConfigurationTests
     [TestCase("{\"runtime\":{}}")]
     [TestCase("{\"policies\":{}}")]
     [TestCase("{\"platforms\":{\"Linux\":{\"connect_timeout\":\"9s\"}}}")]
-    public void RejectsMalformedRootAndLegacySchema(string json) => Assert.Throws<FormatException>(() => Load(json));
+    public void RejectsMalformedRootAndLegacySchema(string json) => Assert.Throws<ProfileValidationException>(() => Load(json));
 
     [TestCase("{\"\\uD800\":true}")]
     [TestCase("{\"\\uDC00\":true}")]
     [TestCase("{\"tuning\":{\"url_test_url\":\"\\uD800\"}}")]
     [TestCase("{\"tuning\":{\"url_test_url\":\"\\uDC00\"}}")]
-    public void RejectsUnpairedSurrogatesInProfileFiles(string json) => Assert.Throws<FormatException>(() => Load(json));
+    public void RejectsUnpairedSurrogatesInProfileFiles(string json) => Assert.Throws<ProfileValidationException>(() => Load(json));
 
     [Test]
     public void EscapedSurrogatePairsPreserveSupplementaryCharacters()
     {
         var profile = ReplaceEntity("route", "regions", "us", new JsonObject { ["display_name"] = "\U0001f680 US" });
-        Assert.That(profile.Regions.Single(region => region.Id == "us").DisplayName, Is.EqualTo("🚀 US"));
+        Assert.That(profile.Resolve(TargetPlatform.Linux).Regions.Single(region => region.Id == "us").DisplayName, Is.EqualTo("🚀 US"));
     }
 
     [TestCase("route", "regions", "append", "[null]")]
@@ -303,7 +383,7 @@ public sealed class ProfileConfigurationTests
     [TestCase("dns", "resolvers", "replace", "[null]")]
     [TestCase("route", "tun_addresses", "replace", "[null,\"fd00::1/126\"]")]
     public void ArrayNullElementsProduceProfileErrors(string section, string field, string operation, string items) =>
-        Assert.Throws<FormatException>(() => Load("{\"" + section + "\":{\"" + field
+        Assert.Throws<ProfileValidationException>(() => Load("{\"" + section + "\":{\"" + field
             + "\":{\"" + operation + "\":" + items + "}}}"));
 
     [TestCase("route", "regions", "{}")]
@@ -318,7 +398,7 @@ public sealed class ProfileConfigurationTests
     [TestCase("dns", "resolvers", "{}")]
     [TestCase("dns", "resolvers", "{\"id\":\"custom\"}")]
     [TestCase("dns", "resolvers", "{\"id\":\"custom\",\"server\":\"192.0.2.53\"}")]
-    public void ArrayEntitiesMustBeComplete(string section, string field, string entity) => Assert.Throws<FormatException>(() =>
+    public void ArrayEntitiesMustBeComplete(string section, string field, string entity) => Assert.Throws<ProfileValidationException>(() =>
         Load("{\"" + section + "\":{\"" + field + "\":{\"append\":[" + entity + "]}}}"));
 
     [TestCase("id", "null")]
@@ -339,7 +419,7 @@ public sealed class ProfileConfigurationTests
     [TestCase("pattern", "\"(\"")]
     [TestCase("typo", "true")]
     [TestCase("enabled", "false")]
-    public void RejectsInvalidRegions(string field, string value) => Assert.Throws<FormatException>(() =>
+    public void RejectsInvalidRegions(string field, string value) => Assert.Throws<ProfileValidationException>(() =>
         ReplaceEntity("route", "regions", "us", new JsonObject { [field] = JsonNode.Parse(value) }));
 
     [TestCase("id", "null")]
@@ -368,17 +448,17 @@ public sealed class ProfileConfigurationTests
     [TestCase("precedes_domestic_routes", "\"true\"")]
     [TestCase("enabled", "false")]
     [TestCase("before_domestic", "true")]
-    public void RejectsInvalidServices(string field, string value) => Assert.Throws<FormatException>(() =>
+    public void RejectsInvalidServices(string field, string value) => Assert.Throws<ProfileValidationException>(() =>
         ReplaceEntity("route", "services", "ai", new JsonObject { [field] = JsonNode.Parse(value) }));
 
     [TestCase("route", "regions", "us")]
     [TestCase("route", "services", "ai")]
     [TestCase("dns", "resolvers", "alidns")]
-    public void RejectsDuplicateEntityIds(string section, string field, string id) => Assert.Throws<FormatException>(() =>
+    public void RejectsDuplicateEntityIds(string section, string field, string id) => Assert.Throws<ProfileValidationException>(() =>
         BoxForgeProfile.Default.ApplyOverrides(ArrayOperation(section, field, "append", Entity(section, field, id))));
 
     [Test]
-    public void RejectsDuplicateEntityPropertyNames() => Assert.Throws<FormatException>(() => Load("""
+    public void RejectsDuplicateEntityPropertyNames() => Assert.Throws<ProfileValidationException>(() => Load("""
         {"route":{"regions":{"append":[{"id":"tw","id":"tw","display_name":"TW","pattern":"taiwan"}]}}}
         """));
 
@@ -459,7 +539,7 @@ public sealed class ProfileConfigurationTests
     [TestCase("0.1ns")]
     [TestCase("9223372036854775808ns")]
     [TestCase("106752d")]
-    public void RuleSetIntervalsRejectInvalidOrOutOfRangeValues(string interval) => Assert.Throws<FormatException>(() =>
+    public void RuleSetIntervalsRejectInvalidOrOutOfRangeValues(string interval) => Assert.Throws<ProfileValidationException>(() =>
         ReplaceRuleSet(new JsonObject { ["update_interval"] = interval }));
 
     [TestCase("/ai.srs")]
@@ -475,7 +555,7 @@ public sealed class ProfileConfigurationTests
     [TestCase("https://{tag}.example.net/ai.srs")]
     [TestCase("https://rules.example.net:{tag}/ai.srs")]
     [TestCase("https://rules.example.net/%GG.srs")]
-    public void RuleSetUrlsRejectInvalidOrUnsupportedUrls(string url) => Assert.Throws<FormatException>(() =>
+    public void RuleSetUrlsRejectInvalidOrUnsupportedUrls(string url) => Assert.Throws<ProfileValidationException>(() =>
         ReplaceRuleSet(new JsonObject { ["url"] = url }));
 
     [TestCase("tags", "null")]
@@ -489,7 +569,7 @@ public sealed class ProfileConfigurationTests
     [TestCase("http_client", "\"direct\"")]
     [TestCase("path", "\"file.srs\"")]
     [TestCase("tag", "\"ai\"")]
-    public void RuleSetOperationsRejectMalformedCompleteEntities(string field, string value) => Assert.Throws<FormatException>(() =>
+    public void RuleSetOperationsRejectMalformedCompleteEntities(string field, string value) => Assert.Throws<ProfileValidationException>(() =>
         ReplaceRuleSet(new JsonObject { [field] = JsonNode.Parse(value) }));
 
     [TestCase("")]
@@ -506,7 +586,7 @@ public sealed class ProfileConfigurationTests
     [TestCase("response-global-primary-a")]
     [TestCase("🇺🇸 US")]
     [TestCase("🤖 AI")]
-    public void RuleSetTagsRejectInvalidNamesAndEffectiveTagCollisions(string tag) => Assert.Throws<FormatException>(() =>
+    public void RuleSetTagsRejectInvalidNamesAndEffectiveTagCollisions(string tag) => Assert.Throws<ProfileValidationException>(() =>
         BoxForgeProfile.Default.ApplyOverrides(ArrayOperation("route", "rule_sets", "append", new JsonObject
         { ["tags"] = new JsonArray(tag), ["url"] = "https://rules.example.net/new.srs", ["update_interval"] = "1d" })));
 
@@ -514,8 +594,8 @@ public sealed class ProfileConfigurationTests
     public void RuleSetSourcesRejectDuplicateTagsAcrossAndWithinEntities()
     {
         var existing = Resolved(BoxForgeProfile.Default)["route"]!["rule_sets"]!.AsArray()[0]!.DeepClone();
-        Assert.Throws<FormatException>(() => BoxForgeProfile.Default.ApplyOverrides(ArrayOperation("route", "rule_sets", "append", existing)));
-        Assert.Throws<FormatException>(() => ReplaceRuleSet(new JsonObject { ["tags"] = new JsonArray("ai", "ai") }));
+        Assert.Throws<ProfileValidationException>(() => BoxForgeProfile.Default.ApplyOverrides(ArrayOperation("route", "rule_sets", "append", existing)));
+        Assert.Throws<ProfileValidationException>(() => ReplaceRuleSet(new JsonObject { ["tags"] = new JsonArray("ai", "ai") }));
     }
 
     [Test]
@@ -527,7 +607,7 @@ public sealed class ProfileConfigurationTests
             ["url"] = "https://rules.example.net/shared.srs",
             ["update_interval"] = "1d"
         };
-        Assert.Throws<FormatException>(() => BoxForgeProfile.Default.ApplyOverrides(
+        Assert.Throws<ProfileValidationException>(() => BoxForgeProfile.Default.ApplyOverrides(
             ArrayOperation("route", "rule_sets", "append", source)));
     }
 
@@ -612,17 +692,26 @@ public sealed class ProfileConfigurationTests
         var profile = ReplaceEntity("dns", "resolvers", id, new JsonObject { ["server"] = "192.0.2.53", ["server_name"] = "dns.example.net" });
         using var document = await Generate(profile, platform, Yaml("US01"));
         JsonElement root = document.RootElement;
-        JsonElement server = root.GetProperty("dns").GetProperty("servers").EnumerateArray().Single(item => item.GetProperty("tag").GetString() == tag);
+        var affectedTags = new HashSet<string>(StringComparer.Ordinal) { tag };
+        if (id is "cloudflare" or "google")
+            affectedTags.UnionWith(BoxForgeProfile.Default.Services.Select(service => SingboxTags.ServiceDns(service.Id, id)));
+        JsonElement[] servers = root.GetProperty("dns").GetProperty("servers").EnumerateArray()
+            .Where(item => item.TryGetProperty("server", out _)).ToArray();
         Assert.Multiple(() =>
         {
-            Assert.That(server.GetProperty("server").GetString(), Is.EqualTo("192.0.2.53"));
-            Assert.That(server.GetProperty("tls").GetProperty("server_name").GetString(), Is.EqualTo("dns.example.net"));
+            Assert.That(servers.Count(server => affectedTags.Contains(server.GetProperty("tag").GetString()!)),
+                Is.EqualTo(affectedTags.Count));
+            foreach (JsonElement server in servers)
+            {
+                bool affected = affectedTags.Contains(server.GetProperty("tag").GetString()!);
+                Assert.That(server.GetProperty("server").GetString(), affected
+                    ? Is.EqualTo("192.0.2.53") : Is.Not.EqualTo("192.0.2.53"));
+                Assert.That(server.GetProperty("tls").GetProperty("server_name").GetString(), affected
+                    ? Is.EqualTo("dns.example.net") : Is.Not.EqualTo("dns.example.net"));
+            }
             if (id == "alidns")
                 Assert.That(root.GetProperty("route").GetProperty("rules").EnumerateArray().Any(rule =>
                     rule.TryGetProperty("ip_cidr", out var cidrs) && cidrs.EnumerateArray().Any(cidr => cidr.GetString() == "192.0.2.53/32")), Is.True);
-            foreach (JsonElement other in root.GetProperty("dns").GetProperty("servers").EnumerateArray().Where(item =>
-                         item.GetProperty("tag").GetString() != tag && item.TryGetProperty("server", out _)))
-                Assert.That(other.GetProperty("server").GetString(), Is.Not.EqualTo("192.0.2.53"));
         });
     }
 
@@ -639,7 +728,7 @@ public sealed class ProfileConfigurationTests
     [TestCase("port", "53")]
     [TestCase("path", "\"/resolve\"")]
     [TestCase("primary", "\"google\"")]
-    public void ResolverOperationsRejectMalformedCompleteEntities(string field, string value) => Assert.Throws<FormatException>(() =>
+    public void ResolverOperationsRejectMalformedCompleteEntities(string field, string value) => Assert.Throws<ProfileValidationException>(() =>
         ReplaceEntity("dns", "resolvers", "alidns", new JsonObject { [field] = JsonNode.Parse(value) }));
 
     [TestCase("")]
@@ -657,7 +746,7 @@ public sealed class ProfileConfigurationTests
     [TestCase("0.1.2.3")]
     [TestCase("224.0.0.1")]
     [TestCase("255.255.255.255")]
-    public void ResolverServersRequireCanonicalUnicastIpv4(string server) => Assert.Throws<FormatException>(() =>
+    public void ResolverServersRequireCanonicalUnicastIpv4(string server) => Assert.Throws<ProfileValidationException>(() =>
         ReplaceEntity("dns", "resolvers", "alidns", new JsonObject { ["server"] = server }));
 
     [TestCase("")]
@@ -673,14 +762,14 @@ public sealed class ProfileConfigurationTests
     [TestCase("dns.example.net\n")]
     [TestCase(" DNS.example.net")]
     [TestCase("解析.example.net")]
-    public void ResolverTlsNamesRequireAsciiDnsNames(string name) => Assert.Throws<FormatException>(() =>
+    public void ResolverTlsNamesRequireAsciiDnsNames(string name) => Assert.Throws<ProfileValidationException>(() =>
         ReplaceEntity("dns", "resolvers", "alidns", new JsonObject { ["server_name"] = name }));
 
     [Test]
     public void ResolverTlsNamesRejectOverlongLabelsAndHostnames()
     {
         foreach (string name in new[] { new string('a', 64) + ".example.net", string.Join('.', Enumerable.Repeat(new string('a', 63), 4)) })
-            Assert.Throws<FormatException>(() => ReplaceEntity("dns", "resolvers", "alidns", new JsonObject { ["server_name"] = name }));
+            Assert.Throws<ProfileValidationException>(() => ReplaceEntity("dns", "resolvers", "alidns", new JsonObject { ["server_name"] = name }));
     }
 
     [TestCase("10.0.0.53", 63)]
@@ -821,7 +910,7 @@ public sealed class ProfileConfigurationTests
         Assert.DoesNotThrowAsync(() => engine.ConvertAsync(new ConversionRequest("host", Yaml("Request US"), [TargetPlatform.Linux])));
         Assert.DoesNotThrowAsync(() => engine.ConvertAsync(new ConversionRequest("other-platform", Yaml("Request US"), [TargetPlatform.Windows])
         { Profile = overlay }));
-        Assert.That(host.Regions.Single(region => region.Id == "us").DisplayName, Is.Not.EqualTo("Request US"));
+        Assert.That(host.Resolve(TargetPlatform.Linux).Regions.Single(region => region.Id == "us").DisplayName, Is.Not.EqualTo("Request US"));
     }
 
     [Test]
@@ -848,6 +937,347 @@ public sealed class ProfileConfigurationTests
             Assert.That(resolved["features"]!["api"]!["enabled"]!.GetValue<bool>(), Is.True);
         }
     }
+
+    [TestCase(TargetPlatform.Android)]
+    [TestCase(TargetPlatform.Linux)]
+    [TestCase(TargetPlatform.Windows)]
+    public async Task KeyedServicePatchPreservesOrderAndChangesOnlyItsSelectorDefault(TargetPlatform platform)
+    {
+        var original = BoxForgeProfile.Default;
+        var overlay = JsonNode.Parse("""
+            {"route":{"services":{"patch":[{"id":"ai","default_region":"jp"}]}}}
+            """)!.AsObject();
+        var changed = original.ApplyOverrides(overlay);
+        Assert.That(changed.Services.Select(service => service.Id), Is.EqualTo(original.Services.Select(service => service.Id)));
+        var expectedServices = (JsonArray)Resolved(original)["route"]!["services"]!.DeepClone();
+        expectedServices.OfType<JsonObject>().Single(service => service["id"]!.GetValue<string>() == "ai")["default_region"] = "jp";
+        Assert.That(JsonNode.DeepEquals(Resolved(changed)["route"]!["services"], expectedServices), Is.True);
+
+        string yaml = Yaml("US01", "US02", "JP01", "JP02");
+        using var baseline = await Generate(original, platform, yaml);
+        using var actual = await Generate(changed, platform, yaml);
+        var expected = JsonNode.Parse(baseline.RootElement.GetRawText())!.AsObject();
+        string aiName = original.Services.Single(service => service.Id == "ai").Name;
+        expected["outbounds"]!.AsArray().OfType<JsonObject>().Single(outbound => outbound["tag"]!.GetValue<string>() == aiName)["default"] =
+            changed.Resolve(TargetPlatform.Linux).Regions.Single(region => region.Id == "jp").DisplayName;
+        Assert.Multiple(() =>
+        {
+            Assert.That(actual.RootElement.GetProperty("route").GetProperty("rules").GetRawText(),
+                Is.EqualTo(baseline.RootElement.GetProperty("route").GetProperty("rules").GetRawText()),
+                "Patching a service must not reorder outbound route decisions.");
+            Assert.That(JsonNode.DeepEquals(JsonNode.Parse(actual.RootElement.GetRawText()), expected), Is.True,
+                "Only the selected service's default target may change.");
+        });
+    }
+
+    [Test]
+    public async Task KeyedRegionResolverAndGroupedRuleSetPatchesPreserveOtherFieldsAndOrder()
+    {
+        var original = BoxForgeProfile.Default;
+        var profile = Load("""
+            {"route":{"regions":{"patch":[{"id":"jp","display_name":"Japan custom"}]},
+                      "rule_sets":{"patch":[{"tag":"games","url":"https://rules.example.net/{tag}.srs"}]}},
+             "dns":{"resolvers":{"patch":[{"id":"alidns","server":"223.6.6.6"}]}}}
+            """);
+        var before = Resolved(original);
+        var after = Resolved(profile);
+        Assert.Multiple(() =>
+        {
+            Assert.That(profile.Resolve(TargetPlatform.Linux).Regions.Select(region => region.Id), Is.EqualTo(original.Resolve(TargetPlatform.Linux).Regions.Select(region => region.Id)));
+            Assert.That(profile.Resolve(TargetPlatform.Linux).Regions.Select(region => region.Pattern.ToString()),
+                Is.EqualTo(original.Resolve(TargetPlatform.Linux).Regions.Select(region => region.Pattern.ToString())));
+            Assert.That(after["dns"]!["resolvers"]!.AsArray().Select(item => item!["id"]!.GetValue<string>()),
+                Is.EqualTo(before["dns"]!["resolvers"]!.AsArray().Select(item => item!["id"]!.GetValue<string>())));
+            Assert.That(after["dns"]!["resolvers"]![0]!["server_name"]!.GetValue<string>(),
+                Is.EqualTo(before["dns"]!["resolvers"]![0]!["server_name"]!.GetValue<string>()));
+            Assert.That(JsonNode.DeepEquals(after["route"]!["rule_sets"]![0]!["tags"], before["route"]!["rule_sets"]![0]!["tags"]), Is.True);
+            Assert.That(after["route"]!["rule_sets"]![0]!.AsObject().ContainsKey("tag"), Is.False);
+            Assert.That(after["route"]!["rule_sets"]![0]!["url"]!.GetValue<string>(), Is.EqualTo("https://rules.example.net/{tag}.srs"));
+        });
+        using var generated = await Generate(profile, TargetPlatform.Linux, Yaml("US01", "US02", "JP01", "JP02"));
+        Assert.Multiple(() =>
+        {
+            Assert.That(generated.RootElement.GetProperty("dns").GetProperty("servers").EnumerateArray()
+                .Single(server => server.GetProperty("tag").GetString() == SingboxTags.DirectAliDns).GetProperty("server").GetString(),
+                Is.EqualTo("223.6.6.6"));
+            Assert.That(generated.RootElement.GetProperty("outbounds").EnumerateArray()
+                .Where(outbound => outbound.GetProperty("type").GetString() == "urltest").Select(outbound => outbound.GetProperty("tag").GetString()),
+                Is.EqualTo(new[] { original.Resolve(TargetPlatform.Linux).Regions.Single(region => region.Id == "us").DisplayName + " AUTO", "Japan custom AUTO" }));
+            Assert.That(generated.RootElement.GetProperty("route").GetProperty("rule_set").EnumerateArray().First().GetProperty("url").GetString(),
+                Is.EqualTo("https://rules.example.net/{tag}.srs"));
+        });
+    }
+
+    [Test]
+    public void KeyedOperationsUseFixedOrderAndSequentialItemsWithoutMovingReplacements()
+    {
+        var ai = Entity("route", "services", "ai");
+        var google = Entity("route", "services", "google");
+        var custom = (JsonObject)ai.DeepClone();
+        custom["id"] = "custom";
+        custom["name"] = "Custom service";
+        var aiReplacement = (JsonObject)ai.DeepClone();
+        aiReplacement["default_region"] = "hk";
+        var inserted = (JsonObject)custom.DeepClone();
+        inserted["id"] = "inserted";
+        inserted["name"] = "Inserted service";
+        var secondInsert = (JsonObject)inserted.DeepClone();
+        secondInsert["id"] = "second-insert";
+        secondInsert["name"] = "Second inserted service";
+        var operations = new JsonObject
+        {
+            ["insert_before"] = new JsonArray(
+                new JsonObject { ["before"] = new JsonObject { ["id"] = "google" }, ["value"] = inserted },
+                new JsonObject { ["before"] = new JsonObject { ["id"] = "google" }, ["value"] = secondInsert }),
+            ["remove_by_key"] = new JsonArray(new JsonObject { ["id"] = "custom" }),
+            ["set"] = new JsonArray(aiReplacement),
+            ["patch"] = new JsonArray(new JsonObject { ["id"] = "ai", ["default_region"] = "jp" },
+                new JsonObject { ["id"] = "custom", ["default_region"] = "jp" }),
+            ["remove"] = new JsonArray(google.DeepClone()),
+            ["append"] = new JsonArray(google.DeepClone(), custom),
+            ["replace"] = new JsonArray(ai.DeepClone(), google.DeepClone())
+        };
+        var profile = BoxForgeProfile.Default.ApplyOverrides(new JsonObject
+        { ["route"] = new JsonObject { ["services"] = operations } });
+        Assert.Multiple(() =>
+        {
+            Assert.That(profile.Services.Select(service => service.Id), Is.EqualTo(new[] { "ai", "inserted", "second-insert", "google" }));
+            Assert.That(profile.Services[0].DefaultRegion, Is.EqualTo("hk"), "set must execute after patch without moving ai.");
+        });
+        var sequential = profile.ApplyOverrides(JsonNode.Parse("""
+            {"route":{"services":{"patch":[{"id":"ai","default_region":"jp"},{"id":"ai","default_region":"sg"}]}}}
+            """)!.AsObject());
+        Assert.That(sequential.Services[0].DefaultRegion, Is.EqualTo("sg"));
+    }
+
+    [Test]
+    public void KeyedPatchRequiresAndAppliesNestedArrayOperations()
+    {
+        var profile = Load("""
+            {"route":{"services":{"patch":[{"id":"ai","rule_sets":{"append":["google"]}}]}}}
+            """);
+        Assert.That(profile.Services.Single(service => service.Id == "ai").RuleSets, Is.EqualTo(new[] { "ai", "google" }));
+    }
+
+    [TestCase("set")]
+    [TestCase("insert_before")]
+    public void KeyedReplacementAndInsertionRequireAnExistingTarget(string operation)
+    {
+        var value = Entity("route", "services", "ai");
+        value["id"] = "custom-new";
+        value["name"] = "Complete new service";
+        JsonObject item = operation == "set" ? value : new JsonObject
+        {
+            ["before"] = new JsonObject { ["id"] = "missing" },
+            ["value"] = value
+        };
+        Assert.Throws<ProfileValidationException>(() => BoxForgeProfile.Default.ApplyOverrides(ArrayOperation("route", "services", operation, item)));
+    }
+
+    [Test]
+    public void GroupedRuleSetSetPreservesItsPositionAndRequiresTheSelectedTag()
+    {
+        var source = JsonNode.Parse("""
+            {"tags":["custom-first","custom-second"],"url":"https://rules.example.net/{tag}.srs","update_interval":"1d"}
+            """)!.AsObject();
+        var original = BoxForgeProfile.Default.ApplyOverrides(ArrayOperation("route", "rule_sets", "append", source));
+        int index = Resolved(original)["route"]!["rule_sets"]!.AsArray().Count - 1;
+        source["tag"] = "custom-second";
+        source["url"] = "https://replacement.example.net/{tag}.srs";
+        var profile = original.ApplyOverrides(ArrayOperation("route", "rule_sets", "set", source));
+        Assert.Multiple(() =>
+        {
+            Assert.That(JsonNode.DeepEquals(Resolved(profile)["route"]!["rule_sets"]![index]!["tags"], source["tags"]), Is.True);
+            Assert.That(Resolved(profile)["route"]!["rule_sets"]![index]!.AsObject().ContainsKey("tag"), Is.False);
+            Assert.That(Resolved(profile)["route"]!["rule_sets"]![index]!["url"]!.GetValue<string>(),
+                Is.EqualTo("https://replacement.example.net/{tag}.srs"));
+        });
+        source["tags"] = new JsonArray("custom-first");
+        Assert.Throws<ProfileValidationException>(() => original.ApplyOverrides(ArrayOperation("route", "rule_sets", "set", source)));
+        Assert.Throws<ProfileValidationException>(() => original.ApplyOverrides(ArrayOperation("route", "rule_sets", "patch", JsonNode.Parse("""
+            {"tag":"custom-second","tags":{"remove":["custom-second"]}}
+            """)!)));
+    }
+
+    [Test]
+    public void RuleSetRemovalByMemberTagRemovesTheWholeSource()
+    {
+        var source = JsonNode.Parse("""
+            {"tags":["custom-first","custom-second"],"url":"https://rules.example.net/{tag}.srs","update_interval":"1d"}
+            """)!;
+        var added = BoxForgeProfile.Default.ApplyOverrides(ArrayOperation("route", "rule_sets", "append", source));
+        var removed = added.ApplyOverrides(ArrayOperation("route", "rule_sets", "remove_by_key",
+            new JsonObject { ["tag"] = "custom-second" }));
+        Assert.That(JsonNode.DeepEquals(Resolved(removed), Resolved(BoxForgeProfile.Default)), Is.True);
+    }
+
+    [Test]
+    public void KeyedPatchLayersAreSnapshotsAndFailAtomically()
+    {
+        var root = JsonNode.Parse("""
+            {"route":{"services":{"patch":[{"id":"ai","default_region":"jp"}]}},
+             "platforms":{"Linux":{"route":{"services":{"patch":[{"id":"ai","default_region":"hk"}]}}}}}
+            """)!.AsObject();
+        string original = BoxForgeProfile.Default.ToResolvedJson();
+        string rootInput = root.ToJsonString();
+        var profile = BoxForgeProfile.Default.ApplyOverrides(root);
+        var request = JsonNode.Parse("""
+            {"route":{"services":{"patch":[{"id":"ai","default_region":"sg"}]}},
+             "platforms":{"Linux":{"route":{"services":{"patch":[{"id":"ai","default_region":"us"}]}}}}}
+            """)!.AsObject();
+        string requestInput = request.ToJsonString();
+        var selected = profile.Resolve(TargetPlatform.Linux, request);
+        string snapshot = selected.ToResolvedJson();
+        Assert.Multiple(() =>
+        {
+            Assert.That(profile.Resolve(TargetPlatform.Windows).Services.Single(service => service.Id == "ai").DefaultRegion, Is.EqualTo("jp"));
+            Assert.That(profile.Resolve(TargetPlatform.Linux).Services.Single(service => service.Id == "ai").DefaultRegion, Is.EqualTo("hk"));
+            Assert.That(profile.Resolve(TargetPlatform.Windows, request).Services.Single(service => service.Id == "ai").DefaultRegion, Is.EqualTo("sg"));
+            Assert.That(selected.Services.Single(service => service.Id == "ai").DefaultRegion, Is.EqualTo("us"));
+            Assert.That(root.ToJsonString(), Is.EqualTo(rootInput));
+            Assert.That(request.ToJsonString(), Is.EqualTo(requestInput));
+        });
+        root["route"]!["services"]!["patch"]![0]!["default_region"] = "sg";
+        request["route"]!["services"]!["patch"]![0]!["default_region"] = "jp";
+        Assert.That(selected.ToResolvedJson(), Is.EqualTo(snapshot));
+        string hostSnapshot = profile.ToResolvedJson();
+        var invalid = JsonNode.Parse("""
+            {"route":{"services":{"patch":[{"id":"ai","default_region":"jp"},{"id":"missing","default_region":"hk"}]}}}
+            """)!.AsObject();
+        string invalidInput = invalid.ToJsonString();
+        Assert.Throws<ProfileValidationException>(() => profile.ApplyOverrides(invalid));
+        Assert.That(profile.ToResolvedJson(), Is.EqualTo(hostSnapshot));
+        Assert.That(invalid.ToJsonString(), Is.EqualTo(invalidInput));
+        Assert.That(BoxForgeProfile.Default.ToResolvedJson(), Is.EqualTo(original));
+    }
+
+    [TestCase("null")]
+    [TestCase("{}")]
+    [TestCase("[null]")]
+    [TestCase("[{}]")]
+    [TestCase("[{\"id\":null}]")]
+    [TestCase("[{\"id\":12}]")]
+    [TestCase("[{\"tag\":\"ai\",\"default_region\":\"jp\"}]")]
+    [TestCase("[{\"id\":\"ai\",\"typo\":true}]")]
+    [TestCase("[{\"id\":\"missing\",\"default_region\":\"jp\"}]")]
+    [TestCase("[{\"id\":\"ai\",\"rule_sets\":[\"ai\"]}]")]
+    public void KeyedPatchRejectsMalformedSelectorsFieldsAndNestedArrays(string entries) => Assert.Throws<ProfileValidationException>(() =>
+        Load("{\"route\":{\"services\":{\"patch\":" + entries + "}}}"));
+
+    [TestCase("set", "[{\"id\":\"ai\",\"name\":\"Incomplete\"}]")]
+    [TestCase("set", "[{\"id\":\"missing\",\"name\":\"Incomplete\"}]")]
+    [TestCase("remove_by_key", "[{\"id\":\"ai\",\"name\":\"extra-selector-field\"}]")]
+    [TestCase("remove_by_key", "[{\"id\":\"missing\"}]")]
+    [TestCase("insert_before", "[{\"before\":{\"id\":\"missing\"},\"value\":{\"id\":\"new\"}}]")]
+    [TestCase("insert_before", "[{\"before\":{\"id\":\"google\"}}]")]
+    [TestCase("insert_before", "[{\"before\":{\"id\":\"google\"},\"value\":null}]")]
+    [TestCase("insert_before", "[{\"before\":{\"id\":\"google\"},\"value\":{\"id\":\"new\"},\"typo\":true}]")]
+    public void KeyedSetRemoveAndInsertRejectInvalidShapes(string operation, string entries) => Assert.Throws<ProfileValidationException>(() =>
+        Load("{\"route\":{\"services\":{\"" + operation + "\":" + entries + "}}}"));
+
+    [TestCase("patch")]
+    [TestCase("set")]
+    [TestCase("remove_by_key")]
+    [TestCase("insert_before")]
+    public void PrimitiveArraysRejectKeyedOperationsEvenWhenEmpty(string operation) => Assert.Throws<ProfileValidationException>(() =>
+        Load("{\"route\":{\"sniff_excluded_ports\":{\"" + operation + "\":[]}}}"));
+
+    [Test]
+    public void AmbiguousKeyedRemovalRejectsInsteadOfRemovingEveryMatch()
+    {
+        var duplicate = Entity("route", "services", "ai");
+        var overlay = new JsonObject
+        {
+            ["route"] = new JsonObject
+            {
+                ["services"] = new JsonObject
+                {
+                    ["append"] = new JsonArray(duplicate),
+                    ["remove_by_key"] = new JsonArray(new JsonObject { ["id"] = "ai" })
+                }
+            }
+        };
+        Assert.Throws<ProfileValidationException>(() => BoxForgeProfile.Default.ApplyOverrides(overlay));
+    }
+
+    [TestCase("{\"patch\":[{\"id\":\"ai\",\"typo\":true}]}")]
+    [TestCase("{\"set\":[{\"id\":\"ai\"}]}")]
+    [TestCase("{\"insert_before\":[{\"before\":{\"id\":\"google\"},\"value\":null}]}")]
+    public void UnselectedPlatformsStillValidateKeyedOperationStructures(string operation)
+    {
+        var overlay = JsonNode.Parse("{\"platforms\":{\"Windows\":{\"route\":{\"services\":" + operation + "}}}}")!.AsObject();
+        Assert.Throws<ProfileValidationException>(() => BoxForgeProfile.Default.Resolve(TargetPlatform.Linux, overlay));
+    }
+
+    [Test]
+    public void KeyedPatchCanOverrideAnOmittedOptionalFieldOnAnAppendedEntity()
+    {
+        var added = Entity("route", "services", "ai");
+        added["id"] = "custom";
+        added["name"] = "Custom service";
+        added.Remove("precedes_domestic_routes");
+        var overlay = ArrayOperation("route", "services", "append", added);
+        overlay["route"]!["services"]!["patch"] = new JsonArray(new JsonObject
+        {
+            ["id"] = "custom",
+            ["precedes_domestic_routes"] = true
+        });
+
+        var profile = BoxForgeProfile.Default.ApplyOverrides(overlay);
+
+        Assert.That(profile.Services.Last().Id, Is.EqualTo("custom"));
+        Assert.That(profile.Services.Last().PrecedesDomesticRoutes, Is.True);
+    }
+
+    [TestCase("{\"route\":{\"services\":{\"patch\":[{\"id\":\"sensitive-selector\",\"default_region\":\"jp\"}]}}}", "profile.request.route.services.patch[0]")]
+    [TestCase("{\"platforms\":{\"Windows\":{\"route\":{\"services\":{\"patch\":[{\"id\":\"ai\",\"sensitive-key\":true}]}}}}}", "profile.request.platforms.Windows.route.services.patch[0][unknown]")]
+    [TestCase("{\"features\":{\"api\":{\"enabled\":\"sensitive-value\"}}}", "profile.request.features.api.enabled")]
+    public void RequestDiagnosticsIdentifyLayersAndOperationsWithoutEchoingInput(string json, string path)
+    {
+        var overlay = JsonNode.Parse(json)!.AsObject();
+        var error = Assert.Throws<ProfileValidationException>(() => BoxForgeProfile.Default.Resolve(TargetPlatform.Linux, overlay))!;
+        Assert.That(error.Diagnostics.Select(item => (item.Code, item.Path)), Is.EqualTo(new[] { ("PF001", path) }));
+        Assert.That(JsonSerializer.Serialize(error.Diagnostics), Does.Not.Contain("sensitive"));
+        Assert.That(JsonSerializer.Serialize(error.Diagnostics), Does.Not.Contain("default_region"));
+        Assert.Throws<NotSupportedException>(() => ((IList<ConfigDiagnostic>)error.Diagnostics).Clear());
+    }
+
+    [Test]
+    public void ProfileDiagnosticsDistinguishFilesHostAndStoredPlatformLayers()
+    {
+        const string invalidBoolean = "{\"features\":{\"api\":{\"enabled\":\"sensitive-value\"}}}";
+        var file = Assert.Throws<ProfileValidationException>(() => Load(invalidBoolean))!;
+        var host = Assert.Throws<ProfileValidationException>(() => ProfileConfiguration.ResolveProfile(
+            new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            { ["features:api:enabled"] = "sensitive-value" }).Build()))!;
+        var document = BoxForgeProfile.Default.ApplyOverrides(JsonNode.Parse("""
+            {"platforms":{"Linux":{"route":{"services":{"patch":[{"id":"ai","default_region":"jp"}]}}}}}
+            """)!.AsObject());
+        var layer = Assert.Throws<ProfileValidationException>(() => document.ApplyOverrides(JsonNode.Parse("""
+            {"route":{"services":{"remove_by_key":[{"id":"ai"}]}}}
+            """)!.AsObject()))!;
+        Assert.Multiple(() =>
+        {
+            Assert.That(file.Diagnostics[0].Path, Is.EqualTo("profile.file.features.api.enabled"));
+            Assert.That(host.Diagnostics[0].Path, Is.EqualTo("profile.host.features.api.enabled"));
+            Assert.That(layer.Diagnostics[0].Path, Is.EqualTo("profile.platform_layers[1].Linux.route.services.patch[0]"));
+            Assert.That(JsonSerializer.Serialize(file.Diagnostics.Concat(host.Diagnostics).Concat(layer.Diagnostics)), Does.Not.Contain("sensitive"));
+        });
+    }
+
+    [Test]
+    public void EffectiveProfileSemanticDiagnosticsUseSectionAndArrayIndex()
+    {
+        var error = Assert.Throws<ProfileValidationException>(() => BoxForgeProfile.Default.Resolve(TargetPlatform.Linux,
+            JsonNode.Parse("""
+                {"dns":{"resolvers":{"patch":[{"id":"cloudflare","server":"sensitive-address"}]}}}
+                """)!.AsObject()))!;
+        Assert.That(error.Diagnostics[0].Path, Is.EqualTo("profile.effective.Linux.dns.resolvers[2].server"));
+        Assert.That(JsonSerializer.Serialize(error.Diagnostics), Does.Not.Contain("sensitive-address"));
+        Assert.That(error, Is.InstanceOf<FormatException>());
+    }
+
+    private static JsonObject Resolved(ResolvedProfile profile) => JsonNode.Parse(profile.ToResolvedJson())!.AsObject();
 
     private static JsonObject Resolved(BoxForgeProfile profile) => JsonNode.Parse(profile.ToResolvedJson())!.AsObject();
 

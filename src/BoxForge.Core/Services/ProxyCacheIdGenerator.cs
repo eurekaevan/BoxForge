@@ -16,7 +16,7 @@ internal sealed class ProxyCacheIdGenerator(
     {
         object?[] canonicalProxies =
         [
-            .. proxies.Select(proxy => Canonicalize(proxy))
+            .. proxies.Select(Canonicalize)
         ];
         string identityJson = JsonSerializer.Serialize(canonicalProxies);
         return configSerializer.GetContentHash(identityJson);

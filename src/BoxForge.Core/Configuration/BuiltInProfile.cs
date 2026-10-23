@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Text.Json;
+using System.Text.Encodings.Web;
 using System.Text.Json.Serialization;
 using BoxForge.Models;
 
@@ -21,6 +22,12 @@ internal sealed record BuiltInProfile(
         RespectNullableAnnotations = true,
         RespectRequiredConstructorParameters = true,
         Converters = { new JsonStringEnumConverter(allowIntegerValues: false) }
+    };
+
+    internal static readonly JsonSerializerOptions SnapshotJsonOptions = new(JsonOptions)
+    {
+        WriteIndented = true,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
 
     public static BuiltInProfile Default { get; } = LoadDefault();

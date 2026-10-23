@@ -155,11 +155,7 @@ internal static class Hysteria2Protocol
             throw new NodeParseException("ports 包含空端口项");
         }
 
-        var normalizedEntries = entries
-            .Select(NormalizePortEntry)
-            .ToList();
-
-        return normalizedEntries.AsReadOnly();
+        return Array.AsReadOnly(entries.Select(NormalizePortEntry).ToArray());
     }
 
     private static Hysteria2PortSpan NormalizePortEntry(string entry)

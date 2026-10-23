@@ -1,6 +1,5 @@
+using BoxForge.Exceptions;
 using BoxForge.Builders;
-using BoxForge.Builders.Components;
-using BoxForge.Converters;
 using BoxForge.Engine;
 using BoxForge.Parsers;
 using BoxForge.Services;
@@ -11,6 +10,21 @@ namespace BoxForge.Configuration;
 
 public static class CoreServiceRegistration
 {
+    /// <summary>Validate the roots of a source loaded with BOXFORGE_ before merging it into host configuration.</summary>
+    public static void ValidateBoxForgeEnvironment(this IConfiguration environment)
+    {
+        foreach (var section in environment.GetChildren())
+        {
+            if (section.Key.Equals("Profile", StringComparison.OrdinalIgnoreCase))
+            {
+                if (section.GetChildren().Any())
+                    throw new ProfileValidationException("profile.host", "BOXFORGE_Profile 只接受文件路径，不能包含子键。");
+            }
+            else if (!ProfileConfiguration.IsProfileSection(section.Key))
+                throw new ProfileValidationException("profile.host", "BOXFORGE_ 环境变量必须映射到 profile 键。");
+        }
+    }
+
     public static IServiceCollection AddBoxForgeCore(
         this IServiceCollection services,
         IConfiguration configuration)
@@ -22,13 +36,7 @@ public static class CoreServiceRegistration
         services.AddSingleton<IProxyCacheIdGenerator, ProxyCacheIdGenerator>();
         services.AddSingleton<ISingboxConfigValidator, SingboxConfigValidator>();
 
-        services.AddTransient<NodeCatalogBuilder>();
-        services.AddTransient<TailscaleEndpointBuilder>();
-        services.AddTransient<DnsProfileBuilder>();
-        services.AddTransient<RouteProfileBuilder>();
-
         services.AddTransient<ISingboxConfigBuilder, SingboxConfigBuilder>();
-        services.AddTransient<ConversionService>();
         services.AddTransient<IBoxForgeEngine, BoxForgeEngine>();
 
         return services;

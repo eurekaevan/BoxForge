@@ -7,7 +7,6 @@ internal static class SingboxGroupEmitter
 {
     internal static ProfilePlan Emit(ProfileGroupPlan plan)
     {
-        plan.Validate();
         return new ProfilePlan(
             Emit(plan.Main),
             plan.Regions.Select(Emit).ToArray(),

@@ -17,22 +17,24 @@ BoxForge.Tests  ──→ BoxForge.Cli, BoxForge.Server, BoxForge.Core
 - `BoxForge.Cli` 是 Executable，引用 Core；它通过 `IBoxForgeEngine`
   调用转换能力。
 - `BoxForge.Server` 是 ASP.NET Core Executable，只引用 Core；它不引用
-  CLI，不使用解析器、构建器、`ConversionService` 或文件工作流。
+  CLI，不使用解析器、构建器或文件工作流。
 - `BoxForge.Tests` 引用 Core、CLI 和 Server，保留核心构建、命令行、
   本地事务工作流和 HTTP API 的回归测试。
 
 ## 处理流程
 
-1. `GenerateCommandParser` 解析 `generate` 子命令、路径和平台。
+1. `GenerateCommandParser` 解析命令。`profile show --resolved` 加载配置并直接输出快照；
+   `generate` 解析路径和平台后继续下面的生成流程。
 2. `InputDiscovery` 解析物理路径、检查输入输出目录关系，并按文件名排序发现
    顶层 YAML；重复配置名和无效文件名在读取前报告。
 3. `LocalGenerationWorkflow` 将每个文件作为一个 `ConversionRequest` 交给
    `IBoxForgeEngine`。
-4. `BoxForgeEngine` 校验内存输入，调用 `ConversionService.Prepare` 解析
-   YAML（重复键、循环引用及超限展开会直接失败）、生成 `NodeCatalog` 和稳定 `cache_id`，然后按
-   Android、Linux、Windows 顺序调用 `ConversionService.Convert`。
-5. 对每个目标平台，`SingboxConfigBuilder` 组合 inbound、endpoint、outbound、
-   DNS、route 和 experimental 配置。
+4. `BoxForgeEngine` 是唯一的编译编排入口：校验内存请求，解析各平台配置文档，
+   只解析一次 YAML（重复键、循环引用及超限展开会直接失败），生成不依赖平台的
+   `NodeCatalog` 和稳定 `cache_id`。
+5. 按 Android、Linux、Windows 顺序，`ConfigurationPlanner` 将节点绑定到该平台的
+   `ResolvedProfile`，检查保留名称并确定完整策略计划；`SingboxConfigBuilder.Build`
+   集中校验完整计划，再发射为 inbound、endpoint、outbound、DNS、route 和 experimental 配置。
 6. `SingboxConfigValidator` 检查 BoxForge 自身约束，`ConfigSerializer` 生成
    JSON 并计算小写十六进制 SHA-256。只有全部平台成功才返回
    `ConversionBundle`。
@@ -43,14 +45,20 @@ BoxForge.Tests  ──→ BoxForge.Cli, BoxForge.Server, BoxForge.Core
 
 `BoxForge.Core/Configuration/default-profile.json` 作为程序集资源内嵌，保存现有地区
 匹配表达式、服务定义、运行时开关、全局策略、各平台参数及远端 rule-set URL 和更新间隔。
-默认数据由 `BoxForgeProfile` 加载并作为不可变实例注入；加载器拒绝
+默认数据由 `BoxForgeProfile` 加载为带有覆盖层的不可变配置文档并注入；加载器拒绝
 未知字段、重复字段及缺失的目标平台，不依赖运行目录中的文件。
-地区匹配保持原有生成式正则的文化无关大小写行为。
+地区表达式在解析时验证并构造正则，保持文化无关的忽略大小写行为。
 
 profile 根分区为 `features`、`dns`、`route`、`tuning`、`privacy`；`platforms`
 是按 Android、Linux、Windows 选择的同结构稀疏层，不允许嵌套 `platforms`；根与平台项均不接受 `version` 字段。
 对每个目标先合并内置根值、文件根值、统一环境根值，再依来源顺序应用平台层；
 请求根值及请求自身的目标平台层最后应用。宿主快照启动时加载，请求快照彼此隔离。
+`BoxForgeProfile.Resolve(platform, request)` 在构建前一次性应用覆盖层，返回绑定单个平台的
+`ResolvedProfile`。文档上的分区属性表示根值；已解析配置保存最终分区、平台参数、
+地区匹配表达式与保留名称，不支持继续叠加或切换平台。节点名称检查和策略规划只接收已解析配置；来源解析不接收平台配置。
+目标构建器只接收计划和缓存 ID，不持有宿主文档，也没有可选配置回退。
+无状态的节点、DNS、路由和 Tailscale 构建组件使用静态调用。
+
 `profile show --resolved` 返回各平台完整五分区快照，根与平台项均无 `version` 字段，
 不作为可直接重新加载的差异覆盖文件。
 
@@ -59,9 +67,11 @@ profile 根分区为 `features`、`dns`、`route`、`tuning`、`privacy`；`plat
 `privacy` 保留空对象，不引入开关。所有生成模块使用该次转换的有效目标配置，
 不会重新读取环境变量或回退到静态平台默认值。
 
-数组路径覆盖统一使用 `replace`、`append`、`remove`，固定按此顺序执行；
-删除按原始配置元素的完整 JSON 值深比较，找不到项会失败。没有按 ID/tag 隐式合并或批量来源自动拆组。
-规则源 URL 模板展开与更新时长归一化仅在目标发射时进行；profile 快照和后续叠加
+数组路径覆盖使用显式操作，固定顺序为 `replace`、`append`、`remove`、`patch`、`set`、
+`remove_by_key`、`insert_before`。`remove` 按原始完整 JSON 值匹配；按键操作必须唯一定位现有项，
+`patch`/`set` 保留位置。Schema 同时校验部分修改与完整实体，未选中平台的操作也需通过结构校验。
+没有按 ID/tag 隐式合并或批量来源自动拆组，具体格式见[数组操作](configuration.md#数组操作)。
+规则源 URL 模板展开与更新时长归一化在路由规划时进行；profile 快照和后续叠加
 保留原始 URL、时长文本，`remove` 不使用规范化后的发射值。
 操作 payload 中完整实体的内部数组是普通数据，例如服务 `rule_sets`、来源 `tags`。
 地区、服务、来源及 resolver 的字段约束见[配置参考](configuration.md)，最终标签唯一性、
@@ -70,12 +80,14 @@ profile 根分区为 `features`、`dns`、`route`、`tuning`、`privacy`；`plat
 除引导文件路径的 `Profile` 外，`BOXFORGE_` 环境键必须映射真实配置路径；
 键名不区分大小写，`__` 分隔层级，标量与数组操作 JSON 都按目标类型严格校验。
 旧开关、未知键、重复键及不允许的 null 均拒绝。
-未提供覆盖时，默认生成策略不变；本阶段没有隐私档位或 JSON Schema。
+环境前缀校验由 CLI、Server 加载配置时执行，Core 只解析注入的 `IConfiguration`。
+普通宿主的同名业务节不会被当成旧 profile 数组；profile 文件和请求仍严格拒绝未知根字段。
+未提供覆盖时使用内置 profile；不提供隐私档位或 JSON Schema。
 
-`Tests/BoxForge.Tests/Fixtures/default-profile-sha256.json` 记录迁移前实际 CLI 输出的
+`Tests/BoxForge.Tests/Fixtures/default-profile-sha256.json` 记录内置 profile 实际 CLI 输出的
 SHA-256：5 份 YAML × 3 个平台 × 8 种桌面 Tailscale、Android Tailscale、API 开关
 组合，共 120 份。回归测试对生成 JSON 的 UTF-8 字节计算哈希，包含格式与字段顺序；
-维护策略时不能仅为通过测试而重写这些基线。
+策略变更时须核对实际输出差异，再同步更新这些基线。
 
 ## 不可信 YAML 的资源边界
 
@@ -110,7 +122,7 @@ Server 不访问订阅 URL、不保存输入或结果；上传缓冲和 ZIP 构�
 ### 内部编译流水线：协议解释、catalog 与配置计划
 
 VLESS、Trojan、AnyTLS、Hysteria2 与 Shadowsocks 共用 `ProxyNodeParser` 入口，
-按协议 Schema 校验后调用解释钩子，构建中立节点。协议、catalog、构建请求和各层
+按协议 Schema 校验后调用解释钩子，构建中立节点。协议、catalog 和各层
 计划均属于内部实现；对外转换使用 `IBoxForgeEngine`：
 
 ```text
@@ -140,8 +152,8 @@ Trojan 省略 `tls` 仍启用协议要求的 TLS，IR 中保留来源缺失与�
 `Validate` 检查节点 TLS 激活条件，共用 TLS 检查要求 Reality 具有客户端指纹；
 发射入口执行检查，内部 IR 矛盾直接失败，不作为可跳过的来源节点错误吞掉。
 
-AnyTLS 的 idle timeout、检查间隔、最少空闲会话数及 metadata 使用同一来源记录方式。
-缺失与显式 null 在 IR 中可区分，最终仍省略；显式零会话数和空 metadata 保留。
+AnyTLS 的 idle timeout、检查间隔、最少空闲会话数及 metadata 保存解释后的可空值。
+缺失与显式 null 均解释为 null，最终省略；显式零会话数和空 metadata 保留。
 时长复用既有正 Go duration 解析器，数字秒补 `s`，其他有效文本保留，避免引入
 精度或输出字节变化。TLS 仍为协议必需，不接受 Reality。发射入口还检查正时长、
 非负会话数，以及 metadata 的 LF 和 65479 UTF-8 字节边界；不会自动添加客户端身份。
@@ -163,7 +175,7 @@ Gecko 参数保留是否显式提供的标记，0/null 均解释为使用核心�
 标量/范围区别、顺序及重复项保留。官方验证脚本在临时 fixture 副本中追加端口回归样本，
 覆盖三平台与全部 Tailscale/API 开关组合，不修改仓库 fixture 或输出字节基线。
 
-Shadowsocks 的 cipher/method、UoT 开关/版本与插件保留解释后的值及显式标记。
+Shadowsocks 的 cipher/method、UoT 开关/版本与插件保留解释后的值。
 UoT 省略、null 和版本 0 均解释为 v1，禁用时仍省略整个目标对象；版本 1/2
 用语义枚举表达。obfs 的 http/tls 模式同样使用枚举，host 保留原始文本，
 缺失/null 回退到 `bing.com`，两种嵌套别名仍由 Schema 严格校验。
@@ -177,7 +189,7 @@ UoT 省略、null 和版本 0 均解释为 v1，禁用时仍省略整个目标�
 文档是否过时；测试从同表生成用例，检查完整性、唯一 ID、固定 revision 和真实 Schema
 字段声明，业务行为仍由独立回归测试检查。Trojan 的 `tls` 开关是 BoxForge
 兼容输入，证据明确区分它与 Mihomo 原生 Trojan 的固有 TLS。
-`Mapped` 表示已实现，不代表运行时等价证明；本次不改变协议默认行为。
+`Mapped` 表示已实现，不代表运行时等价证明。
 共用 TLS 解析先产生中立设置；后端为每次输出复制 ALPN 和 Hysteria2 端口列表，
 避免输出修改污染共享 IR。
 
@@ -198,27 +210,29 @@ IR 检查默认项属于候选列表、引用目标存在、探测组只含至�
 
 DNS 规划同样先产生中立的 `DnsPlan`：`DnsHttpsResolverPlan` 记录解析器地址、TLS 名称和
 连接出口，`DnsResolverPoolPlan` 记录池名称、匹配范围和主/备解析器。计划保留地址族、
-选择模式、Tailscale 开关、广告规则集、最终解析器及 priority/domestic/global 的顺序；
-无服务分类时不生成 priority 池。发射前检查解析器和池名称唯一、解析器引用有效、
+选择模式、Tailscale 开关、广告规则集、最终解析器及服务/domestic/global 的顺序；
+每个服务独立生成池及经过该服务选择组的主/备解析器，服务顺序与业务路由一致，
+所有服务池仍位于 domestic 之前；无服务时只生成 domestic/global。
+发射前检查解析器和池名称唯一、解析器引用有效、
 有范围的池位于唯一的全局池之前，以及广告规则集非空，避免生成无条件负响应。
 完整配置中的 detour、rule-set 等跨模块引用继续交给既有 validator。
 
-`SingboxDnsEmitter` 将池计划展开成原有 evaluate/respond/终止 SERVFAIL 规则，
-保留 Android 顺序回退和桌面端正响应竞速、A 查询隔离、NXDOMAIN 接受顺序及缓存行为。
-response 标签由池名称在后端生成；IPv4 正响应竞速仍不混入域名 rule-set 条件，
-避免 sing-box 的 OR 语义改变匹配范围。后端复制所有规则集列表，修改输出不会污染计划。
-`DnsProfileBuilder.Plan` 只返回计划，完整配置构建统一调用 DNS 后端发射。
+`DnsProfileBuilder.Plan` 将池展开为不可变、有序的 `DnsRulePlan`，确定
+顺序回退或正响应竞速、A 查询隔离、NXDOMAIN 接受顺序、response 标签、缓存行为、
+终止 SERVFAIL、Auto AAAA 守卫及 Tailscale 路径。服务 resolver 的 detour 在规划时
+绑定服务选择组，保留现有优先级。IPv4 正响应竞速仍不混入域名 rule-set 条件，
+避免 sing-box 的 OR 语义改变匹配范围。`SingboxDnsEmitter` 只映射规则和值，
+不选择匹配范围、执行顺序或回退算法。
 
-路由规划先产生 `RoutePlan`，保留有序的 `RoutePhase`、服务分类、规则集来源、地址族、
-Tailscale 和 direct-forwarding 开关、直连 resolver 地址及 sniff 超时。服务与规则集来源
-使用 IR 自己的 `RuleSetPlan` 保存规则集来源，服务复用不可变定义。计划不引用 profile DTO
-或 sing-box 模型；发射前检查阶段完整、
-唯一且严格有序，固定广告/国内规则集存在，服务引用有效且优先级分类符合声明。
+`RouteProfileBuilder.Plan` 产生带阶段标记的有序 `RouteRulePlan`，在规划时确定
+逻辑 AND/OR 条件、sniff 范围和超时、早晚 IPv6 守卫、服务与国内分流优先级，
+并在对应阶段展开 Linux bypass/bridge 伴随规则。`RoutePlan` 还保存规则源、最终出口
+及控制面绑定。计划只使用 IR 类型；不引用 profile DTO 或 sing-box 模型。
+发射前检查阶段与规则顺序、必需规则源、实际规则引用和服务唯一性。
 
-`SingboxRouteEmitter` 才生成逻辑 AND/OR 条件、嗅探、IPv6 guards、服务与国内分流，
-并在指定阶段展开 Linux 的 bypass/bridge 伴随规则，保持原有顺序及条件。
-每次发射创建独立的目标规则和列表。`RouteProfileBuilder.Plan` 只返回计划，
-完整构建统一调用路由后端发射；跨模块引用在汇总计划和完整目标配置中分别检查。
+`SingboxRouteEmitter` 将规则逐项映射到目标字段，不按阶段重新推导策略。
+DNS 与路由发射均为每次输出创建独立的规则、嵌套条件与列表；修改输出不会污染计划。
+同一计划可重复或并发发射。跨模块引用在汇总计划与完整目标配置中分别检查。
 
 `ConfigurationPlan` 汇总地址族、DNS 选择模式、探测间隔等策略值、`TunPlan` 地址与开关、
 完成平台调优的节点 IR、组/DNS/路由计划、外围开关与 `HttpClientPlan` 控制面绑定。
@@ -227,37 +241,63 @@ Tailscale 和 direct-forwarding 开关、直连 resolver 地址及 sniff 超时�
 bootstrap resolver、HTTP client 的出口和解析器，以及 dashboard 的 HTTP client 绑定。
 同时检查各计划的平台策略一致，并要求 Tailscale DNS/路由引用的 endpoint 已声明。
 
-`SingboxConfigBuilder.Plan` 完成汇总与校验后，`Build` 才生成目标配置。
-TUN、endpoint 与 API service 的 `Emit` 方法使用汇总计划中保存的地址、开关和 Taildrop 目录，
-发射时不重新读取宿主配置。
+`ConfigurationPlanner.Plan` 汇总完整策略，`SingboxConfigBuilder.Build(plan, cacheId)`
+在唯一的完整计划校验入口检查局部约束与跨模块引用，通过后才生成目标配置。
+组件 planner 只构造计划，组件 emitter 只映射目标模型；独立的局部 `Validate` 入口用于按模块检查计划。
+`DomainResolverPlan` 明确保存路由、HTTP client 和受来源 IPv4 约束的
+节点解析器：服务器、地址族及 optimistic 缓存开关均已确定，发射只转换模型。
+TUN、endpoint 与 API service 使用计划中保存的地址、开关和 Taildrop 目录，
+发射时不重新读取宿主配置，也不再次规划。
 完整目标 validator 继续检查标签重复、目标模型内部字段及地址族守卫，
 汇总校验仅覆盖当前已表达的计划事实和引用。
 官方 `check` 继续由验证脚本执行，不改变 CLI/Server 运行时依赖。
 现有 120 份输出字节基线及协议拒绝测试共同守住兼容性。
 
-### 中端汇总诊断
+### 诊断与校验归属
 
-汇总计划的绑定与平台一致性错误复用 `ConfigDiagnostic(Code, Path, Message)`，
-按固定字段与集合顺序收集后，一次抛出 `ConfigValidationException`。
-路径使用 `plan.*` 前缀及实际集合索引，例如 `plan.http_clients[0].resolver`；
-目标模型校验继续使用原有 `SB*` 错误码与 JSON 路径。
+编译器诊断共用 `ConfigDiagnostic(Code, Path, Message)`。来源错误由
+`NodeParseException.Diagnostics` 提供，profile 错误由继承 `FormatException` 的
+`ProfileValidationException.Diagnostics` 提供，计划与目标校验使用
+`ConfigValidationException.Diagnostics`。引擎的转换异常保留原有分类，并转交已知错误的诊断。
+诊断集合是不可变快照，调用方修改原始列表不会改变异常中保存的结果。
 
-| 错误码 | 含义 |
+| 错误码 | 归属与含义 |
 | --- | --- |
+| `SRC001` | 来源 YAML 语法、结构、资源边界，或无法精确归属字段的节点错误 |
+| `SRC002` | 已声明协议字段的类型、语义或协议类型错误 |
+| `PF001` | profile 文档、覆盖操作或最终平台配置无效 |
 | `IR001` | 汇总计划与平台策略不一致 |
-| `IR002` | 组引用了 catalog 中不存在的 leaf |
+| `IR002` | 引用了 catalog 中不存在的 leaf |
 | `IR003` | 路由、DNS 或 HTTP client 引用了未声明的出站/endpoint |
 | `IR004` | Tailscale DNS/路由需要的 endpoint 未声明 |
-| `IR005` | DNS 引用了未声明的规则集 |
-| `IR006` | 控制面引用了未声明的解析器 |
+| `IR005` | 引用了未声明的规则集 |
+| `IR006` | 引用了未声明的解析器 |
 | `IR007` | 规则集下载或 dashboard 引用了未声明的 HTTP client |
+| `IR008` | 局部计划的字段值、结构或资源边界无效 |
+| `IR009` | 声明缺失、重复或名称冲突 |
+| `IR010` | 阶段顺序、首选目标或求值依赖无效 |
+| `SB*` | 发射后的引用、字段与安全不变量复核，沿用既有目标错误码 |
 
-内部构建阶段的汇总失败抛出结构化校验异常；引擎沿用既有的平台异常包装，
-不返回部分平台产物，CLI 沿用平台失败日志与整批输出丢弃行为。
-JSON 和 ZIP 接口继续返回通用 `422`，不公开诊断、节点名称、凭据或部分产物。
-协议来源解析错误、各局部 IR 的内部不变量异常和真正的未预期错误保持原处理方式，
-不会通过捕获任意异常伪装成绑定诊断。节点 `SourceValue` 只保存值及显式标记，数据表保存来源字段及固定源码证据；
-本阶段汇总诊断表达计划引用问题，不推测不存在的来源字段或证据链接。
+来源路径使用 `source.proxies[索引]`，已声明字段可继续定位到嵌套字段；
+未知键或无法可靠定位的错误停在已知节点/文档层，不从异常文本推测字段。
+profile 的文件、宿主、直接覆盖与请求分别使用 `profile.file`、`profile.host`、
+`profile.overlay`、`profile.request`；请求平台层位于其 `platforms.<平台>` 下。
+保存的平台层按应用顺序定位为 `profile.platform_layers[索引].<平台>`，第 0 层是内置平台层。
+最终语义错误位于 `profile.effective.<平台>`；这是无效最终值的位置，并非每个值的完整来源追踪。
+数组操作包含 payload 索引，例如 `profile.request.route.services.patch[0]`；未知键使用 `[unknown]`，
+不会将键名、选择器值或文件系统路径写入诊断。
+
+组、DNS、路由各自收集局部诊断，汇总计划再按固定模块、字段和集合顺序检查跨模块引用，
+一次抛出结构化异常。节点解析器映射按键的 ordinal 顺序使用数值索引，避免名称进入路径。
+诊断消息不回显节点名、tag、输入值或凭据；来源异常的旧 `Message` 和内部异常仍可能包含
+输入上下文，调用方应使用 `Diagnostics` 获取安全定位信息，而非公开完整异常。
+
+引擎沿用既有错误包装，不返回部分平台产物；CLI 保留整批输出丢弃行为。
+profile 无效仍按原有无效配置路径处理。HTTP 的 JSON 和 ZIP 接口继续使用通用
+`400`/`422` 响应，不公开诊断、节点名称、凭据或部分产物。
+真正的未预期错误不通过捕获任意异常伪装成输入错误。
+完整目标 validator 独立复核标签重复、字段合法性与地址族守卫，不能以计划校验替代。
+节点 `SourceValue` 只保存值及显式标记，语义数据表继续保存来源字段及固定源码证据。
 
 ### 现有协议扩展入口
 
@@ -321,17 +361,24 @@ HY2 hop/BBR 值优先于调优。显式固定间隔不会补入调优的随机�
 地区 selector。主组优先使用 `route.main_default_region` 对应的已生成地区组，
 否则依次回退到首个地区组、首个 leaf 和 DIRECT；单个偏好地区 leaf 不改变该主组规则。
 
-地址族取自有效目标配置的 `dns.address_family`，构建请求不再另带地址族策略。
-默认三个平台仍是 Ipv4Only。DNS、route、控制面 resolver 与转换服务的
+地址族取自有效目标配置的 `dns.address_family`，完整计划统一保存该策略。
+默认三个平台均使用 `Auto`。DNS、route、控制面 resolver 与 `BoxForgeEngine` 的
 `Validate(config, addressFamily)` 均使用同一实例中的策略，validator 不再次推导平台。IPv4-only 除解析
 策略和 IPv6 节点字面量外，还验证 early/post-resolve IPv6 reject guards 和首条
 无条件 AAAA 空 NOERROR；不能用缩窄到特定网络/域名的规则伪装全局 guard。
-DualStack 测试注入包含该策略的 profile，不要求上述 IPv4-only 限制；没有开启任何实际
-平台的 DualStack。Android 不输出未实现的 strict_route，仍保留 TUN 捕获地址、
-AAAA 阻断及 IPv6 reject guards；本地静态验证不等于真机防逃逸抓包证明。
+`DualStack` 不要求上述 IPv4-only 限制。`Auto` 保留双栈 TUN 捕获，
+将 AAAA 空答与两道 IPv6 拒绝改为缺少公网 IPv6 出口地址时才生效的条件规则；
+各平台统一使用反转的 `default_interface_address: ["2000::/3"]` 条件，
+判定发生在核心运行时，不读取生成机器的网卡状态，也不进行主动可达性探测。
+Android 依赖客户端通过 libbox 提供默认物理接口和地址，缺少信息时保守拒绝；
+锁定核心源码与生成配置检查不代表所有 Android 客户端或真机网络切换都已验证。
+条件 AAAA 规则仅约束 client DNS，`Auto` 不保证控制面 resolver 自动使用 IPv4；
+来源节点显式 `ip-version: ipv4` 仍保留独立 resolver 约束。
+`DualStack` 可显式启用，不按出口地址拒绝 IPv6。Android 不输出未实现的 strict_route；
+本地静态验证不等于真机防逃逸抓包或网络切换证明。
 
 - 路由顺序由 `RoutePhase` 的完整阶段列表声明，`RoutePlan` 检查严格顺序；
-  后端按阶段展开规则及 Linux 的 bypass/bridge 伴随规则。[路由顺序文档](routing-and-dns.md#路由规则顺序)
+  路由规划器按阶段展开规则及 Linux 的 bypass/bridge 伴随规则，后端映射有序结果。[路由顺序文档](routing-and-dns.md#路由规则顺序)
   手动维护，实际输出顺序由行为测试检查；阶段元数据
   不进入目标 JSON。validator 独立检查实际规则，不能依赖生成器阶段标签。
 - 输入文件按文件名排序，平台顺序固定为 Android、Linux、Windows。

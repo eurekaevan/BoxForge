@@ -43,7 +43,7 @@
     }
   },
   "dns": {
-    "address_family": "Ipv4Only",
+    "address_family": "Auto",
     "selection_mode": "ParallelFastest",
     "timeout": "5s",
     "cache_capacity": 4096,
@@ -144,13 +144,25 @@
     "rule_sets": [
       {
         "tags": [
-          "ai",
-          "spotify",
           "games",
           "cn",
           "cnip"
         ],
         "url": "https://github.com/DustinWin/ruleset_geodata/releases/download/sing-box-ruleset/{tag}.srs",
+        "update_interval": "1d"
+      },
+      {
+        "tags": [
+          "ai"
+        ],
+        "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/category-ai-!cn.srs",
+        "update_interval": "1d"
+      },
+      {
+        "tags": [
+          "spotify"
+        ],
+        "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/spotify.srs",
         "update_interval": "1d"
       },
       {

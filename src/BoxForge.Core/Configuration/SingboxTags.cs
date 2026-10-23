@@ -14,4 +14,6 @@ public static class SingboxTags
     public const string ProxyCloudflareDns = "dns-proxy-cloudflare";
     public const string TunInbound = "tun-in";
     public const string ApiService = "api";
+
+    internal static string ServiceDns(string serviceId, string resolverId) => $"dns-service-{serviceId}-{resolverId}";
 }

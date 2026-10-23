@@ -7,55 +7,21 @@ namespace BoxForge.Builders;
 
 internal interface ISingboxConfigBuilder
 {
-    SingboxConfig Build(SingboxBuildRequest request);
+    SingboxConfig Build(ConfigurationPlan plan, string? cacheId);
 }
 
-internal sealed class SingboxConfigBuilder(
-    TailscaleEndpointBuilder tailscaleEndpointBuilder,
-    DnsProfileBuilder dnsProfileBuilder,
-    RouteProfileBuilder routeProfileBuilder,
-    BoxForgeProfile profile) : ISingboxConfigBuilder
+internal sealed class SingboxConfigBuilder : ISingboxConfigBuilder
 {
-    internal ConfigurationPlan Plan(SingboxBuildRequest request)
+    public SingboxConfig Build(ConfigurationPlan plan, string? cacheId)
     {
-        BoxForgeProfile settings = (request.Profile ?? profile).ForPlatform(request.Platform);
-        PlatformProfile platform = settings.GetPlatform(request.Platform);
-        foreach (string name in request.Nodes.Names)
-            if (settings.IsReservedTag(name)) throw new BoxForge.Exceptions.NodeParseException($"节点名称 '{name}' 与 BoxForge 保留 tag 冲突");
-        var groups = ProfilePlanner.PlanGroups(request.Nodes, settings, platform.UrlTestInterval);
-        var dns = dnsProfileBuilder.Plan(request.Platform, settings);
-        var route = routeProfileBuilder.Plan(request.Platform, settings);
-        var endpoint = tailscaleEndpointBuilder.Plan(request.Platform, settings);
-        bool apiEnabled = settings.Features.Api.Enabled;
-        string ruleSetDetour = groups.Probes.Count > 0
-            ? groups.Probes[0].Name
-            : request.Nodes.Names.Count > 0
-                ? request.Nodes.Names[0]
-                : SingboxTags.MainProxyGroup;
-        var clients = new List<HttpClientPlan>
-        {
-            new(HttpClientTags.RuleSetProxy, ruleSetDetour, SingboxTags.DirectAliDns)
-        };
-        if (apiEnabled)
-            clients.Add(new HttpClientPlan(HttpClientTags.DashboardDirect, null, SingboxTags.DirectAliDns));
-        var plan = new ConfigurationPlan(platform.AddressFamily, platform.DnsSelectionMode, platform.UseDirectForwarding, platform.UrlTestInterval,
-            new TunPlan(platform.TunAddresses, platform.AutoRedirect, platform.MultiQueue, platform.StrictRoute),
-            request.Nodes.Nodes.Select(node => OutboundTuningPolicy.Apply(node, platform)).ToArray(),
-            groups, dns, route, endpoint.Enabled, endpoint.TaildropDirectory, apiEnabled, clients);
         plan.Validate();
-        return plan;
-    }
-
-    public SingboxConfig Build(SingboxBuildRequest request)
-    {
-        var plan = Plan(request);
         var endpoints = TailscaleEndpointBuilder.Emit(plan.TaildropDirectory, plan.TailscaleEndpointEnabled);
         var services = SingboxApiServiceBuilder.Emit(plan.ApiServiceEnabled);
         var httpClients = plan.HttpClients.Select(client => new HttpClientConfig
         {
             Tag = client.Name,
             Detour = client.Detour,
-            DomainResolver = ControlPlaneDnsPolicy.CreateResolver(plan.AddressFamily) with { Server = client.Resolver }
+            DomainResolver = SingboxResolverEmitter.Emit(client.Resolver)
         }).ToList();
         var profiles = SingboxGroupEmitter.Emit(plan.Groups);
         List<Outbound> orderedOutbounds =
@@ -66,10 +32,8 @@ internal sealed class SingboxConfigBuilder(
             .. profiles.ServiceOutbounds,
             .. plan.Nodes.Select(node => SingboxNodeEmitter.Emit(node) with
             {
-                DomainResolver = node.AddressFamily == AddressFamilyPolicy.Ipv4Only
-                    && plan.AddressFamily == AddressFamilyPolicy.DualStack
-                        ? ControlPlaneDnsPolicy.CreateResolver(AddressFamilyPolicy.Ipv4Only)
-                        : null
+                DomainResolver = plan.NodeResolvers.TryGetValue(node.Name, out var resolver)
+                    ? SingboxResolverEmitter.Emit(resolver) : null
             })
         ];
         if (plan.UseDirectForwarding)
@@ -91,7 +55,7 @@ internal sealed class SingboxConfigBuilder(
             Outbounds = orderedOutbounds,
             Route = SingboxRouteEmitter.Emit(plan.Route),
             Services = services.Count > 0 ? services : null,
-            Experimental = ExperimentalBuilder.Build(request.CacheId)
+            Experimental = ExperimentalBuilder.Build(cacheId)
         };
     }
 }

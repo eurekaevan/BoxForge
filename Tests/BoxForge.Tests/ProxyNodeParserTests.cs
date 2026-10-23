@@ -39,7 +39,7 @@ public sealed class ProxyNodeParserTests
             ParseHysteria2(CreateNode("hysteria2", new Hashtable { ["password"] = "test-only", ["up"] = 100 })),
             ParseHysteria2(CreateNode("hysteria2", new Hashtable { ["password"] = "test-only", ["up"] = 0 }))
         ];
-        var profile = BoxForgeProfile.Default.GetPlatform(platform);
+        var profile = BoxForgeProfile.Default.Resolve(platform).Settings;
         foreach (ProxyNode original in nodes)
         {
             ProxyNode source = explicitConnection
@@ -242,7 +242,7 @@ public sealed class ProxyNodeParserTests
         Assert.That(node.HopInterval?.MaximumSeconds, Is.EqualTo(maximum));
         foreach (TargetPlatform platform in Enum.GetValues<TargetPlatform>())
         {
-            var tuned = (Hysteria2Outbound)SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(node, BoxForgeProfile.Default.GetPlatform(platform)));
+            var tuned = (Hysteria2Outbound)SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(node, BoxForgeProfile.Default.Resolve(platform).Settings));
             Assert.That(tuned.HopInterval, Is.EqualTo(minimum is null ? "30s" : minimum + "s"));
             Assert.That(tuned.HopIntervalMax, Is.EqualTo(minimum is null ? "60s" : maximum is null ? null : maximum + "s"));
         }
@@ -259,7 +259,7 @@ public sealed class ProxyNodeParserTests
         Hysteria2Node node = ParseHysteria2(CreateNode("hysteria2", fields));
         Assert.That(node.UploadMegabitsPerSecond, Is.EqualTo(expected));
         Assert.That(node.BbrProfile, Is.Null);
-        var tuned = (Hysteria2Outbound)SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(node, BoxForgeProfile.Default.GetPlatform(TargetPlatform.Linux)));
+        var tuned = (Hysteria2Outbound)SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(node, BoxForgeProfile.Default.Resolve(TargetPlatform.Linux).Settings));
         Assert.That(tuned.UpMbps, Is.EqualTo(expected));
         Assert.That(tuned.BbrProfile, Is.EqualTo(expected > 0 ? null : "standard"));
     }
@@ -383,7 +383,7 @@ public sealed class ProxyNodeParserTests
         }));
         foreach (TargetPlatform platform in Enum.GetValues<TargetPlatform>())
         {
-            var outbound = (Hysteria2Outbound)SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(node, BoxForgeProfile.Default.GetPlatform(platform)));
+            var outbound = (Hysteria2Outbound)SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(node, BoxForgeProfile.Default.Resolve(platform).Settings));
             Assert.That(outbound.ServerPorts, Is.EqualTo(new[] { "443:444", "8443:8443" }));
             Assert.That(outbound.HopInterval, Is.EqualTo("20s"));
             Assert.That(outbound.HopIntervalMax, Is.Null);
@@ -543,7 +543,7 @@ public sealed class ProxyNodeParserTests
         }));
         foreach (TargetPlatform platform in Enum.GetValues<TargetPlatform>())
         {
-            var outbound = (AnyTlsOutbound)SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(node, BoxForgeProfile.Default.GetPlatform(platform)));
+            var outbound = (AnyTlsOutbound)SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(node, BoxForgeProfile.Default.Resolve(platform).Settings));
             Assert.That(outbound.Password, Is.EqualTo(" test-only "));
             Assert.That(outbound.IdleSessionTimeout, Is.EqualTo("15s"));
             Assert.That(outbound.IdleSessionCheckInterval, Is.EqualTo(".5s"));
@@ -692,7 +692,7 @@ public sealed class ProxyNodeParserTests
         }));
         foreach (TargetPlatform platform in Enum.GetValues<TargetPlatform>())
         {
-            var outbound = (TrojanOutbound)SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(node, BoxForgeProfile.Default.GetPlatform(platform)));
+            var outbound = (TrojanOutbound)SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(node, BoxForgeProfile.Default.Resolve(platform).Settings));
             Assert.That(outbound.Tls!.Alpn, Is.EqualTo(new[] { "h2", "http/1.1", "h2" }));
             outbound.Tls.Alpn!.Clear();
         }
@@ -776,7 +776,7 @@ public sealed class ProxyNodeParserTests
         foreach (TargetPlatform platform in Enum.GetValues<TargetPlatform>())
         {
             var outbound = (VlessOutbound)SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(
-                node, BoxForgeProfile.Default.GetPlatform(platform)));
+                node, BoxForgeProfile.Default.Resolve(platform).Settings));
             Assert.That(outbound.Tls!.Insecure, Is.False);
             Assert.That(outbound.Tls.Alpn, Is.EqualTo(new[] { "h2", "http/1.1", "h2" }));
             outbound.Tls.Alpn!.Clear();
@@ -1152,7 +1152,7 @@ public sealed class ProxyNodeParserTests
         { Connection = new ConnectionSettings("9s", "2m", "15s") };
         foreach (TargetPlatform platform in Enum.GetValues<TargetPlatform>())
         {
-            ProxyOutbound tuned = SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(source, BoxForgeProfile.Default.GetPlatform(platform)));
+            ProxyOutbound tuned = SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(source, BoxForgeProfile.Default.Resolve(platform).Settings));
             OutboundTls tls = GetTls(tuned)!;
             Assert.That(SerializeOutbound(tuned), Is.EqualTo(SerializeOutbound(SingboxNodeEmitter.Emit(source))));
             Assert.That(tls.Alpn, Is.EqualTo(new[] { "h2" }));

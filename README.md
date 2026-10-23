@@ -17,8 +17,8 @@ CLI 会为 Windows、Android 和 Linux 批量生成平台化配置，并在
 - 支持 `trojan`、`vless`、`hysteria2`、`shadowsocks` (`ss`) 和 `anytls`；
   VLESS/Trojan 仅接受原生 TCP，可使用受支持的 TLS、uTLS 与 Reality
 - 自动生成地区 URLTest AUTO、人工 selector、DNS、路由规则和远程 rule-set
-- 全局 DNS 与域名解析只使用 IPv4，所有 AAAA 查询返回空 `NOERROR`
-- TUN 保留仅用于捕获的 IPv6 地址，并在 sniff 前拒绝全部 IPv6；解析后另有兜底拒绝，防止硬编码地址、缓存和内置 DoH 逃逸
+- 默认 `Auto` 地址族策略：TUN 双栈捕获，默认出口缺少公网 IPv6 地址或接口信息未知时，对客户端 AAAA 返回空答并拒绝 IPv6
+- 可显式选择 `Ipv4Only` 或 `DualStack`；`Auto` 按地址存在性判断，不探测公网可达性，Android 依赖客户端提供接口信息
 - Linux 为 sniff 前快路径及 sniff 后 UDP 国内直连提供 `bridge` L3
   forwarding，并优先使用 `auto_redirect` kernel-level `bypass`；Windows 使用普通 DIRECT
 - 默认生成 sing-box 内置 Tailscale endpoint，支持按需连接、MagicDNS、子网路由和 Taildrop
@@ -160,7 +160,8 @@ profile 按 `features`、`dns`、`route`、`tuning`、`privacy` 分区，
 Server 可在启动时加载同一文件，HTTP 请求也可提交内联 `profile`。
 对每个目标先合并内置、文件、统一环境的根值，再依来源顺序应用平台层，
 最后应用请求根值及请求自身的平台层；请求只影响本次转换。
-数组覆盖必须显式使用 `replace`、`append`、`remove` 操作，不按 ID 隐式合并。
+数组覆盖使用显式操作；整体替换、追加、完整值删除之外，支持按 `id`/`tag` 原位 `patch`、
+`set`、`remove_by_key` 和 `insert_before`，见[数组操作](docs/configuration.md#数组操作)。
 旧环境开关被拒绝。格式与合并规则见
 [统一 profile](docs/configuration.md#统一-profile)，请求格式见 [HTTP API](docs/http-api.md)。
 `profile show --resolved` 输出各平台完整快照，供检查和追溯，不能直接作为差异覆盖重载。

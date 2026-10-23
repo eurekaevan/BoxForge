@@ -33,12 +33,11 @@ public sealed class SemanticCoverageTests
     [TestCaseSource(nameof(RemovedTransports))]
     public void RemovedTransportsRejectBatchContainingValidNode(string protocol, string field, object value)
     {
-        var builder = new NodeCatalogBuilder(BoxForgeProfile.Default);
         var config = new ClashConfig
         {
             Proxies = [CreateNode(protocol, new Hashtable { [field] = value }), CreateNode(protocol, new Hashtable { ["name"] = "safe" })]
         };
-        NodeParseException? error = Assert.Throws<NodeParseException>(() => builder.Build(config));
+        NodeParseException? error = Assert.Throws<NodeParseException>(() => NodeCatalogBuilder.Build(config));
         Assert.That(error!.Message, Does.Contain(field));
     }
 
@@ -136,16 +135,14 @@ public sealed class SemanticCoverageTests
         var fields = new Hashtable { ["plugin"] = "v2ray-plugin" };
         if (optionsKey is not null)
             fields[optionsKey] = new Hashtable { ["mode"] = "websocket", ["mux"] = false };
-        var builder = new NodeCatalogBuilder(BoxForgeProfile.Default);
         var config = new ClashConfig { Proxies = [CreateNode("ss", fields), CreateNode("ss", new Hashtable { ["name"] = "safe" })] };
-        NodeParseException? error = Assert.Throws<NodeParseException>(() => builder.Build(config));
+        NodeParseException? error = Assert.Throws<NodeParseException>(() => NodeCatalogBuilder.Build(config));
         Assert.That(error!.Message, Does.Contain("plugin"));
     }
 
     [Test]
     public void StrictModeReportsProtocolNodeAndUnknownField()
     {
-        var builder = new NodeCatalogBuilder(BoxForgeProfile.Default);
         ClashConfig config = new()
         {
             Proxies = [CreateNode("vless", new Hashtable
@@ -155,7 +152,7 @@ public sealed class SemanticCoverageTests
         };
 
         NodeParseException? exception = Assert.Throws<NodeParseException>(() =>
-            builder.Build(config));
+            NodeCatalogBuilder.Build(config));
 
         Assert.Multiple(() =>
         {
@@ -168,7 +165,6 @@ public sealed class SemanticCoverageTests
     [Test]
     public void UnsafeNodeRejectsBatchContainingValidNode()
     {
-        var builder = new NodeCatalogBuilder(BoxForgeProfile.Default);
         ClashConfig config = new()
         {
             Proxies =
@@ -181,7 +177,7 @@ public sealed class SemanticCoverageTests
             ]
         };
 
-        var error = Assert.Throws<NodeParseException>(() => builder.Build(config));
+        var error = Assert.Throws<NodeParseException>(() => NodeCatalogBuilder.Build(config));
         Assert.That(error!.Message, Does.Contain("test-node").And.Contain("network"));
     }
 
@@ -275,10 +271,10 @@ public sealed class SemanticCoverageTests
         }) with
         { Connection = new ConnectionSettings("9s", "2m", "12s") };
         var linux = (Hysteria2Outbound)SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(
-            source, BoxForgeProfile.Default.GetPlatform(TargetPlatform.Linux)));
+            source, BoxForgeProfile.Default.Resolve(TargetPlatform.Linux).Settings));
         var android = (Hysteria2Outbound)SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(
             source with { Connection = source.Connection with { TcpKeepAlive = null } },
-            BoxForgeProfile.Default.GetPlatform(TargetPlatform.Android)));
+            BoxForgeProfile.Default.Resolve(TargetPlatform.Android).Settings));
 
         Assert.Multiple(() =>
         {
@@ -391,7 +387,7 @@ public sealed class SemanticCoverageTests
     public void Hysteria2BandwidthUsesExactUnits(string value, int expected)
     {
         var source = ParseHysteria2(new Hashtable { ["up"] = value, ["down"] = value });
-        var tuned = (Hysteria2Outbound)SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(source, BoxForgeProfile.Default.GetPlatform(TargetPlatform.Linux)));
+        var tuned = (Hysteria2Outbound)SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(source, BoxForgeProfile.Default.Resolve(TargetPlatform.Linux).Settings));
         Assert.That(tuned.UpMbps, Is.EqualTo(expected));
         Assert.That(tuned.DownMbps, Is.EqualTo(expected));
         Assert.That(tuned.BbrProfile, Is.Null, "Bandwidth must not acquire BBR tuning");
@@ -418,7 +414,7 @@ public sealed class SemanticCoverageTests
     public void Hysteria2HopIntervalPreservesFixedAndRangeSemantics(string value, string min, string? max)
     {
         var source = ParseHysteria2(new Hashtable { ["ports"] = "4000-4001", ["hop-interval"] = value });
-        var tuned = (Hysteria2Outbound)SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(source, BoxForgeProfile.Default.GetPlatform(TargetPlatform.Android)));
+        var tuned = (Hysteria2Outbound)SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(source, BoxForgeProfile.Default.Resolve(TargetPlatform.Android).Settings));
         Assert.That(tuned.HopInterval, Is.EqualTo(min));
         Assert.That(tuned.HopIntervalMax, Is.EqualTo(max));
     }
@@ -426,7 +422,7 @@ public sealed class SemanticCoverageTests
     [Test]
     public void Hysteria2AbsentSourceRetainsNamedTuning()
     {
-        var tuned = (Hysteria2Outbound)SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(ParseHysteria2(new Hashtable()), BoxForgeProfile.Default.GetPlatform(TargetPlatform.Linux)));
+        var tuned = (Hysteria2Outbound)SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(ParseHysteria2(new Hashtable()), BoxForgeProfile.Default.Resolve(TargetPlatform.Linux).Settings));
         Assert.That(tuned.HopInterval, Is.EqualTo("30s"));
         Assert.That(tuned.HopIntervalMax, Is.EqualTo("60s"));
         Assert.That(tuned.BbrProfile, Is.EqualTo("standard"));
@@ -438,7 +434,7 @@ public sealed class SemanticCoverageTests
     public void Hysteria2ExplicitBbrWinsOverTuning(string profile)
     {
         var tuned = (Hysteria2Outbound)SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(
-            ParseHysteria2(new Hashtable { ["bbr_profile"] = profile }), BoxForgeProfile.Default.GetPlatform(TargetPlatform.Linux)));
+            ParseHysteria2(new Hashtable { ["bbr_profile"] = profile }), BoxForgeProfile.Default.Resolve(TargetPlatform.Linux).Settings));
         Assert.That(tuned.BbrProfile, Is.EqualTo(profile));
     }
 
@@ -607,7 +603,6 @@ public sealed class SemanticCoverageTests
     [Test]
     public void ShadowsocksInvalidVersionRejectsBatchContainingValidNode()
     {
-        var builder = new NodeCatalogBuilder(BoxForgeProfile.Default);
         var config = new ClashConfig
         {
             Proxies =
@@ -616,7 +611,7 @@ public sealed class SemanticCoverageTests
             CreateNode("ss", new Hashtable { ["name"] = "safe-node" })
         ]
         };
-        var error = Assert.Throws<NodeParseException>(() => builder.Build(config));
+        var error = Assert.Throws<NodeParseException>(() => NodeCatalogBuilder.Build(config));
         Assert.That(error!.Message, Does.Contain("udp-over-tcp-version"));
     }
 

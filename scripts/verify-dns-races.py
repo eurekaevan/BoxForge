@@ -137,11 +137,25 @@ async def main(core, generated):
             listeners.append(await asyncio.start_server(handle, "127.0.0.1", 0, ssl=tls))
 
         dns = copy.deepcopy(generated["dns"])
-        tags = ["dns-direct-alidns", "dns-direct-tencent", "dns-proxy-cloudflare", "dns-proxy-google"]
-        dns["servers"] = [{"tag": tag, "type": "https", "server": "127.0.0.1",
-                           "server_port": listener.sockets[0].getsockname()[1],
-                           "tls": {"enabled": True, "server_name": "localhost", "certificate_path": str(cert)}}
-                          for tag, listener in zip(tags, listeners)]
+        servers = []
+        for server in dns["servers"]:
+            if server["type"] == "tailscale":
+                continue
+            tag = server["tag"]
+            if tag == "dns-direct-alidns":
+                upstream = 0
+            elif tag == "dns-direct-tencent":
+                upstream = 1
+            elif tag == "dns-proxy-cloudflare" or (tag.startswith("dns-service-") and tag.endswith("-cloudflare")):
+                upstream = 2
+            elif tag == "dns-proxy-google" or (tag.startswith("dns-service-") and tag.endswith("-google")):
+                upstream = 3
+            else:
+                raise ValueError(f"Unexpected generated DNS server: {tag}")
+            servers.append({"tag": tag, "type": "https", "server": "127.0.0.1",
+                            "server_port": listeners[upstream].sockets[0].getsockname()[1],
+                            "tls": {"enabled": True, "server_name": "localhost", "certificate_path": str(cert)}})
+        dns["servers"] = servers
         dns["rules"] = [rule for rule in dns["rules"] if "preferred_by" not in rule]
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as reservation:
             reservation.bind(("127.0.0.1", 0))
@@ -211,7 +225,7 @@ async def main(core, generated):
             ("both-empty", "google", "empty", "empty", .03, .25, 1, 0, 0),
             ("empty-over-negative", "google", "nx", "empty", .03, .25, 1, 0, 0),
             ("both-negative", "google", "nx", "nx", .03, .25, 1, 3, 0),
-            ("priority-failure-overlap", "overlap", "servfail", "refused", .03, .05, 1, 2, 0),
+            ("service-failure-overlap", "overlap", "servfail", "refused", .03, .05, 1, 2, 0),
             ("domestic-empty-primary", "cn", "empty", "a", .03, .25, 1, 0, 1),
             ("global-empty-primary", "external", "empty", "a", .03, .25, 1, 0, 1),
             ("aaaa", "google", "a", "a", .03, .25, 28, 0, 0),

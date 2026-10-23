@@ -200,14 +200,50 @@ public sealed class GenerateCommandParserTests
         }
     }
 
+    [TestCase(false)]
+    [TestCase(true)]
+    public async Task EnvironmentSnapshotCoexistsWithHostSectionsAndPreservesParentChildConflicts(bool conflictingParent)
+    {
+        string directory = Directory.CreateTempSubdirectory("boxforge-host-settings-").FullName;
+        try
+        {
+            var settings = new Dictionary<string, object>
+            {
+                ["regions"] = new[] { "host-region" },
+                ["services"] = new { mode = "host-service" },
+                ["features"] = conflictingParent ? """{"api":{"enabled":false}}""" : new { api = new { enabled = false } }
+            };
+            await File.WriteAllTextAsync(Path.Combine(directory, "appsettings.json"), JsonSerializer.Serialize(settings));
+            var result = await RunCliAsync(["profile", "show", "--resolved"],
+                new() { ["BOXFORGE_features__api__enabled"] = "true" }, directory);
+
+            if (conflictingParent)
+            {
+                Assert.That(result.ExitCode, Is.EqualTo(GenerateCommandRunner.FailureExitCode));
+                Assert.That(result.Error, Does.Contain("不能同时设置对象与其子字段"));
+            }
+            else
+            {
+                Assert.That(result.ExitCode, Is.Zero, result.Error);
+                using var resolved = JsonDocument.Parse(result.Output);
+                Assert.That(resolved.RootElement.GetProperty("features").GetProperty("api").GetProperty("enabled").GetBoolean(), Is.True);
+            }
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     private static async Task<(int ExitCode, string Output, string Error)> RunCliAsync(
-        string[] arguments, Dictionary<string, string> environment)
+        string[] arguments, Dictionary<string, string> environment, string? workingDirectory = null)
     {
         var startInfo = new ProcessStartInfo("dotnet")
         {
             UseShellExecute = false,
             RedirectStandardOutput = true,
-            RedirectStandardError = true
+            RedirectStandardError = true,
+            WorkingDirectory = workingDirectory ?? ""
         };
         // Project references share the test host's dependency set in this output directory.
         startInfo.ArgumentList.Add("exec");
