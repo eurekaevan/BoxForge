@@ -7,8 +7,6 @@ namespace BoxForge.Builders.Components;
 
 internal static class DnsProfileBuilder
 {
-    private const string SequentialPrimaryTimeout = "2s";
-
     internal static DnsPlan Plan(ResolvedProfile settingsProfile)
     {
         PlatformProfile settings = settingsProfile.Settings;
@@ -139,7 +137,7 @@ internal static class DnsProfileBuilder
         List<DnsRulePlan> rules,
         ResolverPoolDefinition pool)
     {
-        AddEvaluate(rules, pool, primary: true, timeout: SequentialPrimaryTimeout);
+        AddEvaluate(rules, pool, primary: true, timeout: DnsPlan.SequentialPrimaryTimeout);
         AddAcceptedResponses(rules, pool, pool.PrimaryResponse);
         AddEvaluate(rules, pool, primary: false);
         AddAcceptedResponses(rules, pool, pool.SecondaryResponse);

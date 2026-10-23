@@ -20,7 +20,7 @@
 `BOXFORGE_Profile` 和 HTTP 请求内联 profile 均可覆盖平台参数，具体优先级见配置参考。
 用户显式提供的节点参数优先于平台调优默认值，Tailscale 启用状态仍由
 `features.tailscale.enabled` 及平台层覆盖控制；地址族使用有效 profile 的平台值。
-DNS 顺序回退的首选 `2s` 预算属于算法常量，不是 Android 的全局 DNS 超时。
+DNS 顺序回退的首选 `700ms` 预算属于算法常量，不是 Android 的全局 DNS 超时。
 
 每个平台都只生成一个 TUN inbound，不再提供本地 SOCKS/HTTP mixed 入口。
 原先显式使用 `127.0.0.1:8848` 的客户端须改为通过 TUN 联网。
@@ -85,8 +85,8 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
 
 ## DNS 与持久化缓存
 
-- DNS 查询默认超时为 `5s`。Android 正常只查询首选 resolver，首选查询使用
-  `2s` 超时，失败后才查询备用；Linux/Windows 同时查询两家。A 查询优先让
+- DNS 每次上游查询默认超时为 `1s`。Android 正常只查询首选 resolver，首选查询使用
+  `700ms` 超时，失败后才查询备用；Linux/Windows 同时查询两家。A 查询优先让
   含 IPv4 地址的 `NOERROR` 响应竞速，双方均无地址时才依次接受 primary、secondary
   的空答或仅 CNAME 等 `NOERROR` 后备；非 A 查询让最快的 `NOERROR` 胜出。
   Linux/Windows 的 A 查询禁用 optimistic 过期缓存，正常 TTL 缓存保留。

@@ -13,7 +13,6 @@ internal sealed record RoutePlan(
     string DefaultHttpClient,
     DomainResolverPlan DefaultDomainResolver,
     IReadOnlyList<RuleSetPlan> RuleSets,
-    IReadOnlyList<RoutePhase> Phases,
     ImmutableArray<RouteRulePlan> Rules)
 {
     internal void Validate()
@@ -25,8 +24,7 @@ internal sealed record RoutePlan(
 
     internal void CollectDiagnostics(List<ConfigDiagnostic> diagnostics)
     {
-        if (!Phases.SequenceEqual(Enum.GetValues<RoutePhase>()))
-            diagnostics.Add(new("IR010", "plan.route.phases", "路由阶段必须完整、唯一并符合声明顺序。"));
+        int initialDiagnostics = diagnostics.Count;
         if (!Enum.IsDefined(AddressFamily))
             diagnostics.Add(new("IR008", "plan.route.address_family", "路由地址族无效。"));
         var tags = new HashSet<string>(StringComparer.Ordinal);
@@ -69,6 +67,9 @@ internal sealed record RoutePlan(
             }
         }
 
+        if (diagnostics.Count == initialDiagnostics)
+            ValidatePolicy(diagnostics);
+
         void ValidateRule(RouteRulePlan rule, string path)
         {
             if (rule.Action is { } action && !Enum.IsDefined(action))
@@ -87,6 +88,54 @@ internal sealed record RoutePlan(
                 for (int index = 0; index < rule.Rules.Length; index++)
                     ValidateRule(rule.Rules[index], $"{path}.rules[{index}]");
         }
+    }
+
+    private void ValidatePolicy(List<ConfigDiagnostic> diagnostics)
+    {
+        var hijack = new RouteRulePlan(RoutePhase.DnsHijack)
+        {
+            Mode = LogicalMatchMode.And,
+            Rules =
+            [
+                new(RoutePhase.DnsHijack) { Inbound = [SingboxTags.TunInbound] },
+                new(RoutePhase.DnsHijack)
+                {
+                    Mode = LogicalMatchMode.Or,
+                    Rules = [new(RoutePhase.DnsHijack) { Protocol = ["dns"] }, new(RoutePhase.DnsHijack) { Port = [53] }]
+                }
+            ],
+            Action = RouteOperation.HijackDns
+        };
+        if (Rules.IsEmpty || !Rules[0].HasSamePolicy(hijack))
+            diagnostics.Add(new("IR011", "plan.route.rules", "路由必须首先劫持 TUN 的 DNS 协议及端口 53 流量。"));
+        foreach (RoutePhase phase in new[] { RoutePhase.EarlyIpv6Guard, RoutePhase.LateIpv6Guard })
+        {
+            var rules = Rules.Where(rule => rule.Phase == phase).ToArray();
+            var expected = new RouteRulePlan(phase) { IpVersion = 6, Action = RouteOperation.Reject };
+            if (AddressFamily == AddressFamilyPolicy.Auto)
+                expected = expected with
+                {
+                    IpVersion = null,
+                    Mode = LogicalMatchMode.And,
+                    Rules = [new(phase) { IpVersion = 6 }, new(phase) { DefaultInterfaceAddress = [AddressFamilyPolicies.GlobalIpv6Prefix], Invert = true }]
+                };
+            bool valid = AddressFamily == AddressFamilyPolicy.DualStack
+                ? rules.Length == 0 : rules.Length == 1 && rules[0].HasSamePolicy(expected);
+            if (!valid)
+                diagnostics.Add(new("IR011", "plan.route.rules", "实际路由必须包含符合地址族策略的早晚守卫。"));
+        }
+        foreach (RoutePhase phase in new[] { RoutePhase.PreSniffDirect, RoutePhase.Sniff, RoutePhase.BlockStunAndAds, RoutePhase.DomesticUdp443, RoutePhase.DomesticDirect })
+            if (!Rules.Any(rule => rule.Phase == phase))
+                diagnostics.Add(new("IR011", "plan.route.rules", "必要路由阶段必须包含实际规则。"));
+        if (TailscaleEnabled && !Rules.Any(rule => rule.Phase == RoutePhase.Tailscale && rule.HasSamePolicy(
+            new(RoutePhase.Tailscale)
+            {
+                Inbound = [SingboxTags.TunInbound],
+                PreferredBy = [SingboxTags.TailscaleEndpoint],
+                Action = RouteOperation.Route,
+                Outbound = SingboxTags.TailscaleEndpoint
+            })))
+            diagnostics.Add(new("IR011", "plan.route.rules", "Tailscale 控制面路由缺失或不符合策略。"));
     }
 }
 
@@ -128,6 +177,18 @@ internal sealed record RouteRulePlan(RoutePhase Phase)
     public string? Outbound { get; init; }
     public ImmutableArray<string> Sniffer { get; init; }
     public string? Timeout { get; init; }
+
+    internal bool HasSamePolicy(RouteRulePlan other) =>
+        (this with { Rules = default, Inbound = default, Protocol = default, Port = default, Network = default, RuleSet = default, IpCidr = default, PreferredBy = default, DefaultInterfaceAddress = default, Sniffer = default })
+        == (other with { Rules = default, Inbound = default, Protocol = default, Port = default, Network = default, RuleSet = default, IpCidr = default, PreferredBy = default, DefaultInterfaceAddress = default, Sniffer = default })
+        && Same(Inbound, other.Inbound) && Same(Protocol, other.Protocol) && Same(Port, other.Port)
+        && Same(Network, other.Network) && Same(RuleSet, other.RuleSet) && Same(IpCidr, other.IpCidr)
+        && Same(PreferredBy, other.PreferredBy) && Same(DefaultInterfaceAddress, other.DefaultInterfaceAddress) && Same(Sniffer, other.Sniffer)
+        && Rules.IsDefault == other.Rules.IsDefault
+        && (Rules.IsDefault || Rules.Length == other.Rules.Length && Rules.Zip(other.Rules).All(pair => pair.First.HasSamePolicy(pair.Second)));
+
+    private static bool Same<T>(ImmutableArray<T> left, ImmutableArray<T> right) =>
+        left.IsDefault == right.IsDefault && (left.IsDefault || left.SequenceEqual(right));
 }
 
 internal enum LogicalMatchMode { And, Or }

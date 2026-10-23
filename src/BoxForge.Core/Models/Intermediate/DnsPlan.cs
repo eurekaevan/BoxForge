@@ -17,6 +17,9 @@ internal sealed record DnsPlan(
     uint CacheCapacity,
     string OptimisticTimeout)
 {
+    internal const string SequentialPrimaryTimeout = "700ms";
+
+    // Rules alone drive emission. Pools and blocking metadata describe the expected policy.
     internal required ImmutableArray<DnsRulePlan> Rules { get; init; }
 
     internal void Validate()
@@ -28,6 +31,7 @@ internal sealed record DnsPlan(
 
     internal void CollectDiagnostics(List<ConfigDiagnostic> diagnostics)
     {
+        int initialDiagnostics = diagnostics.Count;
         if (!Enum.IsDefined(AddressFamily))
             diagnostics.Add(new("IR008", "plan.dns.address_family", "DNS 地址族无效。"));
         if (!Enum.IsDefined(SelectionMode))
@@ -73,6 +77,10 @@ internal sealed record DnsPlan(
                 diagnostics.Add(new("IR010", path + ".rule_sets", "限定解析池必须具有规则集并位于全局解析池之前。"));
         }
 
+        // Do not cascade policy errors from malformed declarations or rule trees.
+        if (diagnostics.Count == initialDiagnostics)
+            ValidatePolicy(diagnostics);
+
         void ValidateRule(DnsRulePlan rule, string path)
         {
             if (rule.Mode is { } mode && !Enum.IsDefined(mode))
@@ -103,6 +111,72 @@ internal sealed record DnsPlan(
                 diagnostics.Add(new("IR008", path + ".match_response", "DNS 响应规则必须指定已求值的响应。"));
         }
     }
+
+    private void ValidatePolicy(List<ConfigDiagnostic> diagnostics)
+    {
+        int prefix = 0;
+        if (AddressFamily != AddressFamilyPolicy.DualStack)
+        {
+            var guard = new DnsRulePlan { QueryType = ["AAAA"], Action = DnsOperation.Predefined, Rcode = DnsResultCode.NoError };
+            if (AddressFamily == AddressFamilyPolicy.Auto)
+                guard = guard with
+                {
+                    QueryType = default,
+                    Mode = LogicalMatchMode.And,
+                    Rules = [new() { QueryType = ["AAAA"] }, new() { DefaultInterfaceAddress = [AddressFamilyPolicies.GlobalIpv6Prefix], Invert = true }]
+                };
+            RequireAt(prefix++, guard);
+        }
+        if (TailscaleEnabled)
+            RequireAt(prefix++, new()
+            {
+                PreferredBy = [SingboxTags.TailscaleDns],
+                Action = DnsOperation.Route,
+                Server = SingboxTags.TailscaleDns,
+                DisableOptimisticCache = true
+            });
+        RequireAt(prefix++, new() { RuleSet = [.. BlockedRuleSets], Action = DnsOperation.Predefined, Rcode = DnsResultCode.NameError });
+        int evaluationsPerPool = SelectionMode == DnsResolverSelectionMode.ParallelFastest ? 4 : 2;
+        if (Rules.Count(rule => rule.Action == DnsOperation.Evaluate) != Pools.Count * evaluationsPerPool)
+            diagnostics.Add(new("IR011", "plan.dns.pools", "DNS 解析池与实际求值规则的数量不一致。"));
+        int previous = prefix - 1;
+        for (int index = 0; index < Pools.Count; index++)
+        {
+            DnsResolverPoolPlan pool = Pools[index];
+            bool valid = true;
+            foreach (bool addressQuery in SelectionMode == DnsResolverSelectionMode.ParallelFastest ? new[] { true, false } : new[] { false })
+                foreach (bool primary in new[] { true, false })
+                {
+                    string tag = $"response-{pool.Name}-{(primary ? "primary" : "secondary")}";
+                    if (addressQuery)
+                        tag = DnsResponseTags.ForAddressQuery(tag);
+                    var expected = new DnsRulePlan
+                    {
+                        RuleSet = pool.RuleSets is null ? default : [.. pool.RuleSets],
+                        QueryType = addressQuery ? ["A"] : default,
+                        DisableOptimisticCache = addressQuery ? true : null,
+                        Action = DnsOperation.Evaluate,
+                        Server = primary ? pool.PrimaryResolver : pool.SecondaryResolver,
+                        Tag = tag,
+                        Timeout = SelectionMode == DnsResolverSelectionMode.SequentialFallback && primary ? SequentialPrimaryTimeout : null
+                    };
+                    int position = -1;
+                    for (int ruleIndex = 0; ruleIndex < Rules.Length; ruleIndex++)
+                        if (Rules[ruleIndex].Tag == tag)
+                            position = ruleIndex;
+                    valid &= position > previous && position >= 0 && Rules[position].HasSamePolicy(expected);
+                    previous = Math.Max(previous, position);
+                }
+            if (!valid)
+                diagnostics.Add(new("IR011", $"plan.dns.pools[{index}]", "DNS 解析池与实际求值规则的绑定、范围或顺序不一致。"));
+        }
+
+        void RequireAt(int index, DnsRulePlan expected)
+        {
+            if (index >= Rules.Length || !Rules[index].HasSamePolicy(expected))
+                diagnostics.Add(new("IR011", $"plan.dns.rules[{index}]", "DNS 必要守卫、控制面或屏蔽规则缺失或不符合策略。"));
+        }
+    }
 }
 
 internal sealed record DnsHttpsResolverPlan(string Name, string Address, string ServerName, string? Detour);
@@ -129,6 +203,17 @@ internal sealed record DnsRulePlan
     internal bool? Race { get; init; }
     internal bool? DisableOptimisticCache { get; init; }
     internal DnsResultCode? Rcode { get; init; }
+
+    internal bool HasSamePolicy(DnsRulePlan other) =>
+        (this with { Rules = default, DefaultInterfaceAddress = default, RuleSet = default, QueryType = default, PreferredBy = default, IpCidr = default })
+        == (other with { Rules = default, DefaultInterfaceAddress = default, RuleSet = default, QueryType = default, PreferredBy = default, IpCidr = default })
+        && Same(DefaultInterfaceAddress, other.DefaultInterfaceAddress) && Same(RuleSet, other.RuleSet)
+        && Same(QueryType, other.QueryType) && Same(PreferredBy, other.PreferredBy) && Same(IpCidr, other.IpCidr)
+        && Rules.IsDefault == other.Rules.IsDefault
+        && (Rules.IsDefault || Rules.Length == other.Rules.Length && Rules.Zip(other.Rules).All(pair => pair.First.HasSamePolicy(pair.Second)));
+
+    private static bool Same<T>(ImmutableArray<T> left, ImmutableArray<T> right) =>
+        left.IsDefault == right.IsDefault && (left.IsDefault || left.SequenceEqual(right));
 }
 
 internal enum DnsOperation { Predefined, Route, Evaluate, Respond }

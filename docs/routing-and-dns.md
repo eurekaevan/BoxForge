@@ -117,10 +117,11 @@ DNS 构建器从本次编译的 `ResolvedProfile.Settings` 读取
 `DnsSelectionMode`：默认 Android 使用 `SequentialFallback`，Linux/Windows 使用
 `ParallelFastest`。
 
-顺序回退模式（默认 Android）先 `evaluate` primary（`timeout: 2s`），随后按顺序判断 primary 的
+顺序回退模式（默认 Android）先 `evaluate` primary（`timeout: 700ms`），随后按顺序判断 primary 的
 `NOERROR` 和 `NXDOMAIN`。只有这两个规则都不接受 primary 结果时，才会执行
-secondary `evaluate`；secondary 继承全局 `dns.timeout`（默认 `5s`）。健康情况下因此
-只产生一个上游请求。
+secondary `evaluate`；secondary 继承全局 `dns.timeout`（默认 `1s`）。健康情况下因此
+只产生一个上游请求。两家都不响应时，顺序预算可能累计至约 `700ms + 1s`；
+这不是整条连接的总超时。
 
 并行模式（默认 Linux/Windows）先连续执行两个 `evaluate`，让 primary 和 secondary 并行查询。
 A 查询先进入独立的地址池，两条 `NOERROR` `respond` 同时要求响应中有
@@ -136,8 +137,9 @@ IPv4 地址（`ip_cidr: 0.0.0.0/0`）并启用 `race: true`。最快含地址的
 `Auto` 下则由前述出口条件决定是否允许进入池。
 
 非 A 查询的 NXDOMAIN `respond` 同样不启用 race，等待未决的 NOERROR 竞速。
-所有查询的全局超时来自 `dns.timeout`，默认 `5s`：快负答或空答与
-另一侧不响应的组合仍可能等满该预算。这是保留有效结果优先的代价。
+每次上游查询的默认超时来自 `dns.timeout`，默认 `1s`：快负答或空答与
+另一侧不响应的组合仍可能等满该预算。这是保留有效结果优先的代价。较短预算也可能在弱网或首次 DoH 建连时增加失败；
+可通过 profile 覆盖 `dns.timeout`，实际延迟与成功率需要真实网络测量。
 
 每个 pool 最后都有同 scope 的 `predefined SERVFAIL`。双方传输失败、超时、
 SERVFAIL 或 REFUSED 时在本 pool 终止，服务和 CN 不会穿透到后一分类。

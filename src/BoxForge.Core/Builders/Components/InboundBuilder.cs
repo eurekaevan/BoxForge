@@ -14,8 +14,7 @@ internal static class InboundBuilder
             {
                 Type = "tun",
                 Tag = SingboxTags.TunInbound,
-                // The IPv6 prefix is capture-only: auto_route needs an IPv6
-                // family on the TUN so IPv6 cannot bypass the global rejects.
+                // Capture both address families; routing applies the selected IPv6 policy.
                 Address = plan.Addresses.ToList(),
                 DnsMode = "hijack",
                 AutoRoute = true,

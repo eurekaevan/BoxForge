@@ -81,6 +81,17 @@ internal sealed record ConfigurationPlan(
         }
         for (int index = 0; !Dns.Rules.IsDefault && index < Dns.Rules.Length; index++)
             RequireDnsRuleSets(Dns.Rules[index], $"plan.dns.rules[{index}]");
+        for (int index = 0; !Route.Rules.IsDefault && index < Route.Rules.Length; index++)
+        {
+            RouteRulePlan service = Route.Rules[index];
+            if (service.Phase is not (RoutePhase.PriorityServices or RoutePhase.OtherServices) || service.RuleSet.IsDefaultOrEmpty)
+                continue;
+            if (!Dns.Pools.Any(pool => pool.RuleSets is { } scope && scope.SequenceEqual(service.RuleSet)
+                && BoundToService(pool.PrimaryResolver) && BoundToService(pool.SecondaryResolver)))
+                diagnostics.Add(new("IR011", $"plan.route.rules[{index}]", "服务 DNS 的匹配范围和主备解析器出口必须与业务路由一致。"));
+
+            bool BoundToService(string name) => Dns.Resolvers.Count(resolver => resolver.Name == name && resolver.Detour == service.Outbound) == 1;
+        }
         var resolvers = Dns.Resolvers.Select(resolver => resolver.Name).ToHashSet(StringComparer.Ordinal);
         ValidateResolver(Route.DefaultDomainResolver, "plan.route.default_domain_resolver");
         Require(resolvers, Route.DefaultDomainResolver.Server, "IR006", "plan.route.default_domain_resolver");
@@ -92,6 +103,16 @@ internal sealed record ConfigurationPlan(
             Require(resolvers, resolver.Server, "IR006", path + ".server");
             ValidateResolver(resolver, path);
         }
+        for (int index = 0; index < Nodes.Count; index++)
+        {
+            ProxyNode node = Nodes[index];
+            if (AddressFamily != AddressFamilyPolicy.Ipv4Only && node.AddressFamily == AddressFamilyPolicy.Ipv4Only
+                && (!NodeResolvers.TryGetValue(node.Name, out var binding)
+                    || binding != new DomainResolverPlan(SingboxTags.DirectAliDns, AddressFamilyPolicy.Ipv4Only, true)))
+                diagnostics.Add(new("IR011", $"plan.nodes[{index}].domain_resolver", "来源 IPv4 限制必须绑定独立的 IPv4 解析器。"));
+        }
+        if (Route.DefaultDomainResolver != new DomainResolverPlan(SingboxTags.DirectAliDns, AddressFamily, true))
+            diagnostics.Add(new("IR011", "plan.route.default_domain_resolver", "默认解析器绑定必须符合平台地址族和控制面策略。"));
         for (int index = 0; index < HttpClients.Count; index++)
         {
             HttpClientPlan client = HttpClients[index];

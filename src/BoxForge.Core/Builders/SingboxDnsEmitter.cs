@@ -13,7 +13,8 @@ internal static class SingboxDnsEmitter
         {
             Timeout = plan.Timeout,
             CacheCapacity = plan.CacheCapacity,
-            Optimistic = new DnsOptimisticConfig { Timeout = plan.OptimisticTimeout },
+            Optimistic = new DnsOptimisticConfig { Enabled = true, Timeout = plan.OptimisticTimeout },
+            ReverseMapping = true,
             Strategy = plan.AddressFamily.ToDnsStrategy(),
             Final = plan.FinalResolver
         };
@@ -22,7 +23,7 @@ internal static class SingboxDnsEmitter
             Tag = resolver.Name,
             ServerAddress = resolver.Address,
             DetourTag = resolver.Detour,
-            TlsConfig = new DnsTlsConfig { ServerName = resolver.ServerName }
+            TlsConfig = new DnsTlsConfig { Enabled = true, ServerName = resolver.ServerName }
         }));
         if (plan.TailscaleEnabled)
         {

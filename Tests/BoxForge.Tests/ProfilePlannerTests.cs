@@ -64,7 +64,7 @@ public sealed class ProfilePlannerTests
             Assert.That(groups.Probes.Select(probe => probe.Interval), Is.All.EqualTo("7m"));
             Assert.That(dns.Timeout, Is.EqualTo("7s"));
             Assert.That(dns.CacheCapacity, Is.EqualTo(8192));
-            Assert.That(dns.Optimistic.Timeout, Is.EqualTo("3h"));
+            Assert.That(dns.Optimistic!.Timeout, Is.EqualTo("3h"));
             Assert.That(route.Rules.Where(rule => rule.Action == RouteRuleAction.Sniff).Select(rule => rule.Timeout),
                 Is.All.EqualTo("450ms"));
             Assert.That(tcpSniff.Rules!.Single(rule => rule.Invert == true).Port, Is.EqualTo(new[] { 25, 465 }));

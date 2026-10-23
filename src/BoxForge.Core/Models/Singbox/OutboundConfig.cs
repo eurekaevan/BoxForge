@@ -111,7 +111,7 @@ public record Utls
 
 public record OutboundTls
 {
-    [JsonPropertyName("enabled")] public bool Enabled { get; init; } = true;
+    [JsonPropertyName("enabled")] public bool? Enabled { get; init; }
     [JsonPropertyName("server_name")] public required string ServerName { get; init; }
     [JsonPropertyName("insecure")] public bool? Insecure { get; init; }
     [JsonPropertyName("alpn")] public List<string>? Alpn { get; init; }

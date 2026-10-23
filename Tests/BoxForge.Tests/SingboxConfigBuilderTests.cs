@@ -17,6 +17,58 @@ namespace BoxForge.Tests;
 [TestFixture]
 public sealed class SingboxConfigBuilderTests
 {
+    [TestCase("pool_primary")]
+    [TestCase("pool_scope")]
+    [TestCase("pool_order")]
+    [TestCase("pool_removed")]
+    [TestCase("selection_mode")]
+    [TestCase("dns_block_removed")]
+    [TestCase("dns_guard_narrowed")]
+    [TestCase("route_empty")]
+    [TestCase("hijack_removed")]
+    [TestCase("hijack_narrowed")]
+    [TestCase("early_guard_removed")]
+    [TestCase("late_guard_narrowed")]
+    [TestCase("service_dns_detour")]
+    [TestCase("node_binding_removed")]
+    [TestCase("node_binding_family")]
+    [TestCase("node_binding_server")]
+    [TestCase("node_binding_cache")]
+    public void BuildRejectsMissingOrContradictoryPolicyBeforeEmission(string fault)
+    {
+        var source = CreateProxy("US01", "us.example.com") with { AddressFamily = AddressFamilyPolicy.Ipv4Only };
+        var plan = ConfigurationPlanner.Plan(new NodeCatalog([source], [source.Name]), CreateProfile(TargetPlatform.Linux));
+        Assert.DoesNotThrow(plan.Validate);
+        int blocking = plan.Dns.Rules.ToList().FindIndex(rule => rule.Rcode == DnsResultCode.NameError);
+        int hijack = plan.Route.Rules.ToList().FindIndex(rule => rule.Phase == RoutePhase.DnsHijack);
+        int early = plan.Route.Rules.ToList().FindIndex(rule => rule.Phase == RoutePhase.EarlyIpv6Guard);
+        int late = plan.Route.Rules.ToList().FindIndex(rule => rule.Phase == RoutePhase.LateIpv6Guard);
+        var binding = plan.NodeResolvers[source.Name];
+        plan = fault switch
+        {
+            "pool_primary" => plan with { Dns = plan.Dns with { Pools = [plan.Dns.Pools[0] with { PrimaryResolver = plan.Dns.Pools[0].SecondaryResolver }, .. plan.Dns.Pools.Skip(1)] } },
+            "pool_scope" => plan with { Dns = plan.Dns with { Pools = [plan.Dns.Pools[0] with { RuleSets = [RuleSetTags.Cn] }, .. plan.Dns.Pools.Skip(1)] } },
+            "pool_order" => plan with { Dns = plan.Dns with { Pools = [plan.Dns.Pools[1], plan.Dns.Pools[0], .. plan.Dns.Pools.Skip(2)] } },
+            "pool_removed" => plan with { Dns = plan.Dns with { Pools = [.. plan.Dns.Pools.Skip(1)] } },
+            "selection_mode" => plan with { Dns = plan.Dns with { SelectionMode = DnsResolverSelectionMode.SequentialFallback } },
+            "dns_block_removed" => plan with { Dns = plan.Dns with { Rules = plan.Dns.Rules.RemoveAt(blocking) } },
+            "dns_guard_narrowed" => plan with { Dns = plan.Dns with { Rules = plan.Dns.Rules.SetItem(0, plan.Dns.Rules[0] with { RuleSet = [RuleSetTags.Cn] }) } },
+            "route_empty" => plan with { Route = plan.Route with { Rules = [] } },
+            "hijack_removed" => plan with { Route = plan.Route with { Rules = plan.Route.Rules.RemoveAt(hijack) } },
+            "hijack_narrowed" => plan with { Route = plan.Route with { Rules = plan.Route.Rules.SetItem(hijack, plan.Route.Rules[hijack] with { Network = ["udp"] }) } },
+            "early_guard_removed" => plan with { Route = plan.Route with { Rules = plan.Route.Rules.RemoveAt(early) } },
+            "late_guard_narrowed" => plan with { Route = plan.Route with { Rules = plan.Route.Rules.SetItem(late, plan.Route.Rules[late] with { Port = [443] }) } },
+            "service_dns_detour" => plan with { Dns = plan.Dns with { Resolvers = [.. plan.Dns.Resolvers.Select(resolver => resolver.Name == plan.Dns.Pools[0].PrimaryResolver ? resolver with { Detour = SingboxTags.MainProxyGroup } : resolver)] } },
+            "node_binding_removed" => plan with { NodeResolvers = plan.NodeResolvers.Clear() },
+            "node_binding_family" => plan with { NodeResolvers = plan.NodeResolvers.SetItem(source.Name, binding with { AddressFamily = AddressFamilyPolicy.DualStack }) },
+            "node_binding_server" => plan with { NodeResolvers = plan.NodeResolvers.SetItem(source.Name, binding with { Server = SingboxTags.ProxyGoogleDns }) },
+            _ => plan with { NodeResolvers = plan.NodeResolvers.SetItem(source.Name, binding with { DisableOptimisticCache = false }) }
+        };
+        var error = Assert.Throws<ConfigValidationException>(() => new SingboxConfigBuilder().Build(plan, "cache"))!;
+        Assert.That(error.Diagnostics.Any(item => item.Code == "IR011"), Is.True);
+        Assert.That(JsonSerializer.Serialize(error.Diagnostics), Does.Not.Contain("us.example.com"));
+    }
+
     [TestCase("leaf", "IR002", "plan.groups.leaves[0]")]
     [TestCase("dns_detour", "IR003", "plan.dns.resolvers[0].detour")]
     [TestCase("dns_rule_match", "IR005", "dns_rule")]
@@ -96,6 +148,7 @@ public sealed class SingboxConfigBuilderTests
         var second = Assert.Throws<ConfigValidationException>(() => plan.Validate())!;
         Assert.That(first.Diagnostics.Select(diagnostic => (diagnostic.Code, diagnostic.Path)), Is.EqualTo(new[]
         {
+            ("IR011", "plan.dns.rules[2]"),
             ("IR004", "plan.dns.tailscale_enabled"),
             ("IR004", "plan.route.tailscale_enabled"),
             ("IR003", "plan.route.final_outbound"),
@@ -166,7 +219,7 @@ public sealed class SingboxConfigBuilderTests
 
     [TestCase("groups", "IR010", "plan.groups.main.preferred")]
     [TestCase("dns", "IR008", "plan.dns.rules")]
-    [TestCase("route", "IR010", "plan.route.phases")]
+    [TestCase("route", "IR010", "plan.route.rules[0].phase")]
     public void BuildRejectsInvalidComponentPlansBeforeMappingTargets(string component, string code, string path)
     {
         var plan = ConfigurationPlanner.Plan(new NodeCatalog([], []), CreateProfile(TargetPlatform.Linux));
@@ -174,7 +227,7 @@ public sealed class SingboxConfigBuilderTests
         {
             "groups" => plan with { Groups = plan.Groups with { Main = plan.Groups.Main with { Preferred = "missing" } } },
             "dns" => plan with { Dns = plan.Dns with { Rules = default } },
-            _ => plan with { Route = plan.Route with { Phases = [] } }
+            _ => plan with { Route = plan.Route with { Rules = plan.Route.Rules.SetItem(0, plan.Route.Rules[0] with { Phase = (RoutePhase)(-1) }) } }
         };
         var error = Assert.Throws<ConfigValidationException>(() => new SingboxConfigBuilder().Build(plan, null))!;
         Assert.That(error.Diagnostics.Select(item => (item.Code, item.Path)), Is.EqualTo(new[] { (code, path) }));

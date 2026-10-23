@@ -23,7 +23,7 @@ HTTP 错误格式保持不变。
 | `features.api.enabled` | `false` | — |
 | `dns.address_family` | `"Auto"` | — |
 | `dns.selection_mode` | `"ParallelFastest"` | Android: `"SequentialFallback"` |
-| `dns.timeout` | `"5s"` | — |
+| `dns.timeout` | `"1s"` | — |
 | `dns.cache_capacity` | `4096` | — |
 | `dns.optimistic_timeout` | `"6h"` | — |
 | `dns.resolvers` | 4 项（见内置 profile） | — |

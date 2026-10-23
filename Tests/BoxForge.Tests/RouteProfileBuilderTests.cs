@@ -650,34 +650,29 @@ public sealed class RouteProfileBuilderTests
     }
 
     [TestCase("reordered")]
-    [TestCase("missing")]
-    [TestCase("duplicate")]
     [TestCase("unknown")]
-    public void RulePlanRejectsBrokenStageConstraints(string mutation)
+    [TestCase("final")]
+    public void RulePlanRejectsInvalidActualStageOrder(string mutation)
     {
         var plan = CreatePlan(TargetPlatform.Linux);
-        List<RoutePhase> stages = plan.Phases.ToList();
-        switch (mutation)
+        var rules = plan.Rules;
+        int index = rules.Length - 1;
+        if (mutation == "reordered")
         {
-            case "reordered":
-                int early = stages.FindIndex(stage => stage == RoutePhase.EarlyIpv6Guard);
-                int direct = stages.FindIndex(stage => stage == RoutePhase.PreSniffDirect);
-                (stages[early], stages[direct]) = (stages[direct], stages[early]);
-                break;
-            case "missing":
-                stages.RemoveAt(stages.Count - 1);
-                break;
-            case "duplicate":
-                stages.Add(stages[^1]);
-                break;
-            case "unknown":
-                stages[^1] = (RoutePhase)(-1);
-                break;
+            int early = rules.ToList().FindIndex(rule => rule.Phase == RoutePhase.EarlyIpv6Guard);
+            int direct = rules.ToList().FindIndex(rule => rule.Phase == RoutePhase.PreSniffDirect);
+            rules = rules.SetItem(early, rules[direct]).SetItem(direct, rules[early]);
+            index = early + 1;
         }
+        else
+            rules = rules.SetItem(index, rules[index] with
+            {
+                Phase = mutation == "unknown" ? (RoutePhase)(-1) : RoutePhase.FinalOutbound
+            });
 
-        var exception = Assert.Throws<ConfigValidationException>(() => (plan with { Phases = stages }).Validate())!;
+        var exception = Assert.Throws<ConfigValidationException>(() => (plan with { Rules = rules }).Validate())!;
         Assert.That(exception.Diagnostics.Select(item => (item.Code, item.Path)),
-            Does.Contain(("IR010", "plan.route.phases")));
+            Does.Contain(("IR010", $"plan.route.rules[{index}].phase")));
     }
 
     private static void AssertSniffRule(

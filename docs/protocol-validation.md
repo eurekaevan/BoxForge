@@ -64,11 +64,13 @@ singbox_core=/absolute/path/to/sing-box
 verification_root=$(mktemp -d /tmp/boxforge-verification.XXXXXX)
 
 BOXFORGE_features__api__enabled=false \
+BOXFORGE_dns__address_family=Ipv4Only \
 dotnet run --no-build --project src/BoxForge.Cli -- generate \
   --input-dir Tests/BoxForge.Tests/Fixtures \
   --output-dir "$verification_root/standard" --platform all || exit
 
 BOXFORGE_features__api__enabled=true \
+BOXFORGE_dns__address_family=Ipv4Only \
 dotnet run --no-build --project src/BoxForge.Cli -- generate \
   --input-dir Tests/BoxForge.Tests/Fixtures \
   --output-dir "$verification_root/api" --platform all || exit
@@ -88,12 +90,15 @@ node scripts/verify-session-protocols.mjs "$singbox_core" \
   "$verification_root/standard/anytls/Linux/config.json" anytls || exit
 ```
 
+上述本地协议验证显式使用 `Ipv4Only`，使 AAAA 预期不依赖宿主网卡；这不验证默认 Auto 的实际网络判断。
 DNS 验证脚本读取真实生成的桌面 DNS 规则，将上游替换为本地受控 DoH，
 将分类替换为同标签 inline 测试域名；不创建 TUN、不使用真实订阅或公网 DNS。
+脚本只接受 `Ipv4Only`、`ParallelFastest` 和 `dns.timeout = 1s` 的生成配置，
+不匹配时会在启动核心前报错。核心版本查询限时 10 秒，配置检查和证书生成各限时 30 秒。
 需要 Python 3 和 OpenSSL，本地 DoH 通过显式信任证书使用 HTTP/1.1，不能据此
 证明生产 DoH 的 HTTP/2、代理链路或 Gmail 实际性能。它覆盖地址/空答竞争、
 CNAME、附加区与 IPv6 地址、非 A 查询、分类隔离、Spotify/Games/Microsoft
-与 `cn` 重叠时的代理 DNS 优先和失败隔离、TTL/过期缓存和未变的 5 秒
+与 `cn` 重叠时的代理 DNS 优先和失败隔离、TTL/过期缓存和默认 1 秒
 负答等待。诊断和结果写入独立的 `/tmp/boxforge-dns-races.*` 目录。
 
 协议验证脚本使用真实生成的 Linux leaf，而不是重新手写客户端字段。对应范围：

@@ -380,7 +380,7 @@ internal sealed class SingboxConfigValidator : ISingboxConfigValidator
             diagnostics.Add(new ConfigDiagnostic("SB089", $"outbounds[{index}].tls.utls.fingerprint",
                 "uTLS 指纹不在 BoxForge 的等价映射支持范围内。"));
         }
-        if (tls?.Reality is { Enabled: true } && (!tls.Enabled || tls.Utls?.Enabled != true))
+        if (tls?.Reality is { Enabled: true } && (tls.Enabled != true || tls.Utls?.Enabled != true))
         {
             diagnostics.Add(new ConfigDiagnostic("SB090", $"outbounds[{index}].tls.reality",
                 "Reality 必须启用 TLS 和有效的 uTLS。"));

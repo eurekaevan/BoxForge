@@ -31,7 +31,7 @@ BoxForge.Tests  ──→ BoxForge.Cli, BoxForge.Server, BoxForge.Core
    `IBoxForgeEngine`。
 4. `BoxForgeEngine` 是唯一的编译编排入口：校验内存请求，解析各平台配置文档，
    只解析一次 YAML（重复键、循环引用及超限展开会直接失败），生成不依赖平台的
-   `NodeCatalog` 和稳定 `cache_id`。
+   `NodeCatalog` 和规范化节点内容派生的 `cache_id`。
 5. 按 Android、Linux、Windows 顺序，`ConfigurationPlanner` 将节点绑定到该平台的
    `ResolvedProfile`，检查保留名称并确定完整策略计划；`SingboxConfigBuilder.Build`
    集中校验完整计划，再发射为 inbound、endpoint、outbound、DNS、route 和 experimental 配置。
@@ -213,6 +213,7 @@ DNS 规划同样先产生中立的 `DnsPlan`：`DnsHttpsResolverPlan` 记录解�
 选择模式、Tailscale 开关、广告规则集、最终解析器及服务/domestic/global 的顺序；
 每个服务独立生成池及经过该服务选择组的主/备解析器，服务顺序与业务路由一致，
 所有服务池仍位于 domestic 之前；无服务时只生成 domestic/global。
+展开后的 `Rules` 是输出的唯一权威表示；`Pools`、`BlockedRuleSets` 和选择模式是待核对的策略说明，不能单独用来解释实际输出。
 发射前检查解析器和池名称唯一、解析器引用有效、
 有范围的池位于唯一的全局池之前，以及广告规则集非空，避免生成无条件负响应。
 完整配置中的 detour、rule-set 等跨模块引用继续交给既有 validator。
@@ -223,12 +224,17 @@ DNS 规划同样先产生中立的 `DnsPlan`：`DnsHttpsResolverPlan` 记录解�
 绑定服务选择组，保留现有优先级。IPv4 正响应竞速仍不混入域名 rule-set 条件，
 避免 sing-box 的 OR 语义改变匹配范围。`SingboxDnsEmitter` 只映射规则和值，
 不选择匹配范围、执行顺序或回退算法。
+计划校验核对前缀中的 AAAA 守卫、Tailscale 和广告拒绝规则，并检查池与求值规则的数量、
+顺序、主备解析器、查询范围、响应标签、超时和缓存开关一致。服务池还必须绑定对应业务出口。
+这些检查不重新运行规划器，也不等同于证明整个响应竞速算法正确；响应处理顺序由行为测试约束，官方核心检查目标配置的格式兼容性。
 
 `RouteProfileBuilder.Plan` 产生带阶段标记的有序 `RouteRulePlan`，在规划时确定
 逻辑 AND/OR 条件、sniff 范围和超时、早晚 IPv6 守卫、服务与国内分流优先级，
 并在对应阶段展开 Linux bypass/bridge 伴随规则。`RoutePlan` 还保存规则源、最终出口
 及控制面绑定。计划只使用 IR 类型；不引用 profile DTO 或 sing-box 模型。
 发射前检查阶段与规则顺序、必需规则源、实际规则引用和服务唯一性。
+完整阶段列表不能代替实际规则：校验要求 DNS 劫持位于首条，精确保留 TUN 范围及协议/端口条件，
+早晚地址族守卫符合 Ipv4Only／Auto／DualStack 策略，必要固定阶段存在规则，启用 Tailscale 时保留其控制面路径。
 
 `SingboxRouteEmitter` 将规则逐项映射到目标字段，不按阶段重新推导策略。
 DNS 与路由发射均为每次输出创建独立的规则、嵌套条件与列表；修改输出不会污染计划。
@@ -249,7 +255,18 @@ bootstrap resolver、HTTP client 的出口和解析器，以及 dashboard 的 HT
 TUN、endpoint 与 API service 使用计划中保存的地址、开关和 Taildrop 目录，
 发射时不重新读取宿主配置，也不再次规划。
 完整目标 validator 继续检查标签重复、目标模型内部字段及地址族守卫，
-汇总校验仅覆盖当前已表达的计划事实和引用。
+汇总校验检查以下不同层次，不能将“通过校验”理解为所有产品行为已获证明：
+
+- **结构**：枚举、字段、逻辑树和规则数组合法。
+- **引用**：出口、解析器、规则集、HTTP client 和响应标签已声明且顺序有效。
+- **必要策略**：DNS 劫持、地址族守卫、来源 IPv4 节点的独立 resolver 绑定及路由默认 resolver 符合约定。
+- **产品一致性**：解析池说明与实际求值规则、服务 DNS 与业务出口一致；固定阶段具有实际规则。
+
+嗅探器完整组合、全部响应竞速分支和服务优先级等仍由行为测试及输出基线约束，不能仅凭阶段存在断言产品策略完整。
+
+配置文档在构造时解析所有平台进行验证，转换时仍会重新解析请求平台；当前没有平台快照缓存。
+取消检查位于转换开始及各平台编译之前，不能视为解析、规划、发射全过程的有限工作预算。
+现有来源大小、展开数量和正则超时各自约束局部工作；不承诺统一的编译截止时间。
 官方 `check` 继续由验证脚本执行，不改变 CLI/Server 运行时依赖。
 现有 120 份输出字节基线及协议拒绝测试共同守住兼容性。
 
@@ -260,6 +277,10 @@ TUN、endpoint 与 API service 使用计划中保存的地址、开关和 Taildr
 `ProfileValidationException.Diagnostics` 提供，计划与目标校验使用
 `ConfigValidationException.Diagnostics`。引擎的转换异常保留原有分类，并转交已知错误的诊断。
 诊断集合是不可变快照，调用方修改原始列表不会改变异常中保存的结果。
+引擎按 Android → Linux → Windows 的固定顺序处理请求平台。为保持既有异常契约，
+首个请求平台的保留名称冲突包装为 `BoxForgeConversionException`，后续平台冲突包装为
+`BoxForgePlatformConversionException`；两者都转交安全诊断。此例外只用于异常分类，
+来源仍只解析一次，失败不返回部分产物，由引擎回归测试固定边界。
 
 | 错误码 | 归属与含义 |
 | --- | --- |
@@ -276,6 +297,7 @@ TUN、endpoint 与 API service 使用计划中保存的地址、开关和 Taildr
 | `IR008` | 局部计划的字段值、结构或资源边界无效 |
 | `IR009` | 声明缺失、重复或名称冲突 |
 | `IR010` | 阶段顺序、首选目标或求值依赖无效 |
+| `IR011` | 必要策略缺失，或策略说明与实际规则、解析器绑定不一致 |
 | `SB*` | 发射后的引用、字段与安全不变量复核，沿用既有目标错误码 |
 
 来源路径使用 `source.proxies[索引]`，已声明字段可继续定位到嵌套字段；
@@ -334,7 +356,13 @@ VLESS/Trojan 只接受原生 TCP，旧传输选项作为不支持的来源语义
 
 `OutboundTuningPolicy` 在协议解析之后、目标发射之前，在节点 IR 副本中填入
 缺失的 `connect_timeout`、桌面 TCP keepalive 和 Hysteria2 hop/BBR 值。
-这些字段在 outbound model 中默认是 `null`；模型本身不施加 BoxForge policy。
+目标 DTO 不内置产品策略默认值。DNS 超时、容量、optimistic 超时和默认出口由 profile／计划经 emitter 显式写入；
+反向映射、接口探测、日志和 TLS 启用等固定选择由相应构建器或 emitter 显式提供。
+可省略的目标字段使用 nullable 表示未指定，序列化不会为它们补值；显式 `false` 和 `0` 仍保留。
+`SingboxConfig` 中空的 DNS／route／log 对象及空集合初始化仅用于结构，不填充策略。
+直接构造 DTO 的调用方须自行提供所需值；需要完整产品配置时使用引擎。
+顺序 DNS 主解析器预算由 `DnsPlan.SequentialPrimaryTimeout` 单独定义，规划与计划一致性校验共用，
+协议默认语义及目标校验器的独立安全断言仍保留。
 连接超时来自平台 profile，路由 sniff 超时来自 `route.sniff_timeout`，默认仍为
 `300ms`。当前 YAML 显式
 HY2 hop/BBR 值优先于调优。显式固定间隔不会补入调优的随机上限；显式带宽
@@ -377,10 +405,10 @@ Android 依赖客户端通过 libbox 提供默认物理接口和地址，缺少�
 `DualStack` 可显式启用，不按出口地址拒绝 IPv6。Android 不输出未实现的 strict_route；
 本地静态验证不等于真机防逃逸抓包或网络切换证明。
 
-- 路由顺序由 `RoutePhase` 的完整阶段列表声明，`RoutePlan` 检查严格顺序；
-  路由规划器按阶段展开规则及 Linux 的 bypass/bridge 伴随规则，后端映射有序结果。[路由顺序文档](routing-and-dns.md#路由规则顺序)
-  手动维护，实际输出顺序由行为测试检查；阶段元数据
-  不进入目标 JSON。validator 独立检查实际规则，不能依赖生成器阶段标签。
+- 路由规划器按 `RoutePhase` 枚举顺序展开规则及 Linux 的 bypass/bridge 伴随规则，
+  `RoutePlan` 直接检查实际规则的阶段顺序和必要策略，不再另存一份完整阶段列表。
+  后端映射有序结果，[路由顺序](routing-and-dns.md#路由规则顺序)由行为测试检查；
+  规则上的阶段标记不进入目标 JSON。目标 validator 独立检查实际规则。
 - 输入文件按文件名排序，平台顺序固定为 Android、Linux、Windows。
 - 引擎不依赖 `File`、`Directory`、`Path` 或环境输入输出目录；文件边界
   由 CLI 的 `InputDiscovery`、`OutputTransaction` 和 `LocalGenerationWorkflow`

@@ -2,7 +2,8 @@
 """Exercise generated desktop DNS rules with the pinned core and local TLS DoH servers.
 
 Usage: python3 scripts/verify-dns-races.py /path/to/sing-box /path/to/Linux/config.json
-Requires Python 3 and OpenSSL. No TUN, real upstreams, or proxy credentials are used.
+Requires generated Ipv4Only + ParallelFastest DNS with a 1s query timeout,
+Python 3 and OpenSSL. No TUN, real upstreams, or proxy credentials are used.
 """
 
 import asyncio
@@ -92,7 +93,13 @@ def response(query, mode, upstream, ttl):
 
 
 async def main(core, generated):
-    version = subprocess.check_output([str(core), "version"], text=True)
+    dns = generated["dns"]
+    if (dns.get("strategy") != "ipv4_only" or dns.get("timeout") != "1s"
+            or not any(rule.get("action") == "respond" and rule.get("race") is True
+                       and rule.get("query_type") == ["A"] and rule.get("ip_cidr") == ["0.0.0.0/0"]
+                       for rule in dns.get("rules", []))):
+        raise ValueError("DNS race verification requires Ipv4Only + ParallelFastest DNS with a 1s query timeout")
+    version = subprocess.check_output([str(core), "version"], text=True, timeout=10)
     if f"sing-box version {VERSION}\n" not in version or REVISION not in version:
         raise ValueError(f"Expected official sing-box {VERSION} / {REVISION}")
     root = pathlib.Path(tempfile.mkdtemp(prefix="boxforge-dns-races."))
@@ -101,7 +108,7 @@ async def main(core, generated):
     subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
                     "-keyout", str(key), "-out", str(cert), "-days", "1",
                     "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost"],
-                   check=True, capture_output=True)
+                   check=True, capture_output=True, timeout=30)
     tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     tls.load_cert_chain(cert, key)
     tls.set_alpn_protocols(["http/1.1"])
@@ -176,7 +183,7 @@ async def main(core, generated):
                             "default_domain_resolver": generated["route"]["default_domain_resolver"]}}
         config_path = root / "config.json"
         config_path.write_text(json.dumps(config, indent=2))
-        subprocess.run([str(core), "check", "-c", str(config_path)], check=True)
+        subprocess.run([str(core), "check", "-c", str(config_path)], check=True, timeout=30)
         log = (root / "core.log").open("w")
         process = subprocess.Popen([str(core), "run", "-c", str(config_path)],
                                    stdout=log, stderr=subprocess.STDOUT, cwd=root)
@@ -266,8 +273,11 @@ async def main(core, generated):
         cached = await query("valid-ttl-cache-still-works", "stale.google.test")
         assert cached["ipv4"] == ["192.0.2.4"] and cached["ms"] < 200, cached
         specs[2], specs[3] = (0.03, "nx", 60), (0, "drop", 60)
-        negative = await query("negative-timeout-unchanged", "negative.google.test")
-        assert negative["rcode"] == 3 and 4500 < negative["ms"] < 6500, negative
+        negative = await query("negative-timeout-budget", "negative.google.test")
+        assert negative["rcode"] == 3 and 800 < negative["ms"] < 1800, negative
+        specs[2], specs[3] = (0, "drop", 60), (0, "drop", 60)
+        failed = await query("both-timeout-budget", "both-timeout.google.test")
+        assert failed["rcode"] == 2 and 800 < failed["ms"] < 1800, failed
         (root / "results.json").write_text(json.dumps(results, indent=2))
         print(f"PASS: {len(results)} local DoH scenarios")
     finally:
@@ -277,7 +287,7 @@ async def main(core, generated):
                 process.wait(timeout=3)
             except subprocess.TimeoutExpired:
                 process.kill()
-                process.wait()
+                process.wait(timeout=3)
         if log is not None:
             log.close()
         for listener in listeners:

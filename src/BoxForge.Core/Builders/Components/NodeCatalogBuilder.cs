@@ -24,8 +24,7 @@ internal static class NodeCatalogBuilder
             {
                 throw ex.AtPath($"source.proxies[{index}]");
             }
-            string tag = node.Name;
-            names.Add(tag);
+            names.Add(node.Name);
             nodes.Add(node);
         }
 

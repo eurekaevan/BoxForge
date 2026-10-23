@@ -8,6 +8,77 @@ namespace BoxForge.Tests;
 public sealed class ConfigSerializerDefaultsTests
 {
     [Test]
+    public void TargetModelsDoNotInventProductPolicyWhenFieldsAreOmitted()
+    {
+        var config = new SingboxConfig
+        {
+            Dns = new DnsConfig
+            {
+                Optimistic = new DnsOptimisticConfig(),
+                Servers = [new HttpsDnsServer
+                {
+                    Tag = "resolver", ServerAddress = "1.1.1.1",
+                    TlsConfig = new DnsTlsConfig { ServerName = "cloudflare-dns.com" }
+                }]
+            },
+            Outbounds = [new TrojanOutbound
+            {
+                Tag = "node", Server = "node.example.com", Password = "test-only",
+                Tls = new OutboundTls { ServerName = "node.example.com" }
+            }]
+        };
+        using var document = JsonDocument.Parse(new ConfigSerializer().Serialize(config));
+        JsonElement root = document.RootElement;
+        JsonElement dns = root.GetProperty("dns");
+        Assert.Multiple(() =>
+        {
+            foreach (string field in new[] { "timeout", "cache_capacity", "final", "reverse_mapping" })
+                Assert.That(dns.TryGetProperty(field, out _), Is.False, field);
+            Assert.That(dns.GetProperty("optimistic").EnumerateObject(), Is.Empty);
+            Assert.That(root.GetProperty("log").EnumerateObject(), Is.Empty);
+            Assert.That(root.GetProperty("route").EnumerateObject(), Is.Empty);
+            Assert.That(dns.GetProperty("servers")[0].GetProperty("tls").TryGetProperty("enabled", out _), Is.False);
+            Assert.That(root.GetProperty("outbounds")[0].GetProperty("tls").TryGetProperty("enabled", out _), Is.False);
+        });
+    }
+
+    [Test]
+    public void ExplicitFalseAndZeroPolicyValuesSurviveSerialization()
+    {
+        var config = new SingboxConfig
+        {
+            Log = new LogConfig { Level = "error", Timestamp = false },
+            Dns = new DnsConfig
+            {
+                Timeout = "2s",
+                Final = "resolver",
+                CacheCapacity = 0,
+                ReverseMapping = false,
+                Optimistic = new DnsOptimisticConfig { Enabled = false, Timeout = "0s" }
+            },
+            Route = new RouteConfig { AutoDetectInterface = false },
+            Outbounds = [new TrojanOutbound
+            {
+                Tag = "node", Server = "node.example.com", Password = "test-only",
+                Tls = new OutboundTls { Enabled = false, ServerName = "node.example.com" }
+            }]
+        };
+        using var document = JsonDocument.Parse(new ConfigSerializer().Serialize(config));
+        JsonElement root = document.RootElement;
+        JsonElement dns = root.GetProperty("dns");
+        Assert.Multiple(() =>
+        {
+            Assert.That(root.GetProperty("log").GetProperty("timestamp").GetBoolean(), Is.False);
+            Assert.That(root.GetProperty("route").GetProperty("auto_detect_interface").GetBoolean(), Is.False);
+            Assert.That(dns.GetProperty("cache_capacity").GetUInt32(), Is.Zero);
+            Assert.That(dns.GetProperty("reverse_mapping").GetBoolean(), Is.False);
+            Assert.That(dns.GetProperty("optimistic").GetProperty("enabled").GetBoolean(), Is.False);
+            Assert.That(dns.GetProperty("optimistic").GetProperty("timeout").GetString(), Is.EqualTo("0s"));
+            Assert.That(root.GetProperty("outbounds")[0].GetProperty("tls").GetProperty("enabled").GetBoolean(), Is.False);
+        });
+    }
+
+    [Test]
     public void PreservesExplicitDefaultsWithoutChangingTheModel()
     {
         var leaf = new AnyTlsOutbound
@@ -23,7 +94,7 @@ public sealed class ConfigSerializerDefaultsTests
             IdleSessionCheckInterval = "30s",
             MinIdleSession = 0,
             ClientMetadata = "",
-            Tls = new OutboundTls { ServerName = "example.com", Insecure = false }
+            Tls = new OutboundTls { Enabled = true, ServerName = "example.com", Insecure = false }
         };
         var selector = new SelectorOutbound
         {
@@ -89,17 +160,20 @@ public sealed class ConfigSerializerDefaultsTests
     }
 
     [Test]
-    public void PreservesRuleActionsResponseCodesAndRuleSetDefaults()
+    public void PreservesExplicitDnsRouteAndRuleSetSettings()
     {
         var config = new SingboxConfig
         {
             Dns = new DnsConfig
             {
+                Timeout = "1s",
+                CacheCapacity = 4096,
                 Rules = [new DnsRule { Action = DnsRuleAction.Predefined, Rcode = DnsResponseCode.NoError },
                     new DnsRule { Action = DnsRuleAction.Respond, ResponseRcode = DnsResponseCode.NoError }]
             },
             Route = new RouteConfig
             {
+                AutoDetectInterface = true,
                 RuleSet = [new SingboxRuleSet { Format = RuleSetFormat.Binary, Url = "https://example.com/rules.srs", UpdateInterval = "24h" },
                     new SingboxRuleSet { Format = RuleSetFormat.Binary, Url = "https://example.com/download" }],
                 Rules = [new RouteRule { Action = RouteRuleAction.Route, Outbound = "direct", Invert = false },
@@ -108,7 +182,7 @@ public sealed class ConfigSerializerDefaultsTests
         };
         using JsonDocument document = JsonDocument.Parse(new ConfigSerializer().Serialize(config));
         JsonElement dns = document.RootElement.GetProperty("dns");
-        Assert.That(dns.GetProperty("timeout").GetString(), Is.EqualTo("5s"));
+        Assert.That(dns.GetProperty("timeout").GetString(), Is.EqualTo("1s"));
         Assert.That(dns.GetProperty("cache_capacity").GetUInt32(), Is.EqualTo(4096));
         Assert.That(dns.GetProperty("rules")[0].GetProperty("rcode").GetString(), Is.EqualTo("NOERROR"));
         Assert.That(dns.GetProperty("rules")[1].GetProperty("response_rcode").GetString(), Is.EqualTo("NOERROR"));
@@ -164,7 +238,7 @@ public sealed class ConfigSerializerDefaultsTests
             Server = "example.com",
             Uuid = "test",
             PacketEncoding = "xudp",
-            Tls = new OutboundTls { ServerName = "example.com", Alpn = [], Utls = new Utls { Enabled = true, Fingerprint = "chrome" } }
+            Tls = new OutboundTls { Enabled = true, ServerName = "example.com", Alpn = [], Utls = new Utls { Enabled = true, Fingerprint = "chrome" } }
         });
         JsonElement auto = document.RootElement.GetProperty("outbounds")[0];
         Assert.That(auto.GetProperty("url").GetString(), Is.EqualTo("https://www.gstatic.com/generate_204"));
@@ -192,7 +266,7 @@ public sealed class ConfigSerializerDefaultsTests
             HttpClients = [new HttpClientConfig { Tag = "first", Detour = "direct" }],
             Dns = new DnsConfig
             {
-                Servers = [new HttpsDnsServer { Tag = "dns", ServerAddress = "1.1.1.1", TlsConfig = new DnsTlsConfig { ServerName = "cloudflare-dns.com" } }],
+                Servers = [new HttpsDnsServer { Tag = "dns", ServerAddress = "1.1.1.1", TlsConfig = new DnsTlsConfig { Enabled = true, ServerName = "cloudflare-dns.com" } }],
                 Final = "dns",
                 Timeout = "2s",
                 Rules = [new DnsRule { Timeout = "2000ms", Server = "dns" }, new DnsRule { Timeout = "10s", Server = "dns" }]
@@ -236,7 +310,7 @@ public sealed class ConfigSerializerDefaultsTests
     [Test]
     public void PreservesTlsIdentityAndAlpnOrder()
     {
-        var tls = new OutboundTls { ServerName = "name.example.com", Alpn = ["http/1.1"] };
+        var tls = new OutboundTls { Enabled = true, ServerName = "name.example.com", Alpn = ["http/1.1"] };
         using JsonDocument document = Serialize(new TrojanOutbound
         {
             Tag = "default",
@@ -263,7 +337,7 @@ public sealed class ConfigSerializerDefaultsTests
     public void ConcurrentSerializationKeepsIndependentContextAndSharedModelsIntact()
     {
         var serializer = new ConfigSerializer();
-        var tls = new OutboundTls { ServerName = "name.example.com" };
+        var tls = new OutboundTls { Enabled = true, ServerName = "name.example.com" };
         Parallel.For(0, 32, index =>
         {
             string server = index % 2 == 0 ? "name.example.com" : "other.example.com";

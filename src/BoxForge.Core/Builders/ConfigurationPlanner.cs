@@ -29,7 +29,7 @@ internal static class ConfigurationPlanner
         };
         if (apiEnabled)
             clients.Add(new HttpClientPlan(HttpClientTags.DashboardDirect, null, new DomainResolverPlan(SingboxTags.DirectAliDns, platform.AddressFamily, true)));
-        var plan = new ConfigurationPlan(settings.Platform, platform.AddressFamily, platform.DnsSelectionMode, platform.UseDirectForwarding, platform.UrlTestInterval,
+        return new ConfigurationPlan(settings.Platform, platform.AddressFamily, platform.DnsSelectionMode, platform.UseDirectForwarding, platform.UrlTestInterval,
             new TunPlan(platform.TunAddresses, platform.AutoRedirect, platform.MultiQueue, platform.StrictRoute),
             nodes.Nodes.Select(node => OutboundTuningPolicy.Apply(node, platform)).ToArray(),
             groups, dns, route, settings.Features.Tailscale.Enabled, platform.TaildropDirectory, apiEnabled, clients)
@@ -40,6 +40,5 @@ internal static class ConfigurationPlanner
                 .ToImmutableDictionary(node => node.Name,
                     _ => new DomainResolverPlan(SingboxTags.DirectAliDns, AddressFamilyPolicy.Ipv4Only, true), StringComparer.Ordinal)
         };
-        return plan;
     }
 }

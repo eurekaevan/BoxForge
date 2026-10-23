@@ -7,7 +7,7 @@ public record RouteConfig
     [JsonPropertyName("rule_set")] public List<SingboxRuleSet> RuleSet { get; init; } = [];
     [JsonPropertyName("rules")] public List<RouteRule> Rules { get; init; } = [];
     [JsonPropertyName("final")] public string? Final { get; init; }
-    [JsonPropertyName("auto_detect_interface")] public bool AutoDetectInterface { get; init; } = true;
+    [JsonPropertyName("auto_detect_interface")] public bool? AutoDetectInterface { get; init; }
     [JsonPropertyName("default_http_client")] public string? DefaultHttpClient { get; init; }
     [JsonPropertyName("default_domain_resolver")]
     public DnsResolverOptions? DefaultDomainResolver { get; init; }

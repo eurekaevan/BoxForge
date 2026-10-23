@@ -74,6 +74,21 @@ public sealed class DnsProfileBuilderTests
         });
     }
 
+    [TestCase(TargetPlatform.Android)]
+    [TestCase(TargetPlatform.Linux)]
+    [TestCase(TargetPlatform.Windows)]
+    public void UserQueryTimeoutOverridePreservesTheSequentialPrimaryBudget(TargetPlatform platform)
+    {
+        var document = BoxForgeProfile.Default.ApplyOverrides(JsonNode.Parse("""{"dns":{"timeout":"1500ms"}}""")!.AsObject());
+        var plan = DnsProfileBuilder.Plan(document.Resolve(platform));
+        Assert.DoesNotThrow(plan.Validate);
+        var dns = SingboxDnsEmitter.Emit(plan);
+        Assert.That(dns.Timeout, Is.EqualTo("1500ms"));
+        foreach (var rule in dns.Rules.Where(rule => rule.Action == DnsRuleAction.Evaluate))
+            Assert.That(rule.Timeout, Is.EqualTo(platform == TargetPlatform.Android && rule.Tag!.EndsWith("-primary", StringComparison.Ordinal)
+                ? "700ms" : null));
+    }
+
     [Test]
     public void DnsPlanFixesGuardAndServiceResolverPolicyBeforeEmission()
     {
@@ -526,7 +541,7 @@ public sealed class DnsProfileBuilderTests
             AssertTerminalServfail(pool[^1], generalPrimary.RuleSet);
             Assert.That(dns.Rules.IndexOf(pool[^1]), Is.LessThan(dns.Rules.IndexOf(generalPrimary)));
             Assert.That(generalPrimary.DisableOptimisticCache, Is.Null);
-            Assert.That(dns.Timeout, Is.EqualTo("5s"));
+            Assert.That(dns.Timeout, Is.EqualTo("1s"));
         });
     }
 
@@ -603,8 +618,8 @@ public sealed class DnsProfileBuilderTests
             Assert.That(servers[SingboxTags.ProxyGoogleDns].Detour, Is.EqualTo(SingboxTags.MainProxyGroup));
             Assert.That(dns.CacheCapacity, Is.EqualTo(4096));
             Assert.That(dns.Final, Is.EqualTo(SingboxTags.ProxyCloudflareDns));
-            Assert.That(dns.Optimistic.Enabled, Is.True);
-            Assert.That(dns.Optimistic.Timeout, Is.EqualTo("6h"));
+            Assert.That(dns.Optimistic!.Enabled, Is.True);
+            Assert.That(dns.Optimistic!.Timeout, Is.EqualTo("6h"));
             Assert.That(dns.ReverseMapping, Is.True);
         });
     }
@@ -655,7 +670,7 @@ public sealed class DnsProfileBuilderTests
         Assert.Multiple(() =>
         {
             AssertEvaluate(primary, expectedRuleSets, expectedPrimaryServer,
-                primaryTag, "2s");
+                primaryTag, "700ms");
             AssertEvaluate(secondary, expectedRuleSets, expectedSecondaryServer,
                 secondaryTag, null);
             AssertResponses(primaryResponses, expectedRuleSets,

@@ -45,7 +45,7 @@
   "dns": {
     "address_family": "Auto",
     "selection_mode": "ParallelFastest",
-    "timeout": "5s",
+    "timeout": "1s",
     "cache_capacity": 4096,
     "optimistic_timeout": "6h",
     "resolvers": [

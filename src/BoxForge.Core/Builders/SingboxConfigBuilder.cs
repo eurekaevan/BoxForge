@@ -47,7 +47,7 @@ internal sealed class SingboxConfigBuilder : ISingboxConfigBuilder
 
         return new SingboxConfig
         {
-            Log = new LogConfig(),
+            Log = new LogConfig { Level = "warn", Timestamp = true },
             Dns = SingboxDnsEmitter.Emit(plan.Dns),
             HttpClients = httpClients,
             Inbounds = InboundBuilder.Emit(plan.Tun),

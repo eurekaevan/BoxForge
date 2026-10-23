@@ -22,7 +22,7 @@ public sealed class SingboxConfigValidatorTests
             Outbounds = [.. valid.Outbounds, new TrojanOutbound
             {
                 Tag = "invalid-utls", Server = "node.example.com", ServerPort = 443, Password = "test-only",
-                Tls = new OutboundTls { ServerName = "node.example.com", Utls = new Utls { Enabled = true, Fingerprint = fingerprint } }
+                Tls = new OutboundTls { Enabled = true, ServerName = "node.example.com", Utls = new Utls { Enabled = true, Fingerprint = fingerprint } }
             }]
         };
         AssertDiagnostics(config, new ConfigDiagnostic("SB089", $"outbounds[{valid.Outbounds.Count}].tls.utls.fingerprint",
@@ -31,7 +31,8 @@ public sealed class SingboxConfigValidatorTests
 
     [TestCase(false, true)]
     [TestCase(true, false)]
-    public void RealityRequiresTlsAndUtlsInTheTargetModel(bool tlsEnabled, bool utlsEnabled)
+    [TestCase(null, true)]
+    public void RealityRequiresTlsAndUtlsInTheTargetModel(bool? tlsEnabled, bool utlsEnabled)
     {
         SingboxConfig valid = CreateValidConfig();
         var config = valid with
@@ -549,7 +550,7 @@ public sealed class SingboxConfigValidatorTests
                 {
                     Tag = "proxy", Server = "node.example.com", ServerPort = 443,
                     Uuid = "00000000-0000-4000-8000-000000000001",
-                    Tls = new OutboundTls { ServerName = "" }
+                    Tls = new OutboundTls { Enabled = true, ServerName = "" }
                 }
             ],
             Dns = valid.Dns with
@@ -685,7 +686,7 @@ public sealed class SingboxConfigValidatorTests
                         Tag = "broken-https",
                         ServerAddress = "1.0.0.1",
                         DetourTag = "missing-target",
-                        TlsConfig = new DnsTlsConfig { ServerName = "" }
+                        TlsConfig = new DnsTlsConfig { Enabled = true, ServerName = "" }
                     },
                     new TailscaleDnsServer
                     {
@@ -1008,6 +1009,7 @@ public sealed class SingboxConfigValidatorTests
                         ServerAddress = "1.1.1.1",
                         TlsConfig = new DnsTlsConfig
                         {
+                            Enabled = true,
                             ServerName = "cloudflare-dns.com"
                         }
                     }

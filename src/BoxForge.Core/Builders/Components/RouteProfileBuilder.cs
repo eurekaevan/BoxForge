@@ -42,7 +42,7 @@ internal static class RouteProfileBuilder
         return new RoutePlan(settings.AddressFamily, settingsProfile.Features.Tailscale.Enabled,
             settings.UseDirectForwarding, SingboxTags.MainProxyGroup, HttpClientTags.RuleSetProxy,
             new DomainResolverPlan(SingboxTags.DirectAliDns, settings.AddressFamily, true), ruleSets,
-            Enum.GetValues<RoutePhase>(), rules.ToImmutable());
+            rules.ToImmutable());
     }
     private static RouteRulePlan[] CreateRules(RoutePhase phase, ResolvedProfile profile, PlatformProfile settings) => phase switch
     {

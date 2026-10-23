@@ -10,6 +10,7 @@ internal static class SingboxRouteEmitter
     {
         var route = new RouteConfig
         {
+            AutoDetectInterface = true,
             Final = plan.FinalOutbound,
             DefaultHttpClient = plan.DefaultHttpClient,
             DefaultDomainResolver = SingboxResolverEmitter.Emit(plan.DefaultDomainResolver)

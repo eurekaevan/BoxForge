@@ -1,5 +1,7 @@
 """Regression tests for official-core verification process handling."""
 
+import asyncio
+import copy
 import importlib.util
 from pathlib import Path
 import os
@@ -14,6 +16,11 @@ SPEC = importlib.util.spec_from_file_location(
 VERIFY = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(VERIFY)
 
+DNS_SPEC = importlib.util.spec_from_file_location(
+    "verify_dns_races", Path(__file__).with_name("verify-dns-races.py"))
+DNS_VERIFY = importlib.util.module_from_spec(DNS_SPEC)
+DNS_SPEC.loader.exec_module(DNS_VERIFY)
+
 
 class VerificationProcessTests(unittest.TestCase):
     def setUp(self):
@@ -23,6 +30,16 @@ class VerificationProcessTests(unittest.TestCase):
 
     def run_process(self, source, **arguments):
         return VERIFY.run_command([sys.executable, "-c", source], self.root, "test negative case", **arguments)
+
+    def test_dns_race_verification_rejects_unsupported_inputs_before_launching_core(self):
+        supported = {"strategy": "ipv4_only", "timeout": "1s", "rules": [
+            {"action": "respond", "race": True, "query_type": ["A"], "ip_cidr": ["0.0.0.0/0"]}]}
+        for field, value in (("strategy", None), ("timeout", "5s"), ("rules", [])):
+            with self.subTest(field=field):
+                dns = copy.deepcopy(supported)
+                dns[field] = value
+                with self.assertRaisesRegex(ValueError, "requires Ipv4Only.*ParallelFastest.*1s"):
+                    asyncio.run(DNS_VERIFY.main(self.root / "must-not-be-started", {"dns": dns}))
 
     def test_success_preserves_stdout_and_stderr(self):
         output = self.run_process("import sys; print('stdout'); print('stderr', file=sys.stderr)")
