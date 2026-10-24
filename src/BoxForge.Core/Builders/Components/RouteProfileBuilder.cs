@@ -41,7 +41,7 @@ internal static class RouteProfileBuilder
         }
         return new RoutePlan(settings.AddressFamily, settingsProfile.Features.Tailscale.Enabled,
             settings.UseDirectForwarding, SingboxTags.MainProxyGroup, HttpClientTags.RuleSetProxy,
-            new DomainResolverPlan(SingboxTags.DirectAliDns, settings.AddressFamily, true), ruleSets,
+            new DomainResolverPlan(SingboxTags.DirectAliDns, settings.AddressFamily.ForControlPlane(), true), ruleSets,
             rules.ToImmutable());
     }
     private static RouteRulePlan[] CreateRules(RoutePhase phase, ResolvedProfile profile, PlatformProfile settings) => phase switch
@@ -116,18 +116,21 @@ internal static class RouteProfileBuilder
             new RouteRulePlan(phase) { RuleSet = [RuleSetTags.Ads], Action = RouteOperation.Reject }
         ],
         RoutePhase.LateIpv6Guard => settings.AddressFamily != AddressFamilyPolicy.DualStack ? [CreateIpv6RejectRule(settings.AddressFamily, phase)] : [],
+        RoutePhase.ServiceIpv6Guard => CreateServiceIpv6Guard(profile, settings, phase, priority: true),
         RoutePhase.PriorityServices => profile.Services.Where(service => service.PrecedesDomesticRoutes).Select(service => CreateServiceRouteRule(service, phase)).ToArray(),
         RoutePhase.DomesticUdp443 =>
         [
             CreateDomesticUdp443DirectRule(RuleSetTags.Cn, phase),
             CreateDomesticUdp443DirectRule(RuleSetTags.CnIp, phase)
         ],
+        RoutePhase.OtherServiceIpv6Guard => CreateServiceIpv6Guard(profile, settings, phase, priority: false),
         RoutePhase.OtherServices => profile.Services.Where(service => !service.PrecedesDomesticRoutes).Select(service => CreateServiceRouteRule(service, phase)).ToArray(),
         RoutePhase.DomesticDirect =>
         [
             new RouteRulePlan(phase) { RuleSet = [RuleSetTags.Cn], Action = RouteOperation.Route, Outbound = SingboxTags.DirectOutbound },
             new RouteRulePlan(phase) { RuleSet = [RuleSetTags.CnIp], Action = RouteOperation.Route, Outbound = SingboxTags.DirectOutbound }
         ],
+        RoutePhase.FinalIpv6Guard => settings.AddressFamily == AddressFamilyPolicy.DirectDualStack ? [RoutePlan.FinalIpv6Guard()] : [],
         RoutePhase.FinalOutbound => [],
         _ => throw new InvalidOperationException("Unknown route phase.")
     };
@@ -150,8 +153,17 @@ internal static class RouteProfileBuilder
             Outbound = useBridge ? SingboxTags.BridgeOutbound : null
         };
 
+    private static RouteRulePlan[] CreateServiceIpv6Guard(ResolvedProfile profile, PlatformProfile settings, RoutePhase phase, bool priority)
+    {
+        if (settings.AddressFamily != AddressFamilyPolicy.DirectDualStack)
+            return [];
+        ImmutableArray<string> ruleSets = [.. profile.Services.Where(service => service.PrecedesDomesticRoutes == priority)
+            .SelectMany(service => service.RuleSets).Distinct(StringComparer.Ordinal)];
+        return ruleSets.IsEmpty ? [] : [RoutePlan.ServiceIpv6Guard(phase, ruleSets)];
+    }
+
     private static RouteRulePlan CreateIpv6RejectRule(AddressFamilyPolicy addressFamily, RoutePhase phase) =>
-        addressFamily == AddressFamilyPolicy.Auto ? new RouteRulePlan(phase)
+        addressFamily.UsesInterfaceGuard() ? new RouteRulePlan(phase)
         {
             Mode = LogicalMatchMode.And,
             Rules =

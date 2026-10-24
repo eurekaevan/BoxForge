@@ -32,6 +32,9 @@ public sealed class RouteProfileBuilderTests
     [TestCase(TargetPlatform.Android, AddressFamilyPolicy.Auto)]
     [TestCase(TargetPlatform.Linux, AddressFamilyPolicy.Auto)]
     [TestCase(TargetPlatform.Windows, AddressFamilyPolicy.Auto)]
+    [TestCase(TargetPlatform.Android, AddressFamilyPolicy.DirectDualStack)]
+    [TestCase(TargetPlatform.Linux, AddressFamilyPolicy.DirectDualStack)]
+    [TestCase(TargetPlatform.Windows, AddressFamilyPolicy.DirectDualStack)]
     public void RoutePlanSnapshotsPolicyAndEmitsIndependentConfigurations(TargetPlatform platform, AddressFamilyPolicy addressFamily)
     {
         var profile = BoxForgeProfile.Default.ApplyOverrides(JsonSerializer.SerializeToNode(new
@@ -186,7 +189,7 @@ public sealed class RouteProfileBuilderTests
     [TestCase(TargetPlatform.Windows)]
     public void AutoIpv6GuardsRunBeforeDirectRoutesAndAfterSniffing(TargetPlatform platform)
     {
-        RouteConfig route = SingboxRouteEmitter.Emit(RouteProfileBuilder.Plan(BoxForgeProfile.Default.Resolve(platform)));
+        RouteConfig route = SingboxRouteEmitter.Emit(CreatePlan(platform));
         RouteRule[] guards = route.Rules.Where(rule => rule.Action == RouteRuleAction.Reject
             && rule.Rules?.Any(child => child.IpVersion == 6) == true).ToArray();
         Assert.That(guards, Has.Length.EqualTo(2));
@@ -212,6 +215,109 @@ public sealed class RouteProfileBuilderTests
             Assert.That(lastGuard, Is.LessThan(route.Rules.FindIndex(rule => rule.RuleSet?.Contains("ai") == true)));
             Assert.That(route.Rules.Any(rule => rule.IpVersion == 6 && rule.Action == RouteRuleAction.Reject), Is.False);
         });
+    }
+
+    [TestCase(TargetPlatform.Android)]
+    [TestCase(TargetPlatform.Linux)]
+    [TestCase(TargetPlatform.Windows)]
+    public void DirectDualStackKeepsDirectIpv6AndRejectsIpv6BeforeAnyProxyOutbound(TargetPlatform platform)
+    {
+        var profile = BoxForgeProfile.Default;
+        RoutePlan plan = CreatePlan(platform, AddressFamilyPolicy.DirectDualStack);
+        RouteConfig route = SingboxRouteEmitter.Emit(plan);
+        string[] serviceRuleSets = [.. profile.Services.Where(service => service.PrecedesDomesticRoutes)
+            .SelectMany(service => service.RuleSets)];
+        int serviceGuardIndex = route.Rules.FindIndex(rule => rule.Action == RouteRuleAction.Reject
+            && rule.IpVersion == 6 && rule.RuleSet is not null);
+        int finalGuardIndex = route.Rules.Count - 1;
+        int firstProxyRouteIndex = route.Rules.FindIndex(rule => rule.Action == RouteRuleAction.Route
+            && profile.Services.Any(service => service.Name == rule.Outbound));
+        int lastDirectIndex = route.Rules.FindLastIndex(rule => rule.Action == RouteRuleAction.Route
+            && rule.Outbound == SingboxTags.DirectOutbound);
+
+        Assert.Multiple(() =>
+        {
+            Assert.DoesNotThrow(plan.Validate);
+            Assert.That(serviceGuardIndex, Is.GreaterThanOrEqualTo(0));
+            Assert.That(route.Rules[serviceGuardIndex].RuleSet, Is.EqualTo(serviceRuleSets));
+            Assert.That(serviceGuardIndex, Is.LessThan(firstProxyRouteIndex));
+            Assert.That(route.Rules[finalGuardIndex].Action, Is.EqualTo(RouteRuleAction.Reject));
+            Assert.That(route.Rules[finalGuardIndex].IpVersion, Is.EqualTo(6));
+            Assert.That(route.Rules[finalGuardIndex].RuleSet, Is.Null);
+            Assert.That(finalGuardIndex, Is.GreaterThan(lastDirectIndex));
+            Assert.That(route.Final, Is.EqualTo(SingboxTags.MainProxyGroup));
+            // Direct, bridge and bypass rules must never be narrowed to IPv4.
+            Assert.That(route.Rules.Where(rule => rule.Action == RouteRuleAction.Bypass
+                || rule.Outbound is SingboxTags.DirectOutbound or SingboxTags.BridgeOutbound)
+                .All(rule => rule.IpVersion is null && !ContainsIpv6Condition(rule)), Is.True);
+            Assert.That(route.DefaultDomainResolver!.Strategy, Is.EqualTo(DnsStrategy.Ipv4Only));
+        });
+    }
+
+    [TestCase(TargetPlatform.Android)]
+    [TestCase(TargetPlatform.Linux)]
+    [TestCase(TargetPlatform.Windows)]
+    public void DirectDualStackPreservesDomesticUdpPriorityWhenServiceScopesOverlap(TargetPlatform platform)
+    {
+        var profile = BoxForgeProfile.Default.ApplyOverrides(JsonSerializer.SerializeToNode(new
+        {
+            route = new { services = new { patch = new[] { new { id = "games", rule_sets = new { replace = new[] { "cn" } } } } } }
+        })!.AsObject());
+        RoutePlan plan = RouteProfileBuilder.Plan(profile.Resolve(platform));
+        Assert.DoesNotThrow(plan.Validate);
+        int direct = plan.Rules.ToList().FindIndex(rule => rule.Phase == RoutePhase.DomesticUdp443 && rule.RuleSet.Contains("cn"));
+        int guard = plan.Rules.ToList().FindIndex(rule => rule.Phase == RoutePhase.OtherServiceIpv6Guard && rule.RuleSet.Contains("cn"));
+        int service = plan.Rules.ToList().FindIndex(rule => rule.Phase == RoutePhase.OtherServices && rule.RuleSet.Contains("cn"));
+        Assert.That(direct, Is.GreaterThanOrEqualTo(0));
+        Assert.That(guard, Is.GreaterThan(direct));
+        Assert.That(service, Is.GreaterThan(guard));
+        Assert.That(plan.Rules.Where(rule => rule.Phase == RoutePhase.ServiceIpv6Guard).All(rule => !rule.RuleSet.Contains("cn")), Is.True);
+    }
+
+    [TestCase("service_guard_removed")]
+    [TestCase("service_guard_narrowed")]
+    [TestCase("other_service_guard_removed")]
+    [TestCase("other_service_guard_narrowed")]
+    [TestCase("final_guard_removed")]
+    [TestCase("final_guard_narrowed")]
+    public void DirectDualStackPlanRequiresProxyIpv6Guards(string fault)
+    {
+        RoutePlan plan = CreatePlan(TargetPlatform.Linux, AddressFamilyPolicy.DirectDualStack);
+        Assert.DoesNotThrow(plan.Validate);
+        plan = fault switch
+        {
+            "service_guard_removed" => plan with { Rules = [.. plan.Rules.Where(rule => rule.Phase != RoutePhase.ServiceIpv6Guard)] },
+            "service_guard_narrowed" => plan with
+            {
+                Rules = [.. plan.Rules.Select(rule => rule.Phase == RoutePhase.ServiceIpv6Guard
+                    ? rule with { RuleSet = [rule.RuleSet[0]] } : rule)]
+            },
+            "other_service_guard_removed" => plan with { Rules = [.. plan.Rules.Where(rule => rule.Phase != RoutePhase.OtherServiceIpv6Guard)] },
+            "other_service_guard_narrowed" => plan with
+            {
+                Rules = [.. plan.Rules.Select(rule => rule.Phase == RoutePhase.OtherServiceIpv6Guard
+                    ? rule with { RuleSet = [rule.RuleSet[0]] } : rule)]
+            },
+            "final_guard_removed" => plan with { Rules = [.. plan.Rules.Where(rule => rule.Phase != RoutePhase.FinalIpv6Guard)] },
+            _ => plan with
+            {
+                Rules = [.. plan.Rules.Select(rule => rule.Phase == RoutePhase.FinalIpv6Guard
+                    ? rule with { Network = ["tcp"] } : rule)]
+            }
+        };
+        var exception = Assert.Throws<ConfigValidationException>(plan.Validate)!;
+        Assert.That(exception.Diagnostics.Select(item => (item.Code, item.Path)), Does.Contain(("IR011", "plan.route.rules")));
+    }
+
+    [TestCase(AddressFamilyPolicy.Auto)]
+    [TestCase(AddressFamilyPolicy.Ipv4Only)]
+    [TestCase(AddressFamilyPolicy.DualStack)]
+    public void OtherPoliciesDoNotAddProxyOnlyIpv6Guards(AddressFamilyPolicy addressFamily)
+    {
+        RoutePlan plan = CreatePlan(TargetPlatform.Linux, addressFamily);
+        Assert.That(plan.Rules.Any(rule => rule.Phase is RoutePhase.ServiceIpv6Guard or RoutePhase.OtherServiceIpv6Guard or RoutePhase.FinalIpv6Guard), Is.False);
+        RoutePlan injected = plan with { Rules = [.. plan.Rules, RoutePlan.FinalIpv6Guard()] };
+        Assert.Throws<ConfigValidationException>(injected.Validate);
     }
 
     [Test]

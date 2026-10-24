@@ -116,7 +116,7 @@ internal sealed record ConfigurationPlan(
                     || binding != new DomainResolverPlan(SingboxTags.DirectAliDns, AddressFamilyPolicy.Ipv4Only, true)))
                 diagnostics.Add(new("IR011", $"plan.nodes[{index}].domain_resolver", "来源 IPv4 限制必须绑定独立的 IPv4 解析器。"));
         }
-        if (Route.DefaultDomainResolver != new DomainResolverPlan(SingboxTags.DirectAliDns, AddressFamily, true))
+        if (Route.DefaultDomainResolver != new DomainResolverPlan(SingboxTags.DirectAliDns, AddressFamily.ForControlPlane(), true))
             diagnostics.Add(new("IR011", "plan.route.default_domain_resolver", "默认解析器绑定必须符合平台地址族和控制面策略。"));
         for (int index = 0; index < HttpClients.Count; index++)
         {

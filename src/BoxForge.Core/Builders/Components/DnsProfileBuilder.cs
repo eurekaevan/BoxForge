@@ -60,7 +60,7 @@ internal static class DnsProfileBuilder
                 Rcode = DnsResultCode.NoError
             });
         }
-        else if (addressFamily == AddressFamilyPolicy.Auto)
+        else if (addressFamily.UsesInterfaceGuard())
         {
             rules.Add(new DnsRulePlan
             {

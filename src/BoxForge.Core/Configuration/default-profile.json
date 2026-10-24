@@ -43,7 +43,7 @@
     }
   },
   "dns": {
-    "address_family": "Auto",
+    "address_family": "DirectDualStack",
     "selection_mode": "ParallelFastest",
     "timeout": "1s",
     "cache_capacity": 4096,

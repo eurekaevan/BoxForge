@@ -569,7 +569,7 @@ public sealed class SingboxConfigBuilderTests
             Assert.That(json, Does.Contain("\"ip_version\": 6"));
             Assert.That(
                 json.Split("\"ip_version\": 6", StringSplitOptions.None).Length - 1,
-                Is.EqualTo(2));
+                Is.EqualTo(5), "two interface guards plus two service-stage guards and the final proxy IPv6 guard");
             Assert.That(json, Does.Not.Contain("::/0"));
             Assert.That(json, Does.Not.Contain("\"no_drop\""));
             Assert.That(document.RootElement.GetProperty("route").GetProperty("rules").EnumerateArray()
@@ -831,7 +831,75 @@ public sealed class SingboxConfigBuilderTests
                 Is.True);
         });
 
-        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Auto));
+        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.DirectDualStack));
+    }
+
+    [TestCase(TargetPlatform.Android)]
+    [TestCase(TargetPlatform.Linux)]
+    [TestCase(TargetPlatform.Windows)]
+    public void DirectDualStackKeepsDirectResolutionDualStackAndProxyControlPlaneIpv4(TargetPlatform platform)
+    {
+        var resolved = BoxForgeProfile.Default.Resolve(platform);
+        SingboxConfig config = PlanAndBuild(
+            new NodeCatalog([CreateProxy("US01", "us.example.com")], ["US01"]), resolved, new string('a', 64));
+        Assert.Multiple(() =>
+        {
+            Assert.That(resolved.Settings.AddressFamily, Is.EqualTo(AddressFamilyPolicy.DirectDualStack));
+            Assert.That(config.Dns.Strategy, Is.Null);
+            Assert.That(config.Route.DefaultDomainResolver!.Strategy, Is.EqualTo(DnsStrategy.Ipv4Only));
+            Assert.That(config.HttpClients.Single().DomainResolver!.Strategy, Is.EqualTo(DnsStrategy.Ipv4Only));
+            Assert.That(config.Outbounds.OfType<DirectOutbound>().Single().DomainResolver!.Strategy,
+                Is.EqualTo(DnsStrategy.PreferIpv4));
+            Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.DirectDualStack));
+            Assert.Throws<Exceptions.ConfigValidationException>(
+                () => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Ipv4Only));
+        });
+    }
+
+    [TestCase("final_guard_removed")]
+    [TestCase("service_guard_removed")]
+    [TestCase("control_plane_dual_stack")]
+    public void DirectDualStackValidatorRejectsConfigsThatCanSendIpv6ToProxy(string fault)
+    {
+        SingboxConfig config = PlanAndBuild(
+            new NodeCatalog([], []), CreateProfile(TargetPlatform.Linux), new string('a', 64));
+        List<RouteRule> rules = config.Route.Rules;
+        config = fault switch
+        {
+            "final_guard_removed" => config with { Route = config.Route with { Rules = [.. rules.Take(rules.Count - 1)] } },
+            "service_guard_removed" => config with
+            {
+                Route = config.Route with
+                {
+                    Rules = [.. rules.Where(rule => !(rule.IpVersion == 6 && rule.RuleSet is not null))]
+                }
+            },
+            _ => config with
+            {
+                Route = config.Route with { DefaultDomainResolver = config.Route.DefaultDomainResolver! with { Strategy = null } }
+            }
+        };
+        var error = Assert.Throws<Exceptions.ConfigValidationException>(
+            () => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.DirectDualStack))!;
+        string expected = fault switch
+        {
+            "final_guard_removed" => "SB093",
+            "service_guard_removed" => "SB094",
+            _ => "SB061"
+        };
+        Assert.That(error.Diagnostics.Select(diagnostic => diagnostic.Code), Does.Contain(expected));
+    }
+
+    [TestCase(TargetPlatform.Android)]
+    [TestCase(TargetPlatform.Linux)]
+    [TestCase(TargetPlatform.Windows)]
+    public void DirectDualStackRejectsIpv6LiteralProxyNodes(TargetPlatform platform)
+    {
+        var node = CreateProxy("US IPv6", "2001:db8::1234");
+        var error = Assert.Throws<ConfigValidationException>(() =>
+            new SingboxConfigValidator().Validate(PlanAndBuild(new NodeCatalog([node], [node.Name]),
+                BoxForgeProfile.Default.Resolve(platform), "cache"), AddressFamilyPolicy.DirectDualStack));
+        Assert.That(error!.Diagnostics.Select(diagnostic => diagnostic.Code), Does.Contain("SB062"));
     }
 
     [TestCase(AddressFamilyPolicy.DualStack)]

@@ -90,6 +90,12 @@ internal sealed record RoutePlan(
         }
     }
 
+    internal static RouteRulePlan ServiceIpv6Guard(RoutePhase phase, ImmutableArray<string> serviceRuleSets) =>
+        new(phase) { IpVersion = 6, RuleSet = serviceRuleSets, Action = RouteOperation.Reject };
+
+    internal static RouteRulePlan FinalIpv6Guard() =>
+        new(RoutePhase.FinalIpv6Guard) { IpVersion = 6, Action = RouteOperation.Reject };
+
     private void ValidatePolicy(List<ConfigDiagnostic> diagnostics)
     {
         var hijack = new RouteRulePlan(RoutePhase.DnsHijack)
@@ -112,7 +118,7 @@ internal sealed record RoutePlan(
         {
             var rules = Rules.Where(rule => rule.Phase == phase).ToArray();
             var expected = new RouteRulePlan(phase) { IpVersion = 6, Action = RouteOperation.Reject };
-            if (AddressFamily == AddressFamilyPolicy.Auto)
+            if (AddressFamily.UsesInterfaceGuard())
                 expected = expected with
                 {
                     IpVersion = null,
@@ -124,6 +130,26 @@ internal sealed record RoutePlan(
             if (!valid)
                 diagnostics.Add(new("IR011", "plan.route.rules", "实际路由必须包含符合地址族策略的早晚守卫。"));
         }
+        bool blocksProxyIpv6 = AddressFamily == AddressFamilyPolicy.DirectDualStack;
+        foreach (var (guardPhase, servicePhase) in new[]
+        {
+            (RoutePhase.ServiceIpv6Guard, RoutePhase.PriorityServices),
+            (RoutePhase.OtherServiceIpv6Guard, RoutePhase.OtherServices)
+        })
+        {
+            ImmutableArray<string> serviceSets = [.. Rules.Where(rule => rule.Phase == servicePhase)
+                .SelectMany(rule => rule.RuleSet).Distinct(StringComparer.Ordinal)];
+            RouteRulePlan[] serviceGuards = [.. Rules.Where(rule => rule.Phase == guardPhase)];
+            if ((blocksProxyIpv6 && !serviceSets.IsEmpty)
+                ? serviceGuards.Length != 1 || !serviceGuards[0].HasSamePolicy(ServiceIpv6Guard(guardPhase, serviceSets))
+                : serviceGuards.Length != 0)
+                diagnostics.Add(new("IR011", "plan.route.rules", "代理服务路由之前必须按原阶段拦截其规则集的 IPv6。"));
+        }
+        RouteRulePlan[] finalGuards = [.. Rules.Where(rule => rule.Phase == RoutePhase.FinalIpv6Guard)];
+        if (blocksProxyIpv6
+            ? finalGuards.Length != 1 || !finalGuards[0].HasSamePolicy(FinalIpv6Guard())
+            : finalGuards.Length != 0)
+            diagnostics.Add(new("IR011", "plan.route.rules", "最终代理出口之前必须拦截全部 IPv6。"));
         foreach (RoutePhase phase in new[] { RoutePhase.PreSniffDirect, RoutePhase.Sniff, RoutePhase.BlockStunAndAds, RoutePhase.DomesticUdp443, RoutePhase.DomesticDirect })
             if (!Rules.Any(rule => rule.Phase == phase))
                 diagnostics.Add(new("IR011", "plan.route.rules", "必要路由阶段必须包含实际规则。"));
@@ -148,10 +174,13 @@ internal enum RoutePhase
     Sniff,
     BlockStunAndAds,
     LateIpv6Guard,
+    ServiceIpv6Guard,
     PriorityServices,
     DomesticUdp443,
+    OtherServiceIpv6Guard,
     OtherServices,
     DomesticDirect,
+    FinalIpv6Guard,
     FinalOutbound
 }
 

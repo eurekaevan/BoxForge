@@ -21,7 +21,7 @@ HTTP 错误格式保持不变。
 | `features.tailscale.enabled` | `true` | — |
 | `features.tailscale.taildrop_directory` | `"$HOME/Downloads/Taildrop"` | Android: `"Taildrop"`；Windows: `"$USERPROFILE\\Downloads\\Taildrop"` |
 | `features.api.enabled` | `false` | — |
-| `dns.address_family` | `"Auto"` | — |
+| `dns.address_family` | `"DirectDualStack"` | — |
 | `dns.selection_mode` | `"ParallelFastest"` | Android: `"SequentialFallback"` |
 | `dns.timeout` | `"1s"` | — |
 | `dns.cache_capacity` | `4096` | — |
@@ -90,9 +90,12 @@ CLI、Server 在宿主边界加载并校验 `BOXFORGE_` 前缀的环境配置快
 }
 ```
 
-地址族接受 `Ipv4Only`、`DualStack` 或 `Auto`，默认使用 `Auto`。
-`Auto` 保留 TUN 双栈捕获，并按当前出口接口是否具有公网 IPv6 地址决定是否拒绝 IPv6；
-它不执行公网可达性探测。Android 依赖客户端提供默认物理接口信息，尚未完成真机验证；
+地址族接受 `Ipv4Only`、`DualStack`、`Auto` 或 `DirectDualStack`，默认使用 `DirectDualStack`。
+`DirectDualStack` 保留 TUN 双栈捕获：固定代理类别（服务分流和最终出口）仅使用 IPv4，
+直连流量（私网、Tailscale、`cn`、`cnip`）保留 IPv6，并同样按当前出口接口是否具有公网 IPv6 地址决定是否拒绝 IPv6。
+限制按固定类别生效，服务组或主组切到 DIRECT 也不解除该类别的 IPv6 限制。DNS 保留 AAAA，不承诺被拒绝连接会自动回退 IPv4。
+`Auto` 同样保留 TUN 双栈捕获并按出口接口判断，但不限制代理流量的 IPv6。
+它们都不执行公网可达性探测。Android 依赖客户端提供默认物理接口信息，尚未完成真机验证；
 缺少接口信息时保守拒绝客户端 IPv6。详细边界见[DNS 与路由策略](routing-and-dns.md#dns-分类与控制面解析)。
 DNS 模式接受 `SequentialFallback` 或 `ParallelFastest`。超时和间隔必须是正 Go duration；DNS 缓存容量为正，URL test
 容差非负，探测 URL 只接受不带用户信息和片段的 HTTP(S) URL。

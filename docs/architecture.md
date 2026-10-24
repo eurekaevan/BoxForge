@@ -234,7 +234,7 @@ DNS 规划同样先产生中立的 `DnsPlan`：`DnsHttpsResolverPlan` 记录解�
 及控制面绑定。计划只使用 IR 类型；不引用 profile DTO 或 sing-box 模型。
 发射前检查阶段与规则顺序、必需规则源、实际规则引用和服务唯一性。
 完整阶段列表不能代替实际规则：校验要求 DNS 劫持位于首条，精确保留 TUN 范围及协议/端口条件，
-早晚地址族守卫符合 Ipv4Only／Auto／DualStack 策略，必要固定阶段存在规则，启用 Tailscale 时保留其控制面路径。
+早晚地址族守卫符合 Ipv4Only／ Auto／ DirectDualStack／ DualStack 策略（DirectDualStack 还要求服务规则集和最终出口之前的 IPv6 拒绝），必要固定阶段存在规则，启用 Tailscale 时保留其控制面路径。
 
 `SingboxRouteEmitter` 将规则逐项映射到目标字段，不按阶段重新推导策略。
 DNS 与路由发射均为每次输出创建独立的规则、嵌套条件与列表；修改输出不会污染计划。
@@ -390,7 +390,7 @@ HY2 hop/BBR 值优先于调优。显式固定间隔不会补入调优的随机�
 否则依次回退到首个地区组、首个 leaf 和 DIRECT；单个偏好地区 leaf 不改变该主组规则。
 
 地址族取自有效目标配置的 `dns.address_family`，完整计划统一保存该策略。
-默认三个平台均使用 `Auto`。DNS、route、控制面 resolver 与 `BoxForgeEngine` 的
+默认三个平台均使用 `DirectDualStack`。DNS、route、控制面 resolver 与 `BoxForgeEngine` 的
 `Validate(config, addressFamily)` 均使用同一实例中的策略，validator 不再次推导平台。IPv4-only 除解析
 策略和 IPv6 节点字面量外，还验证 early/post-resolve IPv6 reject guards 和首条
 无条件 AAAA 空 NOERROR；不能用缩窄到特定网络/域名的规则伪装全局 guard。
@@ -402,6 +402,11 @@ Android 依赖客户端通过 libbox 提供默认物理接口和地址，缺少�
 锁定核心源码与生成配置检查不代表所有 Android 客户端或真机网络切换都已验证。
 条件 AAAA 规则仅约束 client DNS，`Auto` 不保证控制面 resolver 自动使用 IPv4；
 来源节点显式 `ip-version: ipv4` 仍保留独立 resolver 约束。
+`DirectDualStack` 在 `Auto` 的条件守卫之上按固定路由类别限制代理侧：不按解析池类别过滤 AAAA；
+路由在优先服务、其他服务各自阶段之前拒绝对应规则集的 IPv6，保留国内 UDP/443 的先行直连优先级，
+在 `route.final` 前对全部其余流量拒绝 `ip_version: 6`，控制面 resolver 与 rule-set HTTP client 使用 `ipv4_only`。
+直连出站仍使用 `prefer_ipv4`。validator 额外要求最后一条路由规则是无条件 IPv6 拒绝，
+且每条代理路由之前都有覆盖其规则集的 IPv6 拒绝。
 `DualStack` 可显式启用，不按出口地址拒绝 IPv6。Android 不输出未实现的 strict_route；
 本地静态验证不等于真机防逃逸抓包或网络切换证明。
 

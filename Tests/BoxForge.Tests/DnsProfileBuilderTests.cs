@@ -22,6 +22,9 @@ public sealed class DnsProfileBuilderTests
     [TestCase(TargetPlatform.Android, AddressFamilyPolicy.Auto)]
     [TestCase(TargetPlatform.Linux, AddressFamilyPolicy.Auto)]
     [TestCase(TargetPlatform.Windows, AddressFamilyPolicy.Auto)]
+    [TestCase(TargetPlatform.Android, AddressFamilyPolicy.DirectDualStack)]
+    [TestCase(TargetPlatform.Linux, AddressFamilyPolicy.DirectDualStack)]
+    [TestCase(TargetPlatform.Windows, AddressFamilyPolicy.DirectDualStack)]
     public void DnsPlanSnapshotsPolicyAndEmitsIndependentConfigurations(TargetPlatform platform, AddressFamilyPolicy addressFamily)
     {
         var profile = BoxForgeProfile.Default.ApplyOverrides(JsonSerializer.SerializeToNode(new
@@ -548,13 +551,13 @@ public sealed class DnsProfileBuilderTests
     [TestCase(TargetPlatform.Android)]
     [TestCase(TargetPlatform.Linux)]
     [TestCase(TargetPlatform.Windows)]
-    public void DefaultAutoPolicyControlsDnsAndRouteIpv6Guards(TargetPlatform platform)
+    public void DefaultDirectDualStackPolicyControlsDnsAndRouteIpv6Guards(TargetPlatform platform)
     {
         DnsConfig dns = SingboxDnsEmitter.Emit(DnsProfileBuilder.Plan(BoxForgeProfile.Default.Resolve(platform)));
         RouteConfig route = SingboxRouteEmitter.Emit(RouteProfileBuilder.Plan(BoxForgeProfile.Default.Resolve(platform)));
 
         Assert.That(BoxForgeProfile.Default.Resolve(platform).Settings.AddressFamily,
-            Is.EqualTo(AddressFamilyPolicy.Auto));
+            Is.EqualTo(AddressFamilyPolicy.DirectDualStack));
         Assert.That(dns.Strategy, Is.Null);
         Assert.That(dns.Rules[0].Rules![0].QueryType, Is.EqualTo(new[] { "AAAA" }));
         Assert.That(dns.Rules[0].Rules![1].DefaultInterfaceAddress, Is.EqualTo(new[] { "2000::/3" }));
@@ -562,6 +565,46 @@ public sealed class DnsProfileBuilderTests
             rule.Action == RouteRuleAction.Reject
             && rule.Rules?.Any(child => child.IpVersion == 6) == true),
             Is.EqualTo(2));
+    }
+
+    [TestCase(TargetPlatform.Android, DnsResolverSelectionMode.SequentialFallback)]
+    [TestCase(TargetPlatform.Linux, DnsResolverSelectionMode.SequentialFallback)]
+    [TestCase(TargetPlatform.Windows, DnsResolverSelectionMode.SequentialFallback)]
+    [TestCase(TargetPlatform.Android, DnsResolverSelectionMode.ParallelFastest)]
+    [TestCase(TargetPlatform.Linux, DnsResolverSelectionMode.ParallelFastest)]
+    [TestCase(TargetPlatform.Windows, DnsResolverSelectionMode.ParallelFastest)]
+    public void DirectDualStackPreservesAaaaAcrossAllPoolsRegardlessOfSelectorDetour(
+        TargetPlatform platform, DnsResolverSelectionMode selectionMode)
+    {
+        var profile = BoxForgeProfile.Default.ApplyOverrides(JsonSerializer.SerializeToNode(new
+        {
+            platforms = new Dictionary<string, object>
+            {
+                [platform.ToString()] = new { dns = new { selection_mode = selectionMode.ToString() } }
+            }
+        })!.AsObject());
+        DnsPlan plan = DnsProfileBuilder.Plan(profile.Resolve(platform));
+        DnsConfig dns = SingboxDnsEmitter.Emit(plan);
+        Assert.DoesNotThrow(plan.Validate);
+        Assert.That(plan.AddressFamily, Is.EqualTo(AddressFamilyPolicy.DirectDualStack));
+        Assert.That(plan.SelectionMode, Is.EqualTo(selectionMode));
+        Assert.That(dns.Strategy, Is.Null);
+        Assert.That(dns.Rules[0].Rules![0].QueryType, Is.EqualTo(new[] { "AAAA" }));
+        Assert.That(dns.Rules[0].Rules![1].DefaultInterfaceAddress, Is.EqualTo(new[] { "2000::/3" }));
+        Assert.That(dns.Rules[0].Rules![1].Invert, Is.True);
+        Assert.That(dns.Rules.Skip(1).Any(rule =>
+            rule.Action == DnsRuleAction.Predefined && rule.Rcode == DnsResponseCode.NoError), Is.False,
+            "DNS classification cannot determine whether a selector or cnip route ultimately chooses DIRECT.");
+        Assert.That(plan.Pools.Any(pool => pool.Name.StartsWith("service-", StringComparison.Ordinal)), Is.True);
+        Assert.That(plan.Pools[^1].Name, Is.EqualTo("global"));
+        foreach (var pool in plan.Pools)
+        {
+            DnsRule evaluation = dns.Rules.Single(rule => rule.Tag == $"response-{pool.Name}-primary");
+            Assert.That(evaluation.Action, Is.EqualTo(DnsRuleAction.Evaluate), pool.Name);
+            Assert.That(evaluation.QueryType, Is.Null, pool.Name);
+            Assert.That(evaluation.RuleSet, Is.EqualTo(pool.RuleSets), pool.Name);
+            Assert.That(evaluation.Server, Is.EqualTo(pool.PrimaryResolver), pool.Name);
+        }
     }
 
     [Test]

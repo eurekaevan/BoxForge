@@ -23,9 +23,10 @@ internal static class ConfigurationPlanner
             : nodes.Names.Count > 0
                 ? nodes.Names[0]
                 : SingboxTags.MainProxyGroup;
+        AddressFamilyPolicy controlPlaneFamily = platform.AddressFamily.ForControlPlane();
         var clients = new List<HttpClientPlan>
         {
-            new(HttpClientTags.RuleSetProxy, ruleSetDetour, new DomainResolverPlan(SingboxTags.DirectAliDns, platform.AddressFamily, true))
+            new(HttpClientTags.RuleSetProxy, ruleSetDetour, new DomainResolverPlan(SingboxTags.DirectAliDns, controlPlaneFamily, true))
         };
         if (apiEnabled)
             clients.Add(new HttpClientPlan(HttpClientTags.DashboardDirect, null, new DomainResolverPlan(SingboxTags.DirectAliDns, platform.AddressFamily, true)));

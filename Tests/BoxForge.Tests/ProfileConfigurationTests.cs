@@ -71,17 +71,22 @@ public sealed class ProfileConfigurationTests
             Profile = JsonNode.Parse("""{"dns":{"address_family":"Ipv4Only"}}""")!.AsObject()
         });
         var explicitAuto = await engine.ConvertAsync(request with { Profile = overlay });
+        var explicitDefault = await engine.ConvertAsync(request with
+        {
+            Profile = JsonNode.Parse("""{"dns":{"address_family":"DirectDualStack"}}""")!.AsObject()
+        });
         var ordinary = await engine.ConvertAsync(request);
         using var customJson = JsonDocument.Parse(custom.Artifacts.Single().Content);
         using var ordinaryJson = JsonDocument.Parse(ordinary.Artifacts.Single().Content);
-        Assert.That(explicitAuto.Artifacts.Single().Content, Is.EqualTo(ordinary.Artifacts.Single().Content));
+        Assert.That(explicitDefault.Artifacts.Single().Content, Is.EqualTo(ordinary.Artifacts.Single().Content));
+        Assert.That(explicitAuto.Artifacts.Single().Content, Is.Not.EqualTo(ordinary.Artifacts.Single().Content));
         Assert.Multiple(() =>
         {
             Assert.That(customJson.RootElement.GetProperty("dns").GetProperty("strategy").GetString(), Is.EqualTo("ipv4_only"));
             Assert.That(ordinaryJson.RootElement.GetProperty("dns").TryGetProperty("strategy", out _), Is.False);
             Assert.That(ordinaryJson.RootElement.GetProperty("dns").GetProperty("rules")[0]
                 .GetProperty("rules")[1].GetProperty("default_interface_address")[0].GetString(), Is.EqualTo("2000::/3"));
-            Assert.That(BoxForgeProfile.Default.Resolve(platform).Settings.AddressFamily, Is.EqualTo(AddressFamilyPolicy.Auto));
+            Assert.That(BoxForgeProfile.Default.Resolve(platform).Settings.AddressFamily, Is.EqualTo(AddressFamilyPolicy.DirectDualStack));
         });
     }
 

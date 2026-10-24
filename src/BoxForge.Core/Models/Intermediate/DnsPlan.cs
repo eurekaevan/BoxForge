@@ -118,7 +118,7 @@ internal sealed record DnsPlan(
         if (AddressFamily != AddressFamilyPolicy.DualStack)
         {
             var guard = new DnsRulePlan { QueryType = ["AAAA"], Action = DnsOperation.Predefined, Rcode = DnsResultCode.NoError };
-            if (AddressFamily == AddressFamilyPolicy.Auto)
+            if (AddressFamily.UsesInterfaceGuard())
                 guard = guard with
                 {
                     QueryType = default,

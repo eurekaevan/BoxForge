@@ -478,10 +478,11 @@ public sealed class SingboxConfigValidatorTests
                 "引用了不存在的 outbound 或 endpoint。"));
     }
 
-    [Test]
-    public void ControlPlaneMustUseFreshIpv4OnlyResolutionAndRejectIpv6Literals()
+    [TestCase(AddressFamilyPolicy.Ipv4Only)]
+    [TestCase(AddressFamilyPolicy.DirectDualStack)]
+    public void ControlPlaneMustUseFreshIpv4OnlyResolutionAndRejectIpv6Literals(AddressFamilyPolicy addressFamily)
     {
-        SingboxConfig valid = CreateValidIpv4Config();
+        SingboxConfig valid = addressFamily == AddressFamilyPolicy.Ipv4Only ? CreateValidIpv4Config() : CreateValidDirectDualStackConfig();
         SingboxConfig config = valid with
         {
             Outbounds =
@@ -507,7 +508,7 @@ public sealed class SingboxConfigValidatorTests
 
         AssertPolicyDiagnostics(
             config,
-            AddressFamilyPolicy.Ipv4Only,
+            addressFamily,
             new ConfigDiagnostic(
                 "SB061",
                 "route.default_domain_resolver.strategy",
@@ -942,6 +943,65 @@ public sealed class SingboxConfigValidatorTests
         var error = Assert.Throws<ConfigValidationException>(() => validator.Validate(config, AddressFamilyPolicy.DualStack));
         Assert.That(error!.Diagnostics.Single().Code, Is.EqualTo(expectedCode));
         Assert.That(error.Diagnostics.Single().Path, Does.StartWith("dns.rules[0].rules[0]"));
+    }
+
+    [Test]
+    public void DirectDualStackRequiresInterfaceGuardsAndShieldsEveryProxyRoute()
+    {
+        SingboxConfig valid = CreateValidDirectDualStackConfig();
+        Assert.DoesNotThrow(() => validator.Validate(valid, AddressFamilyPolicy.DirectDualStack));
+
+        List<RouteRule> rules = valid.Route.Rules;
+        foreach (var (name, mutated, code) in new (string, List<RouteRule>, string)[]
+        {
+            ("final guard removed", [.. rules.Take(rules.Count - 1)], "SB093"),
+            ("final guard narrowed", [.. rules.Take(rules.Count - 1), rules[^1] with { Network = ["tcp"] }], "SB093"),
+            ("scoped guard removed", [.. rules.Where(rule => rule.RuleSet is null || rule.IpVersion != 6)], "SB094"),
+            ("scoped guard too narrow", [.. rules.Select(rule => rule.IpVersion == 6 && rule.RuleSet is not null
+                ? rule with { RuleSet = ["other"] } : rule)], "SB094"),
+            ("scoped guard after route", [.. rules.Take(3), rules[4], rules[3], .. rules.Skip(5)], "SB094")
+        })
+        {
+            var config = valid with { Route = valid.Route with { Rules = mutated } };
+            var error = Assert.Throws<ConfigValidationException>(
+                () => validator.Validate(config, AddressFamilyPolicy.DirectDualStack), name)!;
+            Assert.That(error.Diagnostics.Select(diagnostic => diagnostic.Code), Does.Contain(code), name);
+        }
+
+        var dualStackControlPlane = valid with
+        {
+            Route = valid.Route with { DefaultDomainResolver = valid.Route.DefaultDomainResolver! with { Strategy = null } }
+        };
+        var resolverError = Assert.Throws<ConfigValidationException>(
+            () => validator.Validate(dualStackControlPlane, AddressFamilyPolicy.DirectDualStack))!;
+        Assert.That(resolverError.Diagnostics.Select(diagnostic => diagnostic.Code), Does.Contain("SB061"));
+
+        var directPrefersIpv4 = valid with
+        {
+            Outbounds = valid.Outbounds.Select(outbound => outbound is DirectOutbound direct
+                ? direct with { DomainResolver = new DnsResolverOptions { Server = "dns", Strategy = DnsStrategy.PreferIpv4 } }
+                : outbound).ToList()
+        };
+        Assert.DoesNotThrow(() => validator.Validate(directPrefersIpv4, AddressFamilyPolicy.DirectDualStack));
+    }
+
+    private static SingboxConfig CreateValidDirectDualStackConfig()
+    {
+        SingboxConfig auto = CreateValidAutoConfig();
+        return auto with
+        {
+            Route = auto.Route with
+            {
+                Rules =
+                [
+                    .. auto.Route.Rules.Take(3),
+                    new RouteRule { IpVersion = 6, RuleSet = ["rules"], Action = RouteRuleAction.Reject },
+                    auto.Route.Rules[3],
+                    new RouteRule { RuleSet = ["rules"], Action = RouteRuleAction.Route, Outbound = "selector" },
+                    new RouteRule { IpVersion = 6, Action = RouteRuleAction.Reject }
+                ]
+            }
+        };
     }
 
     private static SingboxConfig CreateValidAutoConfig()

@@ -7,7 +7,8 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
 ## 路由规则顺序
 
 以下按 `RoutePlan` 的阶段列出实际执行顺序，由 `SingboxRouteEmitter` 展开为目标规则。修改路由规则时，
-需同步维护本节说明。IPv6 守卫在 `Ipv4Only` 下无条件生效，在 `Auto` 下按出口接口状态生效；Tailscale 阶段仅在
+需同步维护本节说明。IPv6 守卫在 `Ipv4Only` 下无条件生效，在 `Auto` 与 `DirectDualStack` 下按出口接口状态生效，
+`DirectDualStack` 另在代理服务和最终出口之前拒绝 IPv6；Tailscale 阶段仅在
 对应平台启用 Tailscale 时生成规则；最终出口由 `route.final` 指定。
 
 仅 Linux 使用显式阶段扩展 `DIRECT` 规则。私网地址和主 DoH bootstrap 地址（默认 `223.5.5.5`）在
@@ -17,17 +18,20 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
 伴随规则。每条原 `DIRECT` 都保留为回退。
 
 1. **`DnsHijack`**：劫持 TUN inbound 的 DNS 流量。
-2. **`EarlyIpv6Guard`**（在 `DnsHijack` 之后）：`Ipv4Only` 时，以全局 `ip_version: 6` 拒绝全部 IPv6；`Auto` 时仅在缺少公网 IPv6 的出口上拒绝，先于 sniff、DIRECT、bridge 和 bypass。
+2. **`EarlyIpv6Guard`**（在 `DnsHijack` 之后）：`Ipv4Only` 时，以全局 `ip_version: 6` 拒绝全部 IPv6；`Auto` 与 `DirectDualStack` 时仅在缺少公网 IPv6 的出口上拒绝，先于 sniff、DIRECT、bridge 和 bypass。
 3. **`Tailscale`**（在 `EarlyIpv6Guard` 之后）：启用 Tailscale 时，路由 endpoint 声明为首选的目标，优先于私网直连。
 4. **`PreSniffDirect`**（在 `Tailscale` 之后）：直连私网地址和有效 profile 的 `alidns.server`（默认 223.5.5.5）；Linux 在每条 DIRECT 前依次展开 bypass、bridge。
 5. **`Sniff`**（在 `PreSniffDirect` 之后）：依次嗅探 TCP HTTP/TLS 与 UDP QUIC/STUN；TCP 跳过 FTP、SSH、MySQL、VNC 常用端口 21/22/3306/5900，继续后续路由，8080/8443 仍嗅探。
 6. **`BlockStunAndAds`**（在 `Sniff` 之后）：依次拒绝识别出的 UDP STUN 和 ads。
-7. **`LateIpv6Guard`**（在 `BlockStunAndAds` 之后）：`Ipv4Only` 时，保留独立的全局 `ip_version: 6` 后置拒绝；`Auto` 时使用相同出口条件，先于所有代理服务路由。
-8. **`PriorityServices`**（在 `LateIpv6Guard` 之后）：按服务定义顺序路由 🤖 AI、🔎 Google，优先于国内 UDP/443 例外。
-9. **`DomesticUdp443`**（在 `PriorityServices` 之后）：依次放行 cn、cnip 的 UDP/443；Linux 的 DIRECT 伴随规则仅匹配 TUN UDP。其他 UDP/443 继续后续服务分流和最终代理。
-10. **`OtherServices`**（在 `DomesticUdp443` 之后）：按服务定义顺序生成其他服务分流：🎵 Spotify、🎮 GAMES、🪟 Microsoft。
-11. **`DomesticDirect`**（在 `OtherServices` 之后）：依次按 cn、cnip 直连国内目标；Linux 的 DIRECT 伴随规则仅匹配 TUN UDP，TCP 仍由原 DIRECT 处理。
-12. **`FinalOutbound`**（在 `DomesticDirect` 之后）：未命中规则的流量使用 route.final 的 🚀 PROXIES；不额外生成 catch-all 规则。
+7. **`LateIpv6Guard`**（在 `BlockStunAndAds` 之后）：`Ipv4Only` 时，保留独立的全局 `ip_version: 6` 后置拒绝；`Auto` 与 `DirectDualStack` 时使用相同出口条件，先于所有代理服务路由。
+8. **`ServiceIpv6Guard`**（在 `LateIpv6Guard` 之后）：仅 `DirectDualStack` 生成。仅对优先服务的规则集匹配 `ip_version: 6` 并拒绝。
+9. **`PriorityServices`**（在 `ServiceIpv6Guard` 之后）：按服务定义顺序路由 🤖 AI、🔎 Google，优先于国内 UDP/443 例外。
+10. **`DomesticUdp443`**（在 `PriorityServices` 之后）：依次放行 cn、cnip 的 UDP/443；Linux 的 DIRECT 伴随规则仅匹配 TUN UDP。其他 UDP/443 继续后续服务分流和最终代理。
+11. **`OtherServiceIpv6Guard`**（在 `DomesticUdp443` 之后）：仅 `DirectDualStack` 生成，对其他服务的规则集拒绝 IPv6，保留国内 UDP/443 先行直连的优先级。
+12. **`OtherServices`**（在 `OtherServiceIpv6Guard` 之后）：按服务定义顺序生成其他服务分流：🎵 Spotify、🎮 GAMES、🪟 Microsoft。
+13. **`DomesticDirect`**（在 `OtherServices` 之后）：依次按 cn、cnip 直连国内目标；Linux 的 DIRECT 伴随规则仅匹配 TUN UDP，TCP 仍由原 DIRECT 处理。
+14. **`FinalIpv6Guard`**（在 `DomesticDirect` 之后）：仅 `DirectDualStack` 生成，以全局 `ip_version: 6` 拒绝所有未被前面规则直连的 IPv6，保证没有 IPv6 进入最终代理出口。
+15. **`FinalOutbound`**（在 `FinalIpv6Guard` 之后）：未命中规则的流量使用 route.final 的 🚀 PROXIES；不额外生成 catch-all 规则。
 
 `DomesticUdp443`、`DomesticDirect` 阶段中的国内 `DIRECT` 在 Linux 会紧邻原规则之前生成 L3
 伴随规则：bypass 后接 bridge。伴随规则仅匹配
@@ -54,17 +58,25 @@ IPv6 早期拒绝 → 广告拒绝 → IPv6 兜底拒绝 → 代理服务 → �
 ```
 
 `Ipv4Only` 下，所有代理服务路由位于后置 IPv6 拒绝之后，确保服务分流只处理 IPv4 目标。
+`DirectDualStack` 下，各服务类别在自己的阶段拒绝 IPv6；出口条件允许且未先命中代理服务类别时，国内 `cn`/`cnip` 的 IPv6 直连，
+其余 IPv6 在最终出口之前被拒绝，核心优先级为：
+
+```text
+接口 IPv6 早期拒绝 → 广告拒绝 → 接口 IPv6 兜底拒绝 → 优先服务 IPv6 拒绝及分流 → 国内 UDP/443 直连 → 其他服务 IPv6 拒绝及分流 → 国内直连 → 其余 IPv6 拒绝 → 最终代理
+```
+
+地址族限制采用固定路由类别，不跟随 selector 最终叶子的运行时切换。将服务组或主组切到 DIRECT，不会解除该类别的 IPv6 限制。要放开该类别需更改 profile 策略；官方核心不提供按最终叶子匹配的路由条件。
 
 ## DNS 分类与控制面解析
 
 每个目标最终配置中的 `dns.address_family` 决定地址族；
-内置 JSON 为 Linux、Windows、Android 均设置 `Auto`。显式选择 `Ipv4Only` 时生成
+内置 JSON 为 Linux、Windows、Android 均设置 `DirectDualStack`。显式选择 `Ipv4Only` 时生成
 `dns.strategy = ipv4_only`、最前面的全局 AAAA 空 `NOERROR`，以及 route 的早期和
 后置 IPv6 reject，后者也覆盖字面量 IPv6 和不经 sing-box DNS 的连接。
 通过 `platforms.<平台>.dns.address_family` 可覆盖为 `DualStack`，此时不生成上述
 AAAA 阻断和 IPv6 reject，DNS 与控制面解析策略也随之切换。
 
-默认 `Auto` 保留 TUN 的 IPv4 和 IPv6 捕获地址，通过反转
+默认 `DirectDualStack` 保留 TUN 的 IPv4 和 IPv6 捕获地址，通过反转
 `default_interface_address: ["2000::/3"]` 条件判断当前默认出口接口，
 不按网络类型合并其他接口的地址。默认出口存在 `2000::/3` 公网 IPv6 地址时正常处理 AAAA 和 IPv6 业务分流；
 缺少该地址或无法取得接口信息时，AAAA 返回空 `NOERROR`，并在早期及后置守卫拒绝 IPv6。
@@ -78,25 +90,29 @@ libbox 正确提供当前物理默认接口和接口地址；不能据此认定�
 已核对锁定 alpha.12 的接口监视源码并检查生成配置；无法取得默认接口或地址的客户端
 会继续拒绝客户端 IPv6。Android 真机和网络切换行为尚未验证。
 
-DIRECT 出口显式绑定 AliDNS，并禁用 optimistic 过期缓存。Auto 和 DualStack 下，
+DIRECT 出口显式绑定 AliDNS，并禁用 optimistic 过期缓存。Auto、DirectDualStack 和 DualStack 下，
 其域名拨号使用 `prefer_ipv4`，保留 IPv6 候选；Ipv4Only 下仍为 `ipv4_only`。
 此偏好不修改应用收到的 DNS 答案，也不会将已经确定的 IPv6 目标自动转换为 IPv4。
 它只在核心以域名进行直连拨号时生效，不能保证 TUN 流量的地址族回退。
 代理节点和控制面 HTTP client 的解析策略不受此偏好影响。
 
 控制平面域名由 `route.default_domain_resolver` 解析：直连
-`dns-direct-alidns`、随平台地址族选择的策略（默认 `Auto` 不强制地址族）、
-`disable_optimistic_cache = true`。
-代理节点、直连出站和 Tailscale endpoint 继承该设置；rule-set 和 Dashboard
-HTTP client 显式使用相同 resolver。节点域名不加入 client DNS 规则。
-`Auto` 不为控制面 resolver 设置 `ipv4_only`；上述条件 AAAA 规则针对 client DNS，
+`dns-direct-alidns`、随平台地址族选择的策略（`Ipv4Only` 与默认 `DirectDualStack` 使用 `ipv4_only`，
+`Auto` 与 `DualStack` 不强制地址族）、`disable_optimistic_cache = true`。
+代理节点和 Tailscale endpoint 继承该设置；rule-set HTTP client 显式绑定相同解析策略。
+DIRECT 显式使用上述 `prefer_ipv4`／`ipv4_only` 绑定。Dashboard HTTP client 直连，按平台地址族解析，
+`DirectDualStack` 下不强制 IPv4；所有这些绑定均禁用 optimistic 缓存。节点域名不加入 client DNS 规则。
+`DirectDualStack` 让节点域名连接和 rule-set 下载等代理控制面不依赖 IPv6，并拒绝 IPv6 字面量代理节点；
+`Auto` 不为控制面 resolver 设置 `ipv4_only`，上述条件 AAAA 规则针对 client DNS，
 不保证控制面解析和连接自动限制为 IPv4。来源节点显式的 `ip-version: ipv4` 约束
 仍会保留。该固定 tag 的 IP 和 TLS 名称可通过 [resolver profile](configuration.md#resolver-profile)
 覆盖；连接仍使用 IPv4 字面量直连，引导不依赖系统 DNS 或代理 DNS。
 
 client DNS 依次分类：
 
-1. `Ipv4Only` 下，所有 AAAA 查询返回空 `NOERROR`；`Auto` 下仅在出口缺少公网 IPv6 地址时返回空答。
+1. `Ipv4Only` 下，所有 AAAA 查询返回空 `NOERROR`；`Auto` 与 `DirectDualStack` 下仅在出口缺少公网 IPv6 地址时返回空答。
+   有公网 IPv6 出口时，不按 DNS 池静态过滤 AAAA；服务、国内和全局池均正常解析，避免域名不在 `cn` 但真实地址属于 `cnip` 时丢失直连 IPv6。
+   IPv6 是否允许转发由路由阶段决定，DNS 查询走代理不等于业务目标走代理。
 2. 启用 Tailscale 时，`preferred_by` 命中的 MagicDNS 和 split DNS 交给
    `dns-tailscale`，禁用 optimistic 缓存。
 3. `ads` 返回 `NXDOMAIN`。
