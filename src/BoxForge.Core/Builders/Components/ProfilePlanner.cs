@@ -14,7 +14,7 @@ internal static class ProfilePlanner
         var regions = BuildRegionGroups(
             inventory,
             probes, profile.Tuning);
-        var main = BuildMainGroup(nodes, regions, profile);
+        var main = BuildMainGroup(nodes, inventory, regions, profile);
         var services = BuildServiceGroups(nodes, inventory, regions, profile);
         return new ProfileGroupPlan(
             nodes.Names.ToArray(),
@@ -51,6 +51,7 @@ internal static class ProfilePlanner
 
     private static SelectionGroupPlan BuildMainGroup(
         NodeCatalog nodes,
+        IReadOnlyList<RegionInventory> inventory,
         List<SelectionGroupPlan> regions,
         ResolvedProfile profile)
     {
@@ -66,10 +67,7 @@ internal static class ProfilePlanner
             : nodes.Names.Count > 0
                 ? nodes.Names[0]
                 : SingboxTags.DirectOutbound;
-        string? preferredRegionName = regions.Count == 0
-            ? null
-            : profile.Regions.Single(region => region.Id == profile.Route.MainDefaultRegion).DisplayName;
-        string defaultSelection = regions.FirstOrDefault(group => group.Name == preferredRegionName)?.Name
+        string defaultSelection = inventory.Single(region => region.Definition.Id == profile.Route.MainDefaultRegion).Target
             ?? fallbackSelection;
 
         return new SelectionGroupPlan(SingboxTags.MainProxyGroup, groupOptions, defaultSelection);

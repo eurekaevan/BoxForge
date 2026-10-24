@@ -570,7 +570,7 @@ public sealed class SingboxConfigBuilderTests
             Assert.That(
                 json.Split("\"ip_version\": 6", StringSplitOptions.None).Length - 1,
                 Is.EqualTo(5), "two interface guards plus two service-stage guards and the final proxy IPv6 guard");
-            Assert.That(json, Does.Not.Contain("::/0"));
+            Assert.That(document.RootElement.GetProperty("route").GetRawText(), Does.Not.Contain("::/0"));
             Assert.That(json, Does.Not.Contain("\"no_drop\""));
             Assert.That(document.RootElement.GetProperty("route").GetProperty("rules").EnumerateArray()
                 .Any(rule => rule.GetProperty("action").GetString() == "reject"
@@ -917,7 +917,8 @@ public sealed class SingboxConfigBuilderTests
         Assert.That(config.Outbounds.OfType<DirectOutbound>().Single().DomainResolver!.Strategy,
             Is.EqualTo(DnsStrategy.PreferIpv4));
         Assert.That(config.Dns.Strategy, Is.Null);
-        Assert.That(config.Dns.Rules.Any(rule => rule.QueryType?.Contains("AAAA") == true), Is.False);
+        Assert.That(config.Dns.Rules.Any(rule => rule.QueryType?.Contains("AAAA") == true
+            && rule.Action == DnsRuleAction.Predefined && rule.Rcode == DnsResponseCode.NoError), Is.False);
         Assert.That(config.Route.Rules.Any(rule => rule.IpVersion == 6 && rule.Action == RouteRuleAction.Reject), Is.False);
         Assert.That(config.HttpClients.All(client => client.DomainResolver!.Strategy is null), Is.True);
         Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, resolved.Settings.AddressFamily));

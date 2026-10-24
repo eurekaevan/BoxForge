@@ -98,7 +98,7 @@ CLI、Server 在宿主边界加载并校验 `BOXFORGE_` 前缀的环境配置快
 它们都不执行公网可达性探测。Android 依赖客户端提供默认物理接口信息，尚未完成真机验证；
 缺少接口信息时保守拒绝客户端 IPv6。详细边界见[DNS 与路由策略](routing-and-dns.md#dns-分类与控制面解析)。
 DNS 模式接受 `SequentialFallback` 或 `ParallelFastest`。超时和间隔必须是正 Go duration；DNS 缓存容量为正，URL test
-容差非负，探测 URL 只接受不带用户信息和片段的 HTTP(S) URL。
+容差为 0–65535，探测 URL 只接受不带用户信息和片段的 HTTP(S) URL。
 TUN 地址须包含 IPv4 和 IPv6 CIDR；`multi_queue: true` 仅支持 Linux。
 排除端口为不重复的 1～65535 整数。调优只补齐来源节点缺失的值；
 例如 `tcp_keep_alive: null` 取消平台默认值，不会清除节点显式设置。
@@ -199,7 +199,7 @@ dotnet run --project src/BoxForge.Cli -- generate --platform Linux
 `platforms` 中每个平台是已计算完成的五分区快照，不嵌套 `platforms`；
 根与平台项均无 `version` 字段。
 该输出用于观察与追溯，不是可直接重载的差异覆盖文件；其中数组是已解析的数据，
-覆盖文件中的数组路径则要求操作对象。本阶段没有 `profile diff` 或 JSON Schema。
+覆盖文件中的数组路径则要求操作对象；不支持 `profile diff` 或 JSON Schema。
 
 ## 地区 profile
 
@@ -219,7 +219,7 @@ dotnet run --project src/BoxForge.Cli -- generate --platform Linux
 
 `pattern` 为 .NET 正则，大小写和文化无关，单次匹配最多 250ms；超时使整次转换失败。
 JSON 中反斜杠需转义。地区匹配至少两个节点才生成 selector 和 AUTO；单个节点仍可
-作为服务默认目标。显示名不得含控制字符或首尾空白，生成 tag 不得与地区、服务或
+作为主组或服务组的默认目标。显示名不得含控制字符或首尾空白，生成 tag 不得与地区、服务或
 固定保留 tag 冲突。移除地区前需同时处理 `main_default_region` 及服务的引用。
 
 ## 服务 profile
@@ -265,7 +265,8 @@ JSON 中反斜杠需转义。地区匹配至少两个节点才生成 selector �
 `rules.example.net` 为占位地址，需替换为实际二进制 SRS HTTPS 来源。
 标签必须唯一且不与固定标签、有效地区或服务 tag 冲突；格式与地区 ID 相同。
 URL 不得含用户信息、片段、未编码空白或控制字符，只允许路径或查询中的字面量
-`{tag}` 占位符。多 tag 来源必须保留该占位符，更新间隔为正 Go duration。
+`{tag}` 占位符。多 tag 来源必须保留该占位符。更新间隔接受正 Go duration，
+并额外支持 `d`（24 小时），如 `1d`；总时长不能超出 int64 纳秒范围。
 规则源 URL 模板展开与更新时长归一化仅用于发射目标配置；profile 快照保留原始
 URL 与时长文本，完整值覆盖和删除均使用这些原值，不比较发射后的规范化形式。
 修改批量来源时应替换完整来源实体；不会自动拆组。内置广告/国内规则集以及服务
@@ -274,7 +275,8 @@ URL 与时长文本，完整值覆盖和删除均使用这些原值，不比较�
 ## resolver profile
 
 `dns.resolvers` 使用完整实体 `id`、`server`、`server_name`。
-四个固定角色及 tag 如下；修改时使用数组操作替换完整实体，不能只提供 ID 和个别字段。
+四个固定角色及 tag 如下。整体替换时须提供完整实体；局部修改使用按 `id` 选择的
+`patch`，例如 `{"id":"alidns","server":"223.6.6.6"}`。
 
 | 固定 ID | 固定 tag | 固定角色 |
 | --- | --- | --- |
@@ -331,10 +333,11 @@ DNS evaluate/respond 的响应 tag 使用 `response-范围-优先级`：
 `response-service-{id}-primary`、`response-service-{id}-secondary`、
 `response-domestic-primary`、`response-domestic-secondary`、
 `response-global-primary`、`response-global-secondary`。
-Linux/Windows 的 A 查询另用独立响应 tag，在上述名称后追加 `-a`：
+并行模式的 A 查询另用独立响应 tag，在上述名称后追加 `-a`：
 `response-service-{id}-primary-a`、`response-service-{id}-secondary-a`、
 `response-domestic-primary-a`、`response-domestic-secondary-a`、
 `response-global-primary-a`、`response-global-secondary-a`。
+允许放行的 AAAA 查询同样使用独立 tag，后缀改为 `-aaaa`。
 这些响应 tag 均按有效 profile 的服务 ID 生成为全平台保留名称。
 内置规则集使用 BoxForge 语义 tag：`ads`、`ai`、`google`、`microsoft`、
 `spotify`、`games`、`cn`、`cnip`，可通过来源 profile 追加新 tag。外部文件名由来源映射决定，

@@ -117,6 +117,7 @@ public sealed class ResolvedProfile
         };
         reservedTags.UnionWith(DnsResponseTags.BaseTags);
         reservedTags.UnionWith(DnsResponseTags.BaseTags.Select(DnsResponseTags.ForAddressQuery));
+        reservedTags.UnionWith(DnsResponseTags.BaseTags.Select(tag => DnsResponseTags.ForAddressQuery(tag, "AAAA")));
         for (int source = 0; source < data.Route.RuleSets.Length; source++)
             for (int tag = 0; tag < data.Route.RuleSets[source].Tags.Length; tag++)
                 ReserveTag(data.Route.RuleSets[source].Tags[tag], $"route.rule_sets[{source}].tags[{tag}]");
@@ -163,7 +164,7 @@ public sealed class ResolvedProfile
             string servicePath = $"route.services[{index}]";
             ReserveTag(SingboxTags.ServiceDns(service.Id, "cloudflare"), servicePath + ".id");
             ReserveTag(SingboxTags.ServiceDns(service.Id, "google"), servicePath + ".id");
-            foreach (string suffix in new[] { "primary", "secondary", "primary-a", "secondary-a" })
+            foreach (string suffix in new[] { "primary", "secondary", "primary-a", "secondary-a", "primary-aaaa", "secondary-aaaa" })
                 ReserveTag($"response-service-{service.Id}-{suffix}", servicePath + ".id");
         }
         return (regions.ToImmutable(), reservedTags.ToImmutableHashSet(StringComparer.Ordinal));
@@ -213,8 +214,8 @@ public sealed class ResolvedProfile
             || string.IsNullOrEmpty(probe.Host) || !string.IsNullOrEmpty(probe.UserInfo) || !string.IsNullOrEmpty(probe.Fragment)
             || Tuning.UrlTestUrl.Any(char.IsWhiteSpace) || !probe.IsWellFormedOriginalString())
             throw new ProfileValidationException("profile.tuning.url_test_url", "profile.tuning.url_test_url: 必须是有效的 HTTP(S) URL，不含用户信息或片段。");
-        if (Tuning.UrlTestTolerance < 0)
-            throw new ProfileValidationException("profile.tuning.url_test_tolerance", "profile: tolerance 必须非负。");
+        if (Tuning.UrlTestTolerance is < 0 or > ushort.MaxValue)
+            throw new ProfileValidationException("profile.tuning.url_test_tolerance", "profile: tolerance 必须在 0–65535 范围内。");
         if (Dns.CacheCapacity == 0)
             throw new ProfileValidationException("profile.dns.cache_capacity", "profile: 缓存容量必须为正。");
         if (Route.SniffExcludedPorts.Any(port => port is < 1 or > 65535)

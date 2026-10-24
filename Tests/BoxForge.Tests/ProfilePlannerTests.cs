@@ -401,7 +401,7 @@ public sealed class ProfilePlannerTests
     {
         ProfilePlan plan = Plan(CreateCatalog("美国 01", "日本 01", "日本 02", "香港 01"), BoxForgeProfile.Default);
         Assert.That(plan.RegionOutbounds.Select(group => group.Tag), Is.EqualTo(new[] { "🇯🇵 JP" }));
-        Assert.That(plan.MainOutbound.Default, Is.EqualTo("🇯🇵 JP"), "Preserve documented generated-group fallback");
+        Assert.That(plan.MainOutbound.Default, Is.EqualTo("美国 01"));
         foreach (SelectorOutbound service in plan.ServiceOutbounds)
         {
             ServiceDefinition definition = BoxForgeProfile.Default.Services.Single(candidate => candidate.Name == service.Tag);
@@ -414,6 +414,23 @@ public sealed class ProfilePlannerTests
             Assert.That(service.Default, Is.EqualTo(expected));
             Assert.That(service.Outbounds, Does.Contain(expected));
             Assert.That(service.Outbounds, Does.Not.Contain("🇺🇸 US").And.Not.Contain("🇭🇰 HK"));
+        }
+    }
+
+    [Test]
+    public void SinglePreferredMainRegionWinsOverEarlierUnmatchedAndOtherRegionNodes()
+    {
+        using var source = new MemoryStream(Encoding.UTF8.GetBytes("""{"route":{"main_default_region":"hk"}}"""));
+        var profile = BoxForgeProfile.Load(source);
+        foreach (string[] names in new[]
+                 {
+                     new[] { "其他 01", "香港 01" },
+                     new[] { "日本 01", "日本 02", "香港 01" }
+                 })
+        {
+            ProfilePlan plan = Plan(CreateCatalog(names), profile);
+            Assert.That(plan.MainOutbound.Default, Is.EqualTo("香港 01"));
+            Assert.That(plan.MainOutbound.Outbounds, Does.Contain("香港 01"));
         }
     }
 

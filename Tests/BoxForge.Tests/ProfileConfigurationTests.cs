@@ -349,12 +349,22 @@ public sealed class ProfileConfigurationTests
     [TestCase("{\"route\":{\"main_default_region\":\"missing\"}}")]
     [TestCase("{\"dns\":{\"cache_capacity\":0}}")]
     [TestCase("{\"tuning\":{\"url_test_tolerance\":-1}}")]
+    [TestCase("{\"tuning\":{\"url_test_tolerance\":65536}}")]
+    [TestCase("{\"platforms\":{\"Linux\":{\"tuning\":{\"url_test_tolerance\":65536}}}}")]
     [TestCase("{\"route\":{\"sniff_excluded_ports\":{\"replace\":[0]}}}")]
     [TestCase("{\"route\":{\"sniff_excluded_ports\":{\"replace\":[22,22]}}}")]
     public void RejectsInvalidLayeredSettings(string fields)
     {
         var overlay = JsonNode.Parse(fields)!.AsObject();
         Assert.Throws<ProfileValidationException>(() => Load(overlay.ToJsonString()));
+    }
+
+    [TestCase(0)]
+    [TestCase(65535)]
+    public void ProbeToleranceAcceptsCoreRangeBoundaries(int tolerance)
+    {
+        var profile = Load(JsonSerializer.Serialize(new { tuning = new { url_test_tolerance = tolerance } }));
+        Assert.That(profile.Resolve(TargetPlatform.Linux).Tuning.UrlTestTolerance, Is.EqualTo(tolerance));
     }
 
     [TestCase("null")]
@@ -418,6 +428,7 @@ public sealed class ProfileConfigurationTests
     [TestCase("display_name", "\"🤖 AI\"")]
     [TestCase("display_name", "\"🇯🇵 JP AUTO\"")]
     [TestCase("display_name", "\"response-global-primary-a\"")]
+    [TestCase("display_name", "\"response-global-primary-aaaa\"")]
     [TestCase("display_name", "\"google\"")]
     [TestCase("display_name", "\" US\"")]
     [TestCase("display_name", "\"US\\n\"")]
@@ -439,6 +450,7 @@ public sealed class ProfileConfigurationTests
     [TestCase("name", "\"🇯🇵 JP AUTO\"")]
     [TestCase("name", "\"🎵 Spotify\"")]
     [TestCase("name", "\"response-global-primary-a\"")]
+    [TestCase("name", "\"response-service-ai-primary-aaaa\"")]
     [TestCase("name", "\" AI\"")]
     [TestCase("name", "\"AI\\n\"")]
     [TestCase("default_region", "\"missing\"")]
@@ -591,6 +603,7 @@ public sealed class ProfileConfigurationTests
     [TestCase("tun-in")]
     [TestCase("http-ruleset-proxy")]
     [TestCase("response-global-primary-a")]
+    [TestCase("response-global-primary-aaaa")]
     [TestCase("🇺🇸 US")]
     [TestCase("🤖 AI")]
     public void RuleSetTagsRejectInvalidNamesAndEffectiveTagCollisions(string tag) => Assert.Throws<ProfileValidationException>(() =>
@@ -827,7 +840,9 @@ public sealed class ProfileConfigurationTests
             Assert.That(root.GetProperty("dns").GetProperty("rules").EnumerateArray().Any(rule =>
                 rule.TryGetProperty("race", out var race) && race.GetBoolean()), Is.EqualTo(platform == TargetPlatform.Android));
             Assert.That(root.GetProperty("dns").GetProperty("rules").EnumerateArray().Any(rule =>
-                rule.TryGetProperty("query_type", out var types) && types.EnumerateArray().Any(type => type.GetString() == "AAAA")), Is.False);
+                rule.TryGetProperty("query_type", out var types) && types.EnumerateArray().Any(type => type.GetString() == "AAAA")
+                && rule.TryGetProperty("action", out var action) && action.GetString() == "predefined"
+                && rule.GetProperty("rcode").GetString() == "NOERROR"), Is.False);
             Assert.That(root.GetProperty("route").GetProperty("rules").EnumerateArray().Any(rule => rule.TryGetProperty("ip_version", out _)), Is.False);
             foreach (var client in root.GetProperty("http_clients").EnumerateArray())
                 Assert.That(client.GetProperty("domain_resolver").TryGetProperty("strategy", out _), Is.False);

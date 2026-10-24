@@ -1,8 +1,7 @@
 # 版本与发布契约
 
-BoxForge 的 Core、CLI 和 Server 共用配置生成契约。CLI 保留 `generate`，
-HTTP/Web 保留无状态输入到结果的边界；本阶段不改变配置生成策略，也不引入
-订阅抓取、账户、持久化、定时任务或配置托管。
+BoxForge 的 Core、CLI 和 Server 共用配置生成契约。CLI 提供本地批量生成，
+HTTP/Web 提供无状态的内存转换；不包含订阅抓取、账户、持久化、定时任务或配置托管。
 
 ## 日期版本
 
@@ -13,11 +12,8 @@ HTTP/Web 保留无状态输入到结果的边界；本阶段不改变配置生�
 修复应使用新版本。不要用字典序决定同日版本先后（`.10` 晚于 `.9`）。
 
 每个 tag 对应固定源码提交，GitHub Release 实际发布后才代表可下载版本。
-不要求提交 `docs/release-notes/<tag>.md`，现有文件仅保留为历史记录。
-发布说明默认留空；手动运行时可勾选 `generate_notes`，使用 GitHub 原生生成的
-PR 摘要和比较链接。这不是 Copilot AI 总结，也不需要额外凭据。说明可在 Release
-页面补充。Copilot 官方 Action 需要有效许可证及独立的 `COPILOT_GITHUB_TOKEN`，
-本流程不引入这项依赖。
+发布说明不要求单独提交仓库文件，默认留空；手动运行时可勾选
+`generate_notes`，使用 GitHub 原生生成的 PR 摘要和比较链接，也可在 Release 页面补充。
 
 ## 当前契约基线
 
@@ -30,7 +26,7 @@ PR 摘要和比较链接。这不是 Copilot AI 总结，也不需要额外凭�
 
 手动补充发布说明时，建议记录 Input、Target、CLI、Behavior，尤其说明策略变化
 影响的平台、触发条件、前后行为，以及同一 YAML 是否会产生不同配置。
-这属于说明建议，不是构建或发布门禁；首次发布可记录基线。
+这些说明不作为构建或发布门禁。
 
 固定 BoxForge 版本只消除工具源码漂移。复现生成文件还需要固定输入内容、目标
 平台、`BOXFORGE_` 开关和运行目录中的宿主配置（CLI 使用 .NET 默认配置加载）。
@@ -71,7 +67,7 @@ python3 scripts/verify-generated-configs.py src/BoxForge.Cli/bin/Release/net10.0
 这些门禁不替代适用于本次变更的协议回环、设备或真实网络验证。
 <!-- END GENERATED:release-gates -->
 
-首次交付仅提供 Linux x64（glibc，CI 使用 Ubuntu
+发布包仅提供 Linux x64（glibc，CI 使用 Ubuntu
 24.04），不包含 Server，也不声称支持 Alpine/musl 或其他主机架构。
 包内包含 .NET runtime，无需安装 SDK；系统原生依赖仍遵循
 [.NET Linux 部署要求](https://learn.microsoft.com/en-us/dotnet/core/install/linux)。
@@ -85,7 +81,7 @@ python3 scripts/verify-generated-configs.py src/BoxForge.Cli/bin/Release/net10.0
 
 ## 消费固定版本
 
-初期可继续源码运行：将 BoxVault 的 BoxForge checkout `ref: main` 换为已发布
+源码运行时，将 BoxForge checkout 的 `ref: main` 换为已发布
 tag，记录对应完整 SHA；更严格时直接以该 SHA checkout，并在注释中标注 tag。
 不要提前引用尚不存在的 tag，也不要自动追随 `latest`。
 

@@ -38,8 +38,7 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
 `tun-in` UDP，原规则的 rule-set、端口与服务顺序条件不变；TCP 在 sniff
 后不会尝试这些 L3 层，仍由原 `DIRECT` 处理。Windows 和 Android 不生成伴随规则，使用原有 `DIRECT`。
 
-全平台仅生成 TUN inbound；不再生成 mixed 入口、其专用的域名 `resolve`、
-解析后 Tailscale 复检或私网回退规则。TUN 原有的路由顺序保持不变。
+全平台仅生成 TUN inbound，不生成 mixed 入口及其专用的域名解析和解析后复检规则。
 
 嗅探覆盖提前放行路径之外的大多数 TUN TCP 和 UDP，发生在业务分流之前。
 `route.sniff_timeout` 默认为 `300ms`，表示嗅探的超时预算，并非每条连接固定增加
@@ -125,7 +124,7 @@ client DNS 依次分类：
 6. 其余查询进入 GLOBAL pool。
 
 `PrecedesDomesticRoutes` 仅控制路由中服务与国内 UDP/443 特例的相对顺序，
-不再用于筛选 DNS 服务分类。国内 UDP/443 的原有直连特例保持不变。
+不筛选 DNS 服务分类。国内 UDP/443 保持直连特例。
 
 ## Resolver pool 响应语义
 
@@ -147,19 +146,20 @@ secondary `evaluate`；secondary 继承全局 `dns.timeout`（默认 `1s`）。�
 这不是整条连接的总超时。
 
 并行模式（默认 Linux/Windows）先连续执行两个 `evaluate`，让 primary 和 secondary 并行查询。
-A 查询先进入独立的地址池，两条 `NOERROR` `respond` 同时要求响应中有
-IPv4 地址（`ip_cidr: 0.0.0.0/0`）并启用 `race: true`。最快含地址的响应
+A 和允许放行的 AAAA 查询分别进入独立的地址池，两条 `NOERROR` `respond`
+同时要求响应中有对应地址族的地址（A 为 `ip_cidr: 0.0.0.0/0`，AAAA 为 `::/0`）
+并启用 `race: true`。地址池禁用 optimistic 缓存，避免过期空答案抢赢。最快含地址的响应
 立即提交，空 NOERROR、仅 CNAME 或仅附加区地址不能抢赢。响应条件不重复带
 域名 rule-set，避免其与地址条件的 OR 组合绕过检查；唯一的 `match_response`
 标签继承前面 evaluate 的分类范围。仅 CNAME 仍可作为后备返回，不被改写为失败。
 
 两条地址竞速均未命中后，依次接受 primary/secondary 的 NOERROR 后备，再依次
 接受 primary/secondary 的 NXDOMAIN。地址池以同 scope 的 SERVFAIL 结束，
-不会进入后续通用池重复查询。HTTPS、SVCB、MX 等非 A 查询保持原有 NOERROR
+不会进入后续通用池重复查询。HTTPS、SVCB、MX 等非地址查询保持原有 NOERROR
 竞速，不要求响应含 IP；`Ipv4Only` 下 AAAA 在进入池前已返回空答，
 `Auto` 下则由前述出口条件决定是否允许进入池。
 
-非 A 查询的 NXDOMAIN `respond` 同样不启用 race，等待未决的 NOERROR 竞速。
+非地址查询的 NXDOMAIN `respond` 同样不启用 race，等待未决的 NOERROR 竞速。
 每次上游查询的默认超时来自 `dns.timeout`，默认 `1s`：快负答或空答与
 另一侧不响应的组合仍可能等满该预算。这是保留有效结果优先的代价。较短预算也可能在弱网或首次 DoH 建连时增加失败；
 可通过 profile 覆盖 `dns.timeout`，实际延迟与成功率需要真实网络测量。
@@ -171,9 +171,9 @@ SERVFAIL 或 REFUSED 时在本 pool 终止，服务和 CN 不会穿透到后一�
 
 正常 TTL 缓存和 reverse mapping 保留；缓存容量来自 `dns.cache_capacity`
 （默认 4096），optimistic 超时来自 `dns.optimistic_timeout`（默认 `6h`）。
-并行模式地址池的 A evaluate 单独设置
+并行模式地址池的 A/AAAA evaluate 单独设置
 `disable_optimistic_cache: true`，只使用正常 TTL 内的缓存，避免过期空答或旧
-地址抢赢新查询；它同时牺牲了 A 查询过期正向缓存的立即返回能力。其他查询
+地址抢赢新查询；它同时牺牲了地址查询过期正向缓存的立即返回能力。其他查询
 仍保留 optimistic。控制平面解析和 Tailscale split DNS 也禁用 optimistic 缓存。
 
 生成校验器检查 `dns.final`、DNS 规则的 `server` 和 `rule_set` 引用。

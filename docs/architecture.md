@@ -198,15 +198,15 @@ UoT 省略、null 和版本 0 均解释为 v1，禁用时仍省略整个目标�
 然后统一校验并发射；同一个 catalog 可以供多个平台并行构建，来源节点不变。
 `ProxyNode` 和 `ConnectionSettings` 只承载当前五种节点共有的数据与调优值。
 
-`NodeCatalog` 仅保存中立节点与名称，没有兼容目标模型视图或按访问历史切换的编译路线。
-每次构建都从节点 IR 调优并发射独立的目标模型，哈希或读取属性不会改变后续构建行为。
+`NodeCatalog` 保存中立节点与名称。每次构建都从节点 IR 调优并发射独立的目标模型，
+读取 catalog 不会改变后续构建行为。
 
 组策略已使用中立的 `ProfileGroupPlan`，以 `SelectionGroupPlan` 表达候选项与默认项，
 以 `ProbeGroupPlan` 表达 leaf 探测及其策略参数。`ProfilePlanner.PlanGroups` 只产生这些
 计划，并填入平台探测间隔；规则集 HTTP client 的 detour 直接取自计划，不提前生成目标组。
 IR 检查默认项属于候选列表、引用目标存在、探测组只含至少两个 leaf；
 完整配置的标签唯一性、重复候选等检查仍由既有 validator 执行。
-`SingboxGroupEmitter` 再复制候选列表生成目标组。地区、主组和服务的选项顺序与默认项不变。
+`SingboxGroupEmitter` 复制候选列表，按计划中的顺序和默认项生成目标组。
 
 DNS 规划同样先产生中立的 `DnsPlan`：`DnsHttpsResolverPlan` 记录解析器地址、TLS 名称和
 连接出口，`DnsResolverPoolPlan` 记录池名称、匹配范围和主/备解析器。计划保留地址族、
@@ -219,9 +219,9 @@ DNS 规划同样先产生中立的 `DnsPlan`：`DnsHttpsResolverPlan` 记录解�
 完整配置中的 detour、rule-set 等跨模块引用继续交给既有 validator。
 
 `DnsProfileBuilder.Plan` 将池展开为不可变、有序的 `DnsRulePlan`，确定
-顺序回退或正响应竞速、A 查询隔离、NXDOMAIN 接受顺序、response 标签、缓存行为、
+顺序回退或正响应竞速、A/AAAA 查询隔离、NXDOMAIN 接受顺序、response 标签、缓存行为、
 终止 SERVFAIL、Auto AAAA 守卫及 Tailscale 路径。服务 resolver 的 detour 在规划时
-绑定服务选择组，保留现有优先级。IPv4 正响应竞速仍不混入域名 rule-set 条件，
+绑定服务选择组，保留现有优先级。地址正响应竞速不混入域名 rule-set 条件，
 避免 sing-box 的 OR 语义改变匹配范围。`SingboxDnsEmitter` 只映射规则和值，
 不选择匹配范围、执行顺序或回退算法。
 计划校验核对前缀中的 AAAA 守卫、Tailscale 和广告拒绝规则，并检查池与求值规则的数量、
@@ -325,7 +325,7 @@ profile 无效仍按原有无效配置路径处理。HTTP 的 JSON 和 ZIP 接�
 
 五个协议共用 `ProxyNodeParser` 的单一解析入口；各 `*Protocol` 声明 `Schema` 并提供
 解释已校验字段的钩子。路径固定为名称与来源字段校验 → 协议解释 → 节点 IR →
-调优与发射，不再分别维护 converter 和 frontend 两条入口。
+调优与发射。
 
 扩展协议时，在协议 `Schema` 声明已映射字段、别名、明确忽略的元数据及尚不能映射的
 连接语义。公共字段与 TLS/Reality 声明复用 `SourceFieldSchemas`；协议解释不组装
@@ -386,8 +386,8 @@ HY2 hop/BBR 值优先于调优。显式固定间隔不会补入调优的随机�
 
 `ProfilePlanner` 的地区 inventory 记录实际 leaf membership，与地区 selector
 是否生成分离；服务的 `DefaultRegion` 对应 0/1/2+ leaf 时分别选择主组/leaf/
-地区 selector。主组优先使用 `route.main_default_region` 对应的已生成地区组，
-否则依次回退到首个地区组、首个 leaf 和 DIRECT；单个偏好地区 leaf 不改变该主组规则。
+地区 selector。主组使用 `route.main_default_region` 对应的地区 selector 或单个 leaf；
+该地区没有节点时，依次回退到首个地区组、首个 leaf 和 DIRECT。
 
 地址族取自有效目标配置的 `dns.address_family`，完整计划统一保存该策略。
 默认三个平台均使用 `Ipv4Only`（全局 IPv4）。DNS、route、控制面 resolver 与 `BoxForgeEngine` 的

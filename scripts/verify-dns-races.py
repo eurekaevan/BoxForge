@@ -2,7 +2,7 @@
 """Exercise generated desktop DNS rules with the pinned core and local TLS DoH servers.
 
 Usage: python3 scripts/verify-dns-races.py /path/to/sing-box /path/to/Linux/config.json
-Requires generated Ipv4Only + ParallelFastest DNS with a 1s query timeout,
+Requires generated Ipv4Only or DualStack + ParallelFastest DNS with a 1s query timeout,
 Python 3 and OpenSSL. No TUN, real upstreams, or proxy credentials are used.
 """
 
@@ -39,7 +39,7 @@ def question(packet):
 
 
 
-def answer_ipv4(packet):
+def answer_addresses(packet, query_type):
     def skip_name(index):
         while packet[index]:
             if packet[index] & 0xC0 == 0xC0:
@@ -56,8 +56,8 @@ def answer_ipv4(packet):
         index = skip_name(index)
         kind, _, _, length = struct.unpack("!HHIH", packet[index:index + 10])
         index += 10
-        if kind == 1 and length == 4:
-            addresses.append(str(ipaddress.ip_address(packet[index:index + 4])))
+        if kind == query_type and length == (4 if query_type == 1 else 16):
+            addresses.append(str(ipaddress.ip_address(packet[index:index + length])))
         index += length
     return addresses
 
@@ -67,13 +67,22 @@ def response(query, mode, upstream, ttl):
     rcode = {"nx": 3, "servfail": 2, "refused": 5}.get(mode, 0)
     answer = b""
     count = 0
-    if mode in ("cname", "cname-a"):
+    if mode in ("cname", "cname-a", "cname-aaaa"):
         alias = wire_name("alias.google.test")
         answer += b"\xc0\x0c" + struct.pack("!HHIH", 5, 1, ttl, len(alias)) + alias
         count += 1
     if mode in ("a", "cname-a", "additional-a") and query_type == 1:
         owner = wire_name("alias.google.test") if mode == "cname-a" else b"\xc0\x0c"
         answer += owner + struct.pack("!HHIH", 1, 1, ttl, 4)
+        answer += ipaddress.ip_address(f"192.0.2.{upstream + 1}").packed
+        count += 1
+    if mode in ("aaaa", "cname-aaaa", "additional-aaaa") and query_type == 28:
+        owner = wire_name("alias.google.test") if mode == "cname-aaaa" else b"\xc0\x0c"
+        answer += owner + struct.pack("!HHIH", 28, 1, ttl, 16)
+        answer += ipaddress.ip_address(f"2001:db8::{upstream + 1}").packed
+        count += 1
+    if mode == "ipv4":
+        answer += b"\xc0\x0c" + struct.pack("!HHIH", 1, 1, ttl, 4)
         answer += ipaddress.ip_address(f"192.0.2.{upstream + 1}").packed
         count += 1
     if mode == "ipv6":
@@ -84,7 +93,7 @@ def response(query, mode, upstream, ttl):
     if mode in ("nx", "empty"):
         soa = b"\0\0" + struct.pack("!IIIII", 1, 60, 60, 60, ttl)
         authority = b"\xc0\x0c" + struct.pack("!HHIH", 6, 1, ttl, len(soa)) + soa
-    additional = count if mode == "additional-a" else 0
+    additional = count if mode in ("additional-a", "additional-aaaa") else 0
     header = struct.pack("!HHHHHH", struct.unpack("!H", query[:2])[0],
                          0x8180 | rcode, 1, 0 if additional else count,
                          int(bool(authority)), additional)
@@ -94,11 +103,15 @@ def response(query, mode, upstream, ttl):
 
 async def main(core, generated):
     dns = generated["dns"]
-    if (dns.get("strategy") != "ipv4_only" or dns.get("timeout") != "1s"
-            or not any(rule.get("action") == "respond" and rule.get("race") is True
-                       and rule.get("query_type") == ["A"] and rule.get("ip_cidr") == ["0.0.0.0/0"]
-                       for rule in dns.get("rules", []))):
-        raise ValueError("DNS race verification requires Ipv4Only + ParallelFastest DNS with a 1s query timeout")
+    ipv4_only = dns.get("strategy") == "ipv4_only"
+    address_queries = [("A", "0.0.0.0/0")] + ([] if ipv4_only else [("AAAA", "::/0")])
+    if (dns.get("strategy") not in ("ipv4_only", None)
+            or dns.get("timeout") != "1s"
+            or not all(any(rule.get("action") == "respond" and rule.get("race") is True
+                           and rule.get("query_type") == [query_type] and rule.get("ip_cidr") == [cidr]
+                           for rule in dns.get("rules", []))
+                       for query_type, cidr in address_queries)):
+        raise ValueError("DNS race verification requires Ipv4Only or DualStack + ParallelFastest DNS with a 1s query timeout")
     version = subprocess.check_output([str(core), "version"], text=True, timeout=10)
     if f"sing-box version {VERSION}\n" not in version or REVISION not in version:
         raise ValueError(f"Expected official sing-box {VERSION} / {REVISION}")
@@ -200,7 +213,7 @@ async def main(core, generated):
                 data, _ = await asyncio.wait_for(loop.sock_recvfrom(sock, 4096), timeout)
             fields = struct.unpack("!HHHHHH", data[:12])
             result = {"case": label, "ms": round((time.monotonic() - begin) * 1000, 1),
-                      "rcode": fields[1] & 15, "answers": fields[3], "ipv4": answer_ipv4(data)}
+                      "rcode": fields[1] & 15, "answers": fields[3], "ipv4": answer_addresses(data, 1), "ipv6": answer_addresses(data, 28)}
             results.append(result)
             print(json.dumps(result), flush=True)
             return result
@@ -209,7 +222,7 @@ async def main(core, generated):
             if process.poll() is not None:
                 raise RuntimeError(f"Core exited; see {root / 'core.log'}")
             try:
-                await query("ready", "ready.google.test", 28, 0.1)
+                await query("ready", "ready.google.test", 1, 0.1)
                 break
             except asyncio.TimeoutError:
                 await asyncio.sleep(0.05)
@@ -245,6 +258,26 @@ async def main(core, generated):
                 (f"{service}-cn-overlap", f"{service}-overlap", "a", "a", .03, .05, 1, 0, 1),
                 (f"{service}-cn-overlap-failure", f"{service}-overlap", "servfail", "refused", .03, .05, 1, 2, 0),
             ])
+        if not ipv4_only:
+            cases.extend([
+                ("aaaa-fast-primary", "google", "aaaa", "aaaa", .03, .7, 28, 0, 1),
+                ("aaaa-fast-secondary", "google", "aaaa", "aaaa", .7, .03, 28, 0, 1),
+                ("aaaa-failed-primary", "google", "drop", "aaaa", 0, .03, 28, 0, 1),
+                ("aaaa-failed-secondary", "google", "aaaa", "drop", .03, 0, 28, 0, 1),
+                ("aaaa-empty-primary", "google", "empty", "aaaa", .03, .25, 28, 0, 1),
+                ("aaaa-empty-secondary", "google", "aaaa", "empty", .25, .03, 28, 0, 1),
+                ("aaaa-cname-only", "google", "cname", "cname-aaaa", .03, .25, 28, 0, 2),
+                ("aaaa-ipv4-only", "google", "ipv4", "aaaa", .03, .25, 28, 0, 1),
+                ("aaaa-additional-only", "google", "additional-aaaa", "aaaa", .03, .25, 28, 0, 1),
+                ("aaaa-negative-primary", "google", "nx", "aaaa", .03, .25, 28, 0, 1),
+                ("aaaa-negative-secondary", "google", "aaaa", "nx", .25, .03, 28, 0, 1),
+                ("aaaa-both-empty", "google", "empty", "empty", .03, .25, 28, 0, 0),
+                ("aaaa-empty-over-negative", "google", "nx", "empty", .03, .25, 28, 0, 0),
+                ("aaaa-both-negative", "google", "nx", "nx", .03, .25, 28, 3, 0),
+                ("aaaa-domestic-empty", "cn", "empty", "aaaa", .03, .25, 28, 0, 1),
+                ("aaaa-global-empty", "external", "empty", "aaaa", .03, .25, 28, 0, 1),
+                ("aaaa-service-failure-overlap", "overlap", "servfail", "refused", .03, .05, 28, 2, 0),
+            ])
         for index, (label, suffix, primary, secondary, pd, sd, qt, rcode, answers) in enumerate(cases):
             specs[:] = [(0.01, "a", 60)] * 4
             pair = (0, 1) if suffix == "cn" else (2, 3)
@@ -254,30 +287,38 @@ async def main(core, generated):
             assert (result["rcode"], result["answers"]) == (rcode, answers), result
             assert result["ms"] < 1500, result
             if answers:
-                winner = pair[0] if primary == "a" and (secondary != "a" or pd < sd) else pair[1]
-                assert result["ipv4"] == [f"192.0.2.{winner + 1}"], result
-            if label in ("fast-primary", "fast-secondary", "failed-primary", "failed-secondary"):
+                address_mode = "a" if qt == 1 else "aaaa"
+                winner = pair[0] if primary == address_mode and (secondary != address_mode or pd < sd) else pair[1]
+                field = "ipv4" if qt == 1 else "ipv6"
+                address = f"192.0.2.{winner + 1}" if qt == 1 else f"2001:db8::{winner + 1}"
+                assert result[field] == [address], result
+            if label.removeprefix("aaaa-") in ("fast-primary", "fast-secondary", "failed-primary", "failed-secondary"):
                 assert result["ms"] < 500, "Fast responses must not wait for the 700ms/timeout peer"
             if qt in (15, 64, 65):
                 assert result["ms"] < 200, "Non-address queries must still race"
             observed = {event[1] for event in events if event[0] == name}
-            assert observed == (set() if qt == 28 else set(pair)), (label, observed)
+            assert observed == (set() if qt == 28 and ipv4_only else set(pair)), (label, observed)
 
-        specs[2], specs[3] = (0.03, "empty", 1), (0.05, "empty", 1)
-        await query("prime-empty-cache", "stale.google.test")
-        await asyncio.sleep(1.2)
-        specs[2], specs[3] = (0, "drop", 60), (0.1, "a", 60)
-        recovered = await query("expired-empty-must-not-win", "stale.google.test")
-        assert recovered["ipv4"] == ["192.0.2.4"] and recovered["ms"] < 1500, recovered
-        specs[2], specs[3] = (0, "drop", 60), (0, "drop", 60)
-        cached = await query("valid-ttl-cache-still-works", "stale.google.test")
-        assert cached["ipv4"] == ["192.0.2.4"] and cached["ms"] < 200, cached
-        specs[2], specs[3] = (0.03, "nx", 60), (0, "drop", 60)
-        negative = await query("negative-timeout-budget", "negative.google.test")
-        assert negative["rcode"] == 3 and 800 < negative["ms"] < 1800, negative
-        specs[2], specs[3] = (0, "drop", 60), (0, "drop", 60)
-        failed = await query("both-timeout-budget", "both-timeout.google.test")
-        assert failed["rcode"] == 2 and 800 < failed["ms"] < 1800, failed
+        for qt, mode, field, expected in [(1, "a", "ipv4", "192.0.2.4")] + (
+                [] if ipv4_only else [(28, "aaaa", "ipv6", "2001:db8::4")]):
+            prefix = "" if qt == 1 else "aaaa-"
+            stale_name = f"{prefix}stale.google.test"
+            specs[2], specs[3] = (0.03, "empty", 1), (0.05, "empty", 1)
+            primed = await query(prefix + "prime-empty-cache", stale_name, qt)
+            assert (primed["rcode"], primed["answers"]) == (0, 0), primed
+            await asyncio.sleep(1.2)
+            specs[2], specs[3] = (0, "drop", 60), (0.1, mode, 60)
+            recovered = await query(prefix + "expired-empty-must-not-win", stale_name, qt)
+            assert recovered[field] == [expected] and recovered["ms"] < 1500, recovered
+            specs[2], specs[3] = (0, "drop", 60), (0, "drop", 60)
+            cached = await query(prefix + "valid-ttl-cache-still-works", stale_name, qt)
+            assert cached[field] == [expected] and cached["ms"] < 200, cached
+            specs[2], specs[3] = (0.03, "nx", 60), (0, "drop", 60)
+            negative = await query(prefix + "negative-timeout-budget", f"{prefix}negative.google.test", qt)
+            assert negative["rcode"] == 3 and 800 < negative["ms"] < 1800, negative
+            specs[2], specs[3] = (0, "drop", 60), (0, "drop", 60)
+            failed = await query(prefix + "both-timeout-budget", f"{prefix}both-timeout.google.test", qt)
+            assert failed["rcode"] == 2 and 800 < failed["ms"] < 1800, failed
         (root / "results.json").write_text(json.dumps(results, indent=2))
         print(f"PASS: {len(results)} local DoH scenarios")
     finally:

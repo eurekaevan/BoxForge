@@ -1,6 +1,5 @@
 using System.Collections.Immutable;
 using BoxForge.Configuration;
-using BoxForge.Models;
 using BoxForge.Models.Intermediate;
 
 namespace BoxForge.Builders.Components;
@@ -94,7 +93,8 @@ internal static class DnsProfileBuilder
         {
             CompilePool(rules, new ResolverPoolDefinition(
                 pool.RuleSets is null ? default : [.. pool.RuleSets], pool.PrimaryResolver, pool.SecondaryResolver,
-                $"response-{pool.Name}-primary", $"response-{pool.Name}-secondary"), selectionMode);
+                $"response-{pool.Name}-primary", $"response-{pool.Name}-secondary"), selectionMode,
+                addressFamily != AddressFamilyPolicy.Ipv4Only);
         }
         return [.. rules];
     }
@@ -106,7 +106,8 @@ internal static class DnsProfileBuilder
     private static void CompilePool(
         List<DnsRulePlan> rules,
         ResolverPoolDefinition pool,
-        DnsResolverSelectionMode selectionMode)
+        DnsResolverSelectionMode selectionMode,
+        bool includeIpv6)
     {
         switch (selectionMode)
         {
@@ -114,7 +115,7 @@ internal static class DnsProfileBuilder
                 CompileSequentialFallback(rules, pool);
                 break;
             case DnsResolverSelectionMode.ParallelFastest:
-                CompileParallelFastest(rules, pool);
+                CompileParallelFastest(rules, pool, includeIpv6);
                 break;
             default:
                 throw new ArgumentOutOfRangeException(
@@ -145,28 +146,33 @@ internal static class DnsProfileBuilder
 
     private static void CompileParallelFastest(
         List<DnsRulePlan> rules,
-        ResolverPoolDefinition pool)
+        ResolverPoolDefinition pool,
+        bool includeIpv6)
     {
-        var addressPool = pool with
+        foreach (string queryType in includeIpv6 ? new[] { "A", "AAAA" } : new[] { "A" })
         {
-            QueryType = "A",
-            PrimaryResponse = DnsResponseTags.ForAddressQuery(pool.PrimaryResponse),
-            SecondaryResponse = DnsResponseTags.ForAddressQuery(pool.SecondaryResponse)
-        };
-        AddEvaluate(rules, addressPool, primary: true);
-        AddEvaluate(rules, addressPool, primary: false);
-        AddResponse(rules, addressPool, addressPool.PrimaryResponse,
-            DnsResultCode.NoError, race: true, requireIpv4: true);
-        AddResponse(rules, addressPool, addressPool.SecondaryResponse,
-            DnsResultCode.NoError, race: true, requireIpv4: true);
-        // Empty answers and negative responses are fallbacks after both address races.
-        AddResponse(rules, addressPool, addressPool.PrimaryResponse, DnsResultCode.NoError);
-        AddResponse(rules, addressPool, addressPool.SecondaryResponse, DnsResultCode.NoError);
-        AddResponse(rules, addressPool, addressPool.PrimaryResponse, DnsResultCode.NameError);
-        AddResponse(rules, addressPool, addressPool.SecondaryResponse, DnsResultCode.NameError);
-        AddTerminalServfail(rules, addressPool);
+            var addressPool = pool with
+            {
+                QueryType = queryType,
+                PrimaryResponse = DnsResponseTags.ForAddressQuery(pool.PrimaryResponse, queryType),
+                SecondaryResponse = DnsResponseTags.ForAddressQuery(pool.SecondaryResponse, queryType)
+            };
+            AddEvaluate(rules, addressPool, primary: true);
+            AddEvaluate(rules, addressPool, primary: false);
+            string addressCidr = queryType == "A" ? "0.0.0.0/0" : "::/0";
+            AddResponse(rules, addressPool, addressPool.PrimaryResponse,
+                DnsResultCode.NoError, race: true, addressCidr: addressCidr);
+            AddResponse(rules, addressPool, addressPool.SecondaryResponse,
+                DnsResultCode.NoError, race: true, addressCidr: addressCidr);
+            // Empty answers and negative responses are fallbacks after both address races.
+            AddResponse(rules, addressPool, addressPool.PrimaryResponse, DnsResultCode.NoError);
+            AddResponse(rules, addressPool, addressPool.SecondaryResponse, DnsResultCode.NoError);
+            AddResponse(rules, addressPool, addressPool.PrimaryResponse, DnsResultCode.NameError);
+            AddResponse(rules, addressPool, addressPool.SecondaryResponse, DnsResultCode.NameError);
+            AddTerminalServfail(rules, addressPool);
+        }
 
-        // The scoped A terminal prevents A queries from entering this unchanged general pool.
+        // Scoped address terminals prevent repeated queries in the general pool.
         AddEvaluate(rules, pool, primary: true);
         AddEvaluate(rules, pool, primary: false);
         AddResponse(rules, pool, pool.PrimaryResponse,
@@ -189,7 +195,7 @@ internal static class DnsProfileBuilder
         {
             RuleSet = pool.RuleSets,
             QueryType = pool.QueryType is null ? default : [pool.QueryType],
-            DisableOptimisticCache = pool.QueryType == "A" ? true : null,
+            DisableOptimisticCache = pool.QueryType is "A" or "AAAA" ? true : null,
             Action = DnsOperation.Evaluate,
             Server = primary ? pool.PrimaryServer : pool.SecondaryServer,
             Tag = primary ? pool.PrimaryResponse : pool.SecondaryResponse,
@@ -215,14 +221,14 @@ internal static class DnsProfileBuilder
         string responseTag,
         DnsResultCode rcode,
         bool race = false,
-        bool requireIpv4 = false) =>
+        string? addressCidr = null) =>
         rules.Add(new DnsRulePlan
         {
             // Domain rule-sets and IP predicates share an OR group in sing-box.
             // The unique evaluated-response tag already carries the pool's domain scope.
-            RuleSet = requireIpv4 ? default : pool.RuleSets,
+            RuleSet = addressCidr is not null ? default : pool.RuleSets,
             QueryType = pool.QueryType is null ? default : [pool.QueryType],
-            IpCidr = requireIpv4 ? ["0.0.0.0/0"] : default,
+            IpCidr = addressCidr is not null ? [addressCidr] : default,
             MatchResponse = responseTag,
             ResponseRcode = rcode,
             Action = DnsOperation.Respond,

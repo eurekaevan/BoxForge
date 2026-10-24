@@ -16,4 +16,7 @@ public static class DnsResponseTags
     ]);
 
     public static string ForAddressQuery(string responseTag) => responseTag + "-a";
+
+    internal static string ForAddressQuery(string responseTag, string queryType) =>
+        responseTag + "-" + queryType.ToLowerInvariant();
 }

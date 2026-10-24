@@ -1,5 +1,4 @@
 using BoxForge.Exceptions;
-using BoxForge.Models;
 
 namespace BoxForge.Models.Intermediate;
 

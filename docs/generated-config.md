@@ -22,8 +22,7 @@
 `features.tailscale.enabled` 及平台层覆盖控制；地址族使用有效 profile 的平台值。
 DNS 顺序回退的首选 `700ms` 预算属于算法常量，不是 Android 的全局 DNS 超时。
 
-每个平台都只生成一个 TUN inbound，不再提供本地 SOCKS/HTTP mixed 入口。
-原先显式使用 `127.0.0.1:8848` 的客户端须改为通过 TUN 联网。
+每个平台都只生成一个 TUN inbound，不提供本地 SOCKS/HTTP mixed 入口。
 TUN 固定启用 `auto_route`，DNS 模式显式输出 `dns_mode: hijack`。
 `strict_route` 默认仅在 Linux/Windows 显式启用；指定版本 Android feature matrix
 标记该能力未实现，因此省略。不生成 `set_system_proxy` 或
@@ -81,7 +80,7 @@ Linux 在每条上述 L3 route 之前再生成无 `outbound` 的 `bypass` 动作
 TCP 和 UDP 无法完成 sniff 等不能使用 L3 forwarding 的情况。
 
 Linux 的 `bridge` 需要系统权限，`bypass` 依赖已启用的 `auto_redirect`。
-Windows 和 Android 不生成这些转发层；Windows 不再通过生成配置启用 bridge/WinDivert。
+Windows 和 Android 不生成 bridge/bypass 转发层，也不通过配置启用 WinDivert。
 
 三个平台默认生成 Tailscale endpoint，并启用 `on_demand: true`。启用时，
 `taildrop_directory` 来自有效平台 profile：默认 Android 使用
@@ -94,10 +93,10 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
 ## DNS 与持久化缓存
 
 - DNS 每次上游查询默认超时为 `1s`。Android 正常只查询首选 resolver，首选查询使用
-  `700ms` 超时，失败后才查询备用；Linux/Windows 同时查询两家。A 查询优先让
-  含 IPv4 地址的 `NOERROR` 响应竞速，双方均无地址时才依次接受 primary、secondary
-  的空答或仅 CNAME 等 `NOERROR` 后备；非 A 查询让最快的 `NOERROR` 胜出。
-  Linux/Windows 的 A 查询禁用 optimistic 过期缓存，正常 TTL 缓存保留。
+  `700ms` 超时，失败后才查询备用；Linux/Windows 同时查询两家。A 和允许放行的
+  AAAA 查询优先让含对应地址族地址的 `NOERROR` 响应竞速，双方均无地址时才依次接受
+  primary、secondary 的空答或仅 CNAME 等 `NOERROR` 后备；非地址查询让最快的
+  `NOERROR` 胜出。并行模式的 A/AAAA 地址池禁用 optimistic 过期缓存，正常 TTL 缓存保留。
   NXDOMAIN 不参与竞速，双方没有 `NOERROR` 时依次接受 primary、secondary 的
   NXDOMAIN。两家都失败时明确返回 `SERVFAIL`；详见
   [DNS 分类与回退](routing-and-dns.md)。
@@ -294,15 +293,14 @@ origin 被限制为同端口的 `127.0.0.1` 与 `localhost`，
   Android 使用 `interval: 3m`。缩短周期用于更及时地发现节点延迟变化，
   不保证单连接提速。现有 selector 继续生成 `interrupt_exist_connections: true`。
 - 主 `🚀 PROXIES` selector 依次保留地区组、单个节点和 `DIRECT` 的人工
-  选择能力，不生成跨地区的全局 URLTest。美国地区组可用时默认选择 `🇺🇸 US`；
-  否则默认第一个已生成的地区组。没有地区组时，有节点则选择第一个节点，
-  没有节点则选择 `DIRECT`。
+  选择能力，不生成跨地区的全局 URLTest。默认选择 `route.main_default_region`
+  对应的地区组（内置为 `🇺🇸 US`）；该地区仅有一个节点时直接选择该节点。
+  该地区没有节点时，依次回退到首个已生成地区组、首个真实节点和 `DIRECT`。
 - AI、Google、Spotify 和 Microsoft 服务组在美国地区组存在时默认选择它；
   Games 在香港地区组存在时默认选择它。偏好地区仅有一个 leaf 时直接选择该节点，
   零个 leaf 才回退主代理组；偏好定义仅来自 `route.services`。
   Service selector 不直接引用地区 AUTO，而由地区 selector 默认到 AUTO。
-  主组仍保持上述“已生成地区组优先”的默认规则：单个 US 与多个 JP 并存时，
-  主组默认 JP，偏好 US 的服务默认 US leaf；不新增单个 US 改写主组的策略。
+  单个 US 与多个 JP 并存时，主组和偏好 US 的服务均默认选择 US 节点。
 - 真实代理节点保留订阅名称，但不得与 BoxForge 固定分组、内部基础设施、DNS
   响应或 rule-set tag 冲突；冲突会在节点转换阶段直接报错，不自动改名。
 

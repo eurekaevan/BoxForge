@@ -1,5 +1,4 @@
 using BoxForge.Exceptions;
-using BoxForge.Models;
 using System.Collections.Immutable;
 using BoxForge.Configuration;
 
@@ -136,7 +135,10 @@ internal sealed record DnsPlan(
                 DisableOptimisticCache = true
             });
         RequireAt(prefix++, new() { RuleSet = [.. BlockedRuleSets], Action = DnsOperation.Predefined, Rcode = DnsResultCode.NameError });
-        int evaluationsPerPool = SelectionMode == DnsResolverSelectionMode.ParallelFastest ? 4 : 2;
+        string?[] queryTypes = SelectionMode == DnsResolverSelectionMode.ParallelFastest
+            ? AddressFamily == AddressFamilyPolicy.Ipv4Only ? ["A", null] : ["A", "AAAA", null]
+            : [null];
+        int evaluationsPerPool = queryTypes.Length * 2;
         if (Rules.Count(rule => rule.Action == DnsOperation.Evaluate) != Pools.Count * evaluationsPerPool)
             diagnostics.Add(new("IR011", "plan.dns.pools", "DNS 解析池与实际求值规则的数量不一致。"));
         int previous = prefix - 1;
@@ -144,17 +146,17 @@ internal sealed record DnsPlan(
         {
             DnsResolverPoolPlan pool = Pools[index];
             bool valid = true;
-            foreach (bool addressQuery in SelectionMode == DnsResolverSelectionMode.ParallelFastest ? new[] { true, false } : new[] { false })
+            foreach (string? queryType in queryTypes)
                 foreach (bool primary in new[] { true, false })
                 {
                     string tag = $"response-{pool.Name}-{(primary ? "primary" : "secondary")}";
-                    if (addressQuery)
-                        tag = DnsResponseTags.ForAddressQuery(tag);
+                    if (queryType is not null)
+                        tag = DnsResponseTags.ForAddressQuery(tag, queryType);
                     var expected = new DnsRulePlan
                     {
                         RuleSet = pool.RuleSets is null ? default : [.. pool.RuleSets],
-                        QueryType = addressQuery ? ["A"] : default,
-                        DisableOptimisticCache = addressQuery ? true : null,
+                        QueryType = queryType is not null ? [queryType] : default,
+                        DisableOptimisticCache = queryType is not null ? true : null,
                         Action = DnsOperation.Evaluate,
                         Server = primary ? pool.PrimaryResolver : pool.SecondaryResolver,
                         Tag = tag,
