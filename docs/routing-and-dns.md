@@ -70,13 +70,14 @@ IPv6 早期拒绝 → 广告拒绝 → IPv6 兜底拒绝 → 代理服务 → �
 ## DNS 分类与控制面解析
 
 每个目标最终配置中的 `dns.address_family` 决定地址族；
-内置 JSON 为 Linux、Windows、Android 均设置 `DirectDualStack`。显式选择 `Ipv4Only` 时生成
+内置 JSON 为 Linux、Windows、Android 均设置 `Ipv4Only`（全局 IPv4）。该策略生成
 `dns.strategy = ipv4_only`、最前面的全局 AAAA 空 `NOERROR`，以及 route 的早期和
-后置 IPv6 reject，后者也覆盖字面量 IPv6 和不经 sing-box DNS 的连接。
-通过 `platforms.<平台>.dns.address_family` 可覆盖为 `DualStack`，此时不生成上述
+后置 IPv6 reject，后者也覆盖字面量 IPv6 和不经 sing-box DNS 的连接；直连与代理流量都不使用 IPv6。
+通过 `platforms.<平台>.dns.address_family` 可覆盖为 `DirectDualStack`（代理仅 IPv4、直连保留 IPv6）、
+`Auto` 或 `DualStack`。`DualStack` 不生成上述
 AAAA 阻断和 IPv6 reject，DNS 与控制面解析策略也随之切换。
 
-默认 `DirectDualStack` 保留 TUN 的 IPv4 和 IPv6 捕获地址，通过反转
+`Auto` 与 `DirectDualStack` 保留 TUN 的 IPv4 和 IPv6 捕获地址，通过反转
 `default_interface_address: ["2000::/3"]` 条件判断当前默认出口接口，
 不按网络类型合并其他接口的地址。默认出口存在 `2000::/3` 公网 IPv6 地址时正常处理 AAAA 和 IPv6 业务分流；
 缺少该地址或无法取得接口信息时，AAAA 返回空 `NOERROR`，并在早期及后置守卫拒绝 IPv6。
@@ -97,7 +98,7 @@ DIRECT 出口显式绑定 AliDNS，并禁用 optimistic 过期缓存。Auto、Di
 代理节点和控制面 HTTP client 的解析策略不受此偏好影响。
 
 控制平面域名由 `route.default_domain_resolver` 解析：直连
-`dns-direct-alidns`、随平台地址族选择的策略（`Ipv4Only` 与默认 `DirectDualStack` 使用 `ipv4_only`，
+`dns-direct-alidns`、随平台地址族选择的策略（`Ipv4Only` 与 `DirectDualStack` 使用 `ipv4_only`，
 `Auto` 与 `DualStack` 不强制地址族）、`disable_optimistic_cache = true`。
 代理节点和 Tailscale endpoint 继承该设置；rule-set HTTP client 显式绑定相同解析策略。
 DIRECT 显式使用上述 `prefer_ipv4`／`ipv4_only` 绑定。Dashboard HTTP client 直连，按平台地址族解析，

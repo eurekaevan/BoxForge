@@ -390,7 +390,7 @@ HY2 hop/BBR 值优先于调优。显式固定间隔不会补入调优的随机�
 否则依次回退到首个地区组、首个 leaf 和 DIRECT；单个偏好地区 leaf 不改变该主组规则。
 
 地址族取自有效目标配置的 `dns.address_family`，完整计划统一保存该策略。
-默认三个平台均使用 `DirectDualStack`。DNS、route、控制面 resolver 与 `BoxForgeEngine` 的
+默认三个平台均使用 `Ipv4Only`（全局 IPv4）。DNS、route、控制面 resolver 与 `BoxForgeEngine` 的
 `Validate(config, addressFamily)` 均使用同一实例中的策略，validator 不再次推导平台。IPv4-only 除解析
 策略和 IPv6 节点字面量外，还验证 early/post-resolve IPv6 reject guards 和首条
 无条件 AAAA 空 NOERROR；不能用缩窄到特定网络/域名的规则伪装全局 guard。

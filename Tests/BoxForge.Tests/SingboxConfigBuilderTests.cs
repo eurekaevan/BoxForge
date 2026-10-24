@@ -37,7 +37,7 @@ public sealed class SingboxConfigBuilderTests
     public void BuildRejectsMissingOrContradictoryPolicyBeforeEmission(string fault)
     {
         var source = CreateProxy("US01", "us.example.com") with { AddressFamily = AddressFamilyPolicy.Ipv4Only };
-        var plan = ConfigurationPlanner.Plan(new NodeCatalog([source], [source.Name]), CreateProfile(TargetPlatform.Linux));
+        var plan = ConfigurationPlanner.Plan(new NodeCatalog([source], [source.Name]), CreateDirectDualStackProfile(TargetPlatform.Linux));
         Assert.DoesNotThrow(plan.Validate);
         int blocking = plan.Dns.Rules.ToList().FindIndex(rule => rule.Rcode == DnsResultCode.NameError);
         int hijack = plan.Route.Rules.ToList().FindIndex(rule => rule.Phase == RoutePhase.DnsHijack);
@@ -389,7 +389,7 @@ public sealed class SingboxConfigBuilderTests
                 Is.EqualTo(platform == TargetPlatform.Linux));
         });
 
-        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Auto));
+        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Ipv4Only));
     }
 
     [TestCase(TargetPlatform.Android)]
@@ -425,7 +425,7 @@ public sealed class SingboxConfigBuilderTests
             Assert.That(json, Does.Contain("\"on_demand\": true"));
         });
 
-        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Auto));
+        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Ipv4Only));
     }
 
     [TestCase(TargetPlatform.Android)]
@@ -451,7 +451,7 @@ public sealed class SingboxConfigBuilderTests
                 Is.False);
         });
 
-        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Auto));
+        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Ipv4Only));
     }
 
     [TestCase(TargetPlatform.Android)]
@@ -545,14 +545,14 @@ public sealed class SingboxConfigBuilderTests
                 Is.EqualTo(HttpClientTags.RuleSetProxy));
         });
 
-        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Auto));
+        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Ipv4Only));
     }
 
     [Test]
     public void DefaultRouteSerializesConditionalIpv6GuardsWithoutPortBasedQuicRejection()
     {
         SingboxConfig config = PlanAndBuild(
-            new NodeCatalog([], []), CreateProfile(TargetPlatform.Linux),
+            new NodeCatalog([], []), CreateDirectDualStackProfile(TargetPlatform.Linux),
             new string('a', 64));
 
         string json = new ConfigSerializer().Serialize(config);
@@ -587,7 +587,7 @@ public sealed class SingboxConfigBuilderTests
             Assert.That(json, Does.Not.Contain("\"invert\": false"));
         });
 
-        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Auto));
+        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.DirectDualStack));
     }
 
     [TestCase(TargetPlatform.Android)]
@@ -629,7 +629,7 @@ public sealed class SingboxConfigBuilderTests
                 client.Tag == HttpClientTags.DashboardDirect).Detour, Is.Null);
         });
 
-        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(enabled, AddressFamilyPolicy.Auto));
+        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(enabled, AddressFamilyPolicy.Ipv4Only));
     }
 
     [Test]
@@ -771,7 +771,7 @@ public sealed class SingboxConfigBuilderTests
                 Does.Not.Contain("Steam"));
         });
 
-        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Auto));
+        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Ipv4Only));
     }
 
     [TestCase(TargetPlatform.Android)]
@@ -831,7 +831,7 @@ public sealed class SingboxConfigBuilderTests
                 Is.True);
         });
 
-        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.DirectDualStack));
+        Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Ipv4Only));
     }
 
     [TestCase(TargetPlatform.Android)]
@@ -839,7 +839,7 @@ public sealed class SingboxConfigBuilderTests
     [TestCase(TargetPlatform.Windows)]
     public void DirectDualStackKeepsDirectResolutionDualStackAndProxyControlPlaneIpv4(TargetPlatform platform)
     {
-        var resolved = BoxForgeProfile.Default.Resolve(platform);
+        var resolved = CreateDirectDualStackProfile(platform);
         SingboxConfig config = PlanAndBuild(
             new NodeCatalog([CreateProxy("US01", "us.example.com")], ["US01"]), resolved, new string('a', 64));
         Assert.Multiple(() =>
@@ -862,7 +862,7 @@ public sealed class SingboxConfigBuilderTests
     public void DirectDualStackValidatorRejectsConfigsThatCanSendIpv6ToProxy(string fault)
     {
         SingboxConfig config = PlanAndBuild(
-            new NodeCatalog([], []), CreateProfile(TargetPlatform.Linux), new string('a', 64));
+            new NodeCatalog([], []), CreateDirectDualStackProfile(TargetPlatform.Linux), new string('a', 64));
         List<RouteRule> rules = config.Route.Rules;
         config = fault switch
         {
@@ -898,7 +898,7 @@ public sealed class SingboxConfigBuilderTests
         var node = CreateProxy("US IPv6", "2001:db8::1234");
         var error = Assert.Throws<ConfigValidationException>(() =>
             new SingboxConfigValidator().Validate(PlanAndBuild(new NodeCatalog([node], [node.Name]),
-                BoxForgeProfile.Default.Resolve(platform), "cache"), AddressFamilyPolicy.DirectDualStack));
+                CreateDirectDualStackProfile(platform), "cache"), AddressFamilyPolicy.DirectDualStack));
         Assert.That(error!.Diagnostics.Select(diagnostic => diagnostic.Code), Does.Contain("SB062"));
     }
 
@@ -937,6 +937,10 @@ public sealed class SingboxConfigBuilderTests
             ["cipher"] = "aes-128-gcm",
             ["password"] = "test-only"
         }));
+
+    private static ResolvedProfile CreateDirectDualStackProfile(TargetPlatform platform) =>
+        CreateProfile(platform, profile: BoxForgeProfile.Default.ApplyOverrides(
+            JsonSerializer.SerializeToNode(new { dns = new { address_family = "DirectDualStack" } })!.AsObject()));
 
     private static ResolvedProfile CreateProfile(
         TargetPlatform platform,

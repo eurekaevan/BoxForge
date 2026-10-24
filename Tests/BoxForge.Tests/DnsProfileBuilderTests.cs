@@ -95,7 +95,7 @@ public sealed class DnsProfileBuilderTests
     [Test]
     public void DnsPlanFixesGuardAndServiceResolverPolicyBeforeEmission()
     {
-        var plan = CreatePlan(TargetPlatform.Linux, tailscaleEnabled: true);
+        var plan = CreatePlan(TargetPlatform.Linux, tailscaleEnabled: true, AddressFamilyPolicy.Auto);
         var guard = plan.Rules[0];
         var tailscale = plan.Rules[1];
         var blocking = plan.Rules[2];
@@ -279,7 +279,7 @@ public sealed class DnsProfileBuilderTests
     [TestCase(TargetPlatform.Windows)]
     public void AutoBlocksAaaaOnlyWhenTheDefaultInterfaceLacksGlobalIpv6(TargetPlatform platform)
     {
-        DnsConfig dns = SingboxDnsEmitter.Emit(DnsProfileBuilder.Plan(BoxForgeProfile.Default.Resolve(platform)));
+        DnsConfig dns = SingboxDnsEmitter.Emit(CreatePlan(platform, addressFamily: AddressFamilyPolicy.Auto));
         DnsRule guard = dns.Rules[0];
         Assert.Multiple(() =>
         {
@@ -551,19 +551,19 @@ public sealed class DnsProfileBuilderTests
     [TestCase(TargetPlatform.Android)]
     [TestCase(TargetPlatform.Linux)]
     [TestCase(TargetPlatform.Windows)]
-    public void DefaultDirectDualStackPolicyControlsDnsAndRouteIpv6Guards(TargetPlatform platform)
+    public void DefaultIpv4OnlyPolicyControlsDnsAndRouteIpv6Guards(TargetPlatform platform)
     {
         DnsConfig dns = SingboxDnsEmitter.Emit(DnsProfileBuilder.Plan(BoxForgeProfile.Default.Resolve(platform)));
         RouteConfig route = SingboxRouteEmitter.Emit(RouteProfileBuilder.Plan(BoxForgeProfile.Default.Resolve(platform)));
 
         Assert.That(BoxForgeProfile.Default.Resolve(platform).Settings.AddressFamily,
-            Is.EqualTo(AddressFamilyPolicy.DirectDualStack));
-        Assert.That(dns.Strategy, Is.Null);
-        Assert.That(dns.Rules[0].Rules![0].QueryType, Is.EqualTo(new[] { "AAAA" }));
-        Assert.That(dns.Rules[0].Rules![1].DefaultInterfaceAddress, Is.EqualTo(new[] { "2000::/3" }));
+            Is.EqualTo(AddressFamilyPolicy.Ipv4Only));
+        Assert.That(dns.Strategy, Is.EqualTo(DnsStrategy.Ipv4Only));
+        Assert.That(dns.Rules[0].QueryType, Is.EqualTo(new[] { "AAAA" }));
+        Assert.That(dns.Rules[0].Rules, Is.Null);
+        Assert.That(dns.Rules[0].Rcode, Is.EqualTo(DnsResponseCode.NoError));
         Assert.That(route.Rules.Count(rule =>
-            rule.Action == RouteRuleAction.Reject
-            && rule.Rules?.Any(child => child.IpVersion == 6) == true),
+            rule.Action == RouteRuleAction.Reject && rule.IpVersion == 6 && rule.RuleSet is null),
             Is.EqualTo(2));
     }
 
@@ -580,7 +580,7 @@ public sealed class DnsProfileBuilderTests
         {
             platforms = new Dictionary<string, object>
             {
-                [platform.ToString()] = new { dns = new { selection_mode = selectionMode.ToString() } }
+                [platform.ToString()] = new { dns = new { address_family = "DirectDualStack", selection_mode = selectionMode.ToString() } }
             }
         })!.AsObject());
         DnsPlan plan = DnsProfileBuilder.Plan(profile.Resolve(platform));
@@ -857,9 +857,11 @@ public sealed class DnsProfileBuilderTests
     private static int FindRuleSetIndex(List<DnsRule> rules, string ruleSet) =>
         rules.FindIndex(rule => rule.RuleSet?.Contains(ruleSet) == true);
 
-    private static DnsPlan CreatePlan(TargetPlatform platform, bool tailscaleEnabled = false) =>
+    private static DnsPlan CreatePlan(
+        TargetPlatform platform, bool tailscaleEnabled = false, AddressFamilyPolicy? addressFamily = null) =>
         DnsProfileBuilder.Plan(BoxForgeProfile.Default.ApplyOverrides(JsonSerializer.SerializeToNode(new
         {
-            features = new { tailscale = new { enabled = tailscaleEnabled } }
-        })!.AsObject()).Resolve(platform));
+            features = new { tailscale = new { enabled = tailscaleEnabled } },
+            dns = addressFamily is null ? null : new { address_family = addressFamily.ToString() }
+        }, new JsonSerializerOptions { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull })!.AsObject()).Resolve(platform));
 }

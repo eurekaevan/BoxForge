@@ -81,17 +81,14 @@ public sealed class ProtocolSourceMappingTests
         JsonElement tun = config.GetProperty("inbounds").EnumerateArray().Single(inbound => inbound.GetProperty("type").GetString() == "tun");
         Assert.That(tun.TryGetProperty("strict_route", out _), Is.EqualTo(platform != TargetPlatform.Android));
         JsonElement aaaaGuard = config.GetProperty("dns").GetProperty("rules")[0];
-        Assert.That(aaaaGuard.GetProperty("mode").GetString(), Is.EqualTo("and"));
-        Assert.That(aaaaGuard.GetProperty("rules")[0].GetProperty("query_type")[0].GetString(), Is.EqualTo("AAAA"));
-        Assert.That(aaaaGuard.GetProperty("rules")[1].GetProperty("default_interface_address")[0].GetString(), Is.EqualTo("2000::/3"));
-        Assert.That(aaaaGuard.GetProperty("rules")[1].GetProperty("invert").GetBoolean(), Is.True);
+        Assert.That(aaaaGuard.TryGetProperty("rules", out _), Is.False);
+        Assert.That(aaaaGuard.GetProperty("query_type")[0].GetString(), Is.EqualTo("AAAA"));
+        Assert.That(aaaaGuard.GetProperty("action").GetString(), Is.EqualTo("predefined"));
         Assert.That(config.GetProperty("route").GetProperty("rules").EnumerateArray()
             .Count(rule => rule.GetProperty("action").GetString() == "reject"
-                && rule.TryGetProperty("rules", out JsonElement conditions)
-                && conditions.EnumerateArray().Any(condition => condition.TryGetProperty("ip_version", out JsonElement version)
-                    && version.GetInt32() == 6)
-                && conditions.EnumerateArray().Any(condition => condition.TryGetProperty("default_interface_address", out _)
-                    && condition.GetProperty("invert").GetBoolean())), Is.EqualTo(2));
+                && rule.TryGetProperty("ip_version", out JsonElement version)
+                && version.GetInt32() == 6
+                && !rule.TryGetProperty("rule_set", out _)), Is.EqualTo(2));
 
         switch (fixture)
         {

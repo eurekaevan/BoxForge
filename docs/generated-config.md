@@ -54,7 +54,10 @@ Windows/Android 省略该字段。实际吞吐收益尚未验证，可按
 TUN 默认 IPv6 地址为 `fd32:f937:4cd0:1::1/126`，可通过 `route.tun_addresses` 替换。
 ULA 前缀由安全随机源一次生成并固定在内置 profile 中，三个平台共用；生成配置时不会重新随机选择。
 该默认值降低与其他软件通用前缀碰撞的概率，不保证每个部署唯一；与已有网络冲突时应在部署 profile 中覆盖。
-默认 `DirectDualStack` 保留双栈捕获，代理流量仅 IPv4，直连流量保留 IPv6：
+默认 `Ipv4Only` 为全局 IPv4：保留双栈 TUN 捕获，但 AAAA 查询无条件返回空答，
+早晚两道 `ip_version: 6` 拒绝无条件生效，分别位于 DNS 劫持之后、任何 DIRECT、Tailscale、bridge、bypass 或 sniff 之前，
+以及服务分流之前。直连和代理流量均不使用 IPv6，应用能否重试 IPv4 由应用自身决定。
+覆盖为 `DirectDualStack` 时代理流量仅 IPv4、直连流量保留 IPv6：
 仅在出口接口缺少 `2000::/3` 公网 IPv6 地址或无法取得接口信息时拒绝全部 IPv6，并对 AAAA 返回空答；
 该条件下的 IPv6 拒绝分别位于 DNS 劫持之后、任何 DIRECT、Tailscale、bridge、bypass 或 sniff 之前，
 以及服务分流之前。此外，代理服务的规则集在服务分流之前、全部规则之后的最终出口之前
@@ -64,7 +67,6 @@ ULA 前缀由安全随机源一次生成并固定在内置 profile 中，三个�
 Android 依赖客户端提供当前默认物理接口和地址，尚未完成真机验证；
 未提供信息时保守拒绝客户端 IPv6。
 覆盖为 `Auto` 时只保留上述出口条件守卫，代理流量不额外限制 IPv6；
-覆盖为 `Ipv4Only` 时，AAAA 空答和两道 IPv6 拒绝无条件生效；
 覆盖为 `DualStack` 时不生成这些拒绝规则。TUN 捕获地址本身不代表 IPv6 连通能力。
 详见[地址族策略](routing-and-dns.md#dns-分类与控制面解析)。
 
@@ -99,17 +101,18 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
   NXDOMAIN 不参与竞速，双方没有 `NOERROR` 时依次接受 primary、secondary 的
   NXDOMAIN。两家都失败时明确返回 `SERVFAIL`；详见
   [DNS 分类与回退](routing-and-dns.md)。
-- DNS 默认使用 `DirectDualStack`，不强制解析地址族；出口缺少公网 IPv6 地址时对客户端 AAAA 返回空答，
+- DNS 默认使用 `Ipv4Only`，设置 `dns.strategy = ipv4_only` 并让全部客户端 AAAA 查询在规则链首部返回空 `NOERROR`；
+  覆盖为 `DirectDualStack` 或 `Auto` 时不强制解析地址族，出口缺少公网 IPv6 地址时对客户端 AAAA 返回空答，
   有公网 IPv6 出口时，各解析池均保留 AAAA，真实目标的 IPv6 转发限制由路由负责。
   缓存容量为 `4096`，并启用超时为 `6h` 的 optimistic 缓存和 reverse mapping。
 - 代理节点和 Tailscale endpoint 继承
   `route.default_domain_resolver`：直连固定 tag `dns-direct-alidns`（默认 AliDNS，可覆盖端点）、禁用 optimistic
-  过期缓存。默认 `DirectDualStack` 与 `Ipv4Only` 强制该 resolver 使用 `ipv4_only`，使节点连接、
+  过期缓存。默认 `Ipv4Only` 与 `DirectDualStack` 强制该 resolver 使用 `ipv4_only`，使节点连接、
   rule-set 下载等代理控制面不依赖 IPv6，其域名解析不进入 client DNS 分类规则；`Auto` 与 `DualStack` 不强制。
   `Ipv4Only` 与 `DirectDualStack` 均在生成时拒绝 IPv6 字面量代理节点；DIRECT 显式绑定同一 DNS tag，`Auto`、`DualStack`、`DirectDualStack` 使用 `prefer_ipv4`，`Ipv4Only` 保持 `ipv4_only`。
 - rule-set HTTP client 显式使用代理控制面解析设置；Dashboard HTTP client 直连，按平台地址族解析（`DirectDualStack` 下不强制 IPv4），两者均禁用 optimistic 缓存；
   Tailscale split DNS 也禁用 optimistic 过期缓存。
-- 默认仅在出口缺少公网 IPv6 地址或接口信息未知时，客户端 AAAA 查询在规则链首部返回空 `NOERROR`。
+- 默认 `Ipv4Only` 下客户端 AAAA 查询在规则链首部无条件返回空 `NOERROR`；`Auto` 与 `DirectDualStack` 仅在出口缺少公网 IPv6 地址或接口信息未知时返回空 `NOERROR`。
 - `experimental.cache_file` 使用 `cache.db`，并通过 `store_dns` 持久化 DNS 缓存。
 - `cache_id` 是 YAML `proxies` 列表的规范化 SHA-256；字段顺序不影响身份。
   只要核心代理列表相同，不同平台或其他 Clash 配置项会复用同一缓存身份。
@@ -172,7 +175,7 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
   有地区 AUTO 时选择首个地区 AUTO，否则选择首个真实节点；即使主组被手动切到
   `DIRECT`，rule-set 下载也不会随之改走直连。下载域名仍由
   `dns-direct-alidns` 直连解析，以免代理 DNS 成为冷启动依赖；
-  默认 `DirectDualStack` 与 `Ipv4Only` 设置 `ipv4_only`，`Auto` 与 `DualStack` 不强制解析地址族。
+  `Ipv4Only` 与 `DirectDualStack` 设置 `ipv4_only`，`Auto` 与 `DualStack` 不强制解析地址族。
 - 规则集来源与内部 tag 的映射如下；代码中的 DNS/route 引用只使用内部 tag，
   不依赖上游文件名。八个 tag 均唯一声明，默认按 `1d` 更新；可通过
   [profile 显式数组操作](configuration.md#数组操作)替换完整来源实体，不自动拆分批量来源。
@@ -196,7 +199,7 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
   `games-cn`；具体覆盖范围由上游规则维护。
 - `Ipv4Only` 下，全部 IPv6 使用原生 `ip_version: 6` 匹配，并在 DIRECT、Tailscale 和所有
   代理业务路由之前被拒绝。不生成仅供 mixed 域名目标使用的 `resolve` 和复检规则。
-- 默认 `DirectDualStack` 在出口条件允许且未先命中拒绝规则时，保留私网、Tailscale、`cn`、`cnip` 直连路径的 IPv6，
+- `DirectDualStack` 在出口条件允许且未先命中拒绝规则时，保留私网、Tailscale、`cn`、`cnip` 直连路径的 IPv6，
   服务规则集的 IPv6 在服务路由之前被拒绝，未命中任何规则的 IPv6 在 `route.final` 之前被最终拒绝。
   地址族限制按固定路由类别生效；即使用户把服务组或最终出口组手动切到 `DIRECT`，该类别的 IPv6 仍会被拒绝，不能保证应用自动回退 IPv4。
 - TCP HTTP/TLS 嗅探排除 `21/22/3306/5900`，避免这些端口上客户端等待服务器

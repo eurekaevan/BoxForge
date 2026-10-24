@@ -90,7 +90,7 @@ node scripts/verify-session-protocols.mjs "$singbox_core" \
   "$verification_root/standard/anytls/Linux/config.json" anytls || exit
 ```
 
-上述本地协议验证显式使用 `Ipv4Only`，使 AAAA 预期不依赖宿主网卡；这不验证默认 Auto 的实际网络判断。
+上述本地协议验证显式使用 `Ipv4Only`（与内置默认一致），使 AAAA 预期不依赖宿主网卡；这不验证 `Auto` 或 `DirectDualStack` 的实际网络判断。
 DNS 验证脚本读取真实生成的桌面 DNS 规则，将上游替换为本地受控 DoH，
 将分类替换为同标签 inline 测试域名；不创建 TUN、不使用真实订阅或公网 DNS。
 脚本只接受 `Ipv4Only`、`ParallelFastest` 和 `dns.timeout = 1s` 的生成配置，

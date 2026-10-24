@@ -261,6 +261,7 @@ public sealed class RouteProfileBuilderTests
     {
         var profile = BoxForgeProfile.Default.ApplyOverrides(JsonSerializer.SerializeToNode(new
         {
+            dns = new { address_family = "DirectDualStack" },
             route = new { services = new { patch = new[] { new { id = "games", rule_sets = new { replace = new[] { "cn" } } } } } }
         })!.AsObject());
         RoutePlan plan = RouteProfileBuilder.Plan(profile.Resolve(platform));
