@@ -69,28 +69,48 @@ internal sealed record ConfigurationPlan(
         }
 
         var ruleSets = Route.RuleSets.Where(source => !source.Tags.IsDefault).SelectMany(source => source.Tags).ToHashSet(StringComparer.Ordinal);
-        for (int index = 0; index < Dns.BlockedRuleSets.Count; index++)
-            Require(ruleSets, Dns.BlockedRuleSets[index], "IR005", $"plan.dns.blocked_rule_sets[{index}]");
-        for (int poolIndex = 0; poolIndex < Dns.Pools.Count; poolIndex++)
-        {
-            if (Dns.Pools[poolIndex].RuleSets is { } scope)
-            {
-                for (int index = 0; index < scope.Count; index++)
-                    Require(ruleSets, scope[index], "IR005", $"plan.dns.pools[{poolIndex}].rule_sets[{index}]");
-            }
-        }
         for (int index = 0; !Dns.Rules.IsDefault && index < Dns.Rules.Length; index++)
             RequireDnsRuleSets(Dns.Rules[index], $"plan.dns.rules[{index}]");
-        for (int index = 0; !Route.Rules.IsDefault && index < Route.Rules.Length; index++)
+        if (!Dns.Rules.IsDefaultOrEmpty)
         {
-            RouteRulePlan service = Route.Rules[index];
-            if (service.Phase is not (RoutePhase.PriorityServices or RoutePhase.OtherServices) || service.RuleSet.IsDefaultOrEmpty)
-                continue;
-            if (!Dns.Pools.Any(pool => pool.RuleSets is { } scope && scope.SequenceEqual(service.RuleSet)
-                && BoundToService(pool.PrimaryResolver) && BoundToService(pool.SecondaryResolver)))
-                diagnostics.Add(new("IR011", $"plan.route.rules[{index}]", "服务 DNS 的匹配范围和主备解析器出口必须与业务路由一致。"));
-
-            bool BoundToService(string name) => Dns.Resolvers.Count(resolver => resolver.Name == name && resolver.Detour == service.Outbound) == 1;
+            var serviceRoutes = Route.Rules.IsDefault ? [] : Route.Rules
+                .Where(rule => rule.Phase is RoutePhase.PriorityServices or RoutePhase.OtherServices).ToArray();
+            var blocks = Dns.ResolverBlocks().ToArray();
+            if (blocks.Length != serviceRoutes.Length + 2)
+                diagnostics.Add(new("IR011", "plan.dns.rules", "DNS 必须依次包含各服务、国内和全局解析块。"));
+            for (int index = 0; index < Math.Min(blocks.Length, serviceRoutes.Length + 2); index++)
+            {
+                bool service = index < serviceRoutes.Length;
+                bool domestic = index == serviceRoutes.Length;
+                ImmutableArray<string> scope = service ? serviceRoutes[index].RuleSet : domestic ? [RuleSetTags.Cn] : default;
+                string? detour = service ? serviceRoutes[index].Outbound : domestic ? null : Groups.Main.Name;
+                string[]? resolverNames = service ? null : domestic
+                    ? [SingboxTags.DirectAliDns, SingboxTags.DirectTencentDns]
+                    : [SingboxTags.ProxyCloudflareDns, SingboxTags.ProxyGoogleDns];
+                var (start, end) = blocks[index];
+                var evaluations = Dns.Rules.Skip(start).Take(end - start + 1)
+                    .Where(rule => rule.Action == DnsOperation.Evaluate).ToArray();
+                bool valid = evaluations.Length >= 2;
+                if (service && evaluations.Length >= 2)
+                {
+                    // Resolver tags carry the fixed Cloudflare/Google roles used by emission.
+                    string primary = evaluations[0].Server ?? string.Empty;
+                    bool cloudflare = primary.StartsWith("dns-service-", StringComparison.Ordinal)
+                        && primary.EndsWith("-cloudflare", StringComparison.Ordinal);
+                    valid &= cloudflare;
+                    resolverNames = [primary, cloudflare ? primary[..^"cloudflare".Length] + "google" : string.Empty];
+                }
+                for (int evaluation = 0; evaluation < evaluations.Length; evaluation++)
+                {
+                    DnsRulePlan rule = evaluations[evaluation];
+                    valid &= rule.RuleSet.IsDefault == scope.IsDefault && (scope.IsDefault || rule.RuleSet.SequenceEqual(scope));
+                    valid &= Dns.Resolvers.Count(resolver => resolver.Name == rule.Server && resolver.Detour == detour) == 1;
+                    if (resolverNames is not null)
+                        valid &= rule.Server == resolverNames[evaluation % 2];
+                }
+                if (!valid)
+                    diagnostics.Add(new("IR011", $"plan.dns.rules[{start}]", "DNS 解析块的顺序、匹配范围和主备出口必须与服务、国内及全局路由一致。"));
+            }
         }
         var resolvers = Dns.Resolvers.Select(resolver => resolver.Name).ToHashSet(StringComparer.Ordinal);
         ValidateResolver(DirectResolver, "plan.direct_resolver");

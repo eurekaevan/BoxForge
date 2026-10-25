@@ -273,7 +273,7 @@ public sealed class ProfileConfigurationTests
         }
         using var provider = CreateProvider(null);
         var bundle = await provider.GetRequiredService<IBoxForgeEngine>().ConvertAsync(
-            new ConversionRequest("request", yaml, [TargetPlatform.Linux]) { Profile = overlay });
+            new ConversionRequest("profile", yaml, [TargetPlatform.Linux]) { Profile = overlay });
         using var requestConfig = JsonDocument.Parse(bundle.Artifacts.Single().Content);
         Assert.That(requestConfig.RootElement.GetRawText(), Is.EqualTo(expectedConfig.RootElement.GetRawText()));
     }
@@ -359,12 +359,27 @@ public sealed class ProfileConfigurationTests
         Assert.Throws<ProfileValidationException>(() => Load(overlay.ToJsonString()));
     }
 
-    [TestCase(0)]
+    [TestCase(1)]
     [TestCase(65535)]
-    public void ProbeToleranceAcceptsCoreRangeBoundaries(int tolerance)
+    public void ProbeToleranceAcceptsSupportedRangeBoundaries(int tolerance)
     {
         var profile = Load(JsonSerializer.Serialize(new { tuning = new { url_test_tolerance = tolerance } }));
         Assert.That(profile.Resolve(TargetPlatform.Linux).Tuning.UrlTestTolerance, Is.EqualTo(tolerance));
+    }
+
+    [TestCase("{\"tuning\":{\"url_test_tolerance\":0}}")]
+    [TestCase("{\"platforms\":{\"Linux\":{\"tuning\":{\"url_test_tolerance\":0}}}}")]
+    public void ZeroProbeToleranceIsRejectedWithCoreDefaultExplanation(string fields)
+    {
+        var overlay = JsonNode.Parse(fields)!.AsObject();
+        var fileError = Assert.Throws<ProfileValidationException>(() => Load(fields))!;
+        var overrideError = Assert.Throws<ProfileValidationException>(() => BoxForgeProfile.Default.ApplyOverrides(overlay))!;
+        var requestError = Assert.Throws<ProfileValidationException>(() => BoxForgeProfile.Default.Resolve(TargetPlatform.Linux, overlay))!;
+        foreach (var error in new[] { fileError, overrideError, requestError })
+        {
+            Assert.That(error.Message, Does.Contain("1–65535ms").And.Contain("0 解释为默认 50ms").And.Contain("不支持零容差"));
+            Assert.That(error.Diagnostics[0].Path, Does.EndWith("tuning.url_test_tolerance"));
+        }
     }
 
     [TestCase("null")]

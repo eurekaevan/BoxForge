@@ -23,7 +23,7 @@ HTTP 错误格式保持不变。
 | `features.api.enabled` | `false` | — |
 | `dns.address_family` | `"Ipv4Only"` | — |
 | `dns.selection_mode` | `"ParallelFastest"` | Android: `"SequentialFallback"` |
-| `dns.timeout` | `"1s"` | — |
+| `dns.timeout` | `"3s"` | — |
 | `dns.cache_capacity` | `4096` | — |
 | `dns.optimistic_timeout` | `"6h"` | — |
 | `dns.resolvers` | 4 项（见内置 profile） | — |
@@ -98,7 +98,8 @@ CLI、Server 在宿主边界加载并校验 `BOXFORGE_` 前缀的环境配置快
 它们都不执行公网可达性探测。Android 依赖客户端提供默认物理接口信息，尚未完成真机验证；
 缺少接口信息时保守拒绝客户端 IPv6。详细边界见[DNS 与路由策略](routing-and-dns.md#dns-分类与控制面解析)。
 DNS 模式接受 `SequentialFallback` 或 `ParallelFastest`。超时和间隔必须是正 Go duration；DNS 缓存容量为正，URL test
-容差为 0–65535，探测 URL 只接受不带用户信息和片段的 HTTP(S) URL。
+容差为 1–65535ms，默认 50ms；不接受 `0`，因为锁定核心会将它解释为默认 50ms，无法实现零容差。
+探测 URL 只接受不带用户信息和片段的 HTTP(S) URL。
 TUN 地址须包含 IPv4 和 IPv6 CIDR；`multi_queue: true` 仅支持 Linux。
 排除端口为不重复的 1～65535 整数。调优只补齐来源节点缺失的值；
 例如 `tcp_keep_alive: null` 取消平台默认值，不会清除节点显式设置。

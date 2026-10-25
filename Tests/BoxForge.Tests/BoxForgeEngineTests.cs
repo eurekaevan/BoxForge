@@ -31,6 +31,82 @@ public sealed class BoxForgeEngineTests
             password: test-only
         """;
 
+    [TestCase("sample")]
+    [TestCase("Sample")]
+    [TestCase("配置名 ")]
+    public async Task CacheIdentityUsesExactRequestNameAndLowercasePlatform(string name)
+    {
+        using ServiceProvider provider = CreateProvider();
+        var engine = provider.GetRequiredService<IBoxForgeEngine>();
+        var request = new ConversionRequest(name, ValidYaml, Enum.GetValues<TargetPlatform>());
+        ConversionBundle first = await engine.ConvertAsync(request);
+        ConversionBundle second = await engine.ConvertAsync(request);
+        var identities = new List<string>();
+
+        foreach (var artifact in first.Artifacts)
+        {
+            string platform = artifact.Platform switch
+            {
+                TargetPlatform.Android => "android",
+                TargetPlatform.Linux => "linux",
+                TargetPlatform.Windows => "windows",
+                _ => throw new AssertionException("Unexpected platform.")
+            };
+            string expected = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(name + platform)));
+            using var document = JsonDocument.Parse(artifact.Content);
+            string actual = document.RootElement.GetProperty("experimental").GetProperty("cache_file")
+                .GetProperty("cache_id").GetString()!;
+            identities.Add(actual);
+            Assert.That(actual, Is.EqualTo(expected));
+            Assert.That(second.Artifacts.Single(item => item.Platform == artifact.Platform).Content,
+                Is.EqualTo(artifact.Content));
+        }
+
+        Assert.That(identities.Distinct().Count(), Is.EqualTo(3));
+        ConversionBundle renamed = await engine.ConvertAsync(request with { Name = name + "-other" });
+        foreach (var artifact in renamed.Artifacts)
+        {
+            using var document = JsonDocument.Parse(artifact.Content);
+            Assert.That(document.RootElement.GetProperty("experimental").GetProperty("cache_file")
+                .GetProperty("cache_id").GetString(), Is.Not.AnyOf(identities.ToArray()));
+        }
+    }
+
+    [TestCase("rename")]
+    [TestCase("add")]
+    [TestCase("remove")]
+    [TestCase("reorder")]
+    [TestCase("metadata")]
+    [TestCase("connection")]
+    public async Task CacheIdentitySurvivesNodeChanges(string change)
+    {
+        string firstNode = ValidYaml["proxies:\n".Length..];
+        string secondNode = firstNode.Replace("name: test", "name: second", StringComparison.Ordinal);
+        string yaml = "proxies:\n" + firstNode + "\n" + secondNode;
+        string changedYaml = change switch
+        {
+            "rename" => yaml.Replace("name: test", "name: renamed", StringComparison.Ordinal),
+            "add" => yaml + "\n" + firstNode.Replace("name: test", "name: third", StringComparison.Ordinal),
+            "remove" => ValidYaml,
+            "reorder" => "proxies:\n" + secondNode + "\n" + firstNode,
+            "metadata" => yaml + "\n    metadata: { remaining: 9GB }",
+            "connection" => yaml.Replace("node.example.com", "other.example.com", StringComparison.Ordinal),
+            _ => throw new AssertionException("Unexpected mutation.")
+        };
+        using ServiceProvider provider = CreateProvider();
+        var engine = provider.GetRequiredService<IBoxForgeEngine>();
+        var request = new ConversionRequest("stable", yaml, Enum.GetValues<TargetPlatform>());
+        ConversionBundle before = await engine.ConvertAsync(request);
+        ConversionBundle after = await engine.ConvertAsync(request with { ClashYaml = changedYaml });
+        foreach (var artifact in before.Artifacts)
+        {
+            using var original = JsonDocument.Parse(artifact.Content);
+            using var changed = JsonDocument.Parse(after.Artifacts.Single(item => item.Platform == artifact.Platform).Content);
+            Assert.That(changed.RootElement.GetProperty("experimental").GetProperty("cache_file").GetProperty("cache_id").GetString(),
+                Is.EqualTo(original.RootElement.GetProperty("experimental").GetProperty("cache_file").GetProperty("cache_id").GetString()));
+        }
+    }
+
     [TestCase("vless", AddressFamilyPolicy.DualStack)]
     [TestCase("trojan", AddressFamilyPolicy.DualStack)]
     [TestCase("ss", AddressFamilyPolicy.DualStack)]

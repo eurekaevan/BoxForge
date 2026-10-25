@@ -99,20 +99,12 @@ internal sealed record RoutePlan(
     {
         var hijack = new RouteRulePlan(RoutePhase.DnsHijack)
         {
-            Mode = LogicalMatchMode.And,
-            Rules =
-            [
-                new(RoutePhase.DnsHijack) { Inbound = [SingboxTags.TunInbound] },
-                new(RoutePhase.DnsHijack)
-                {
-                    Mode = LogicalMatchMode.Or,
-                    Rules = [new(RoutePhase.DnsHijack) { Protocol = ["dns"] }, new(RoutePhase.DnsHijack) { Port = [53] }]
-                }
-            ],
+            Inbound = [SingboxTags.TunInbound],
+            Port = [53],
             Action = RouteOperation.HijackDns
         };
         if (Rules.IsEmpty || !Rules[0].HasSamePolicy(hijack))
-            diagnostics.Add(new("IR011", "plan.route.rules", "路由必须首先劫持 TUN 的 DNS 协议及端口 53 流量。"));
+            diagnostics.Add(new("IR011", "plan.route.rules", "路由必须首先以端口 53 劫持规则兜底 TUN 的 TCP 和 UDP DNS 流量。"));
         foreach (RoutePhase phase in new[] { RoutePhase.EarlyIpv6Guard, RoutePhase.LateIpv6Guard })
         {
             var rules = Rules.Where(rule => rule.Phase == phase).ToArray();

@@ -32,13 +32,13 @@ class VerificationProcessTests(unittest.TestCase):
         return VERIFY.run_command([sys.executable, "-c", source], self.root, "test negative case", **arguments)
 
     def test_dns_race_verification_rejects_unsupported_inputs_before_launching_core(self):
-        supported = {"strategy": "ipv4_only", "timeout": "1s", "rules": [
+        supported = {"strategy": "ipv4_only", "timeout": "3s", "rules": [
             {"action": "respond", "race": True, "query_type": ["A"], "ip_cidr": ["0.0.0.0/0"]}]}
         for field, value in (("strategy", None), ("timeout", "5s"), ("rules", [])):
             with self.subTest(field=field):
                 dns = copy.deepcopy(supported)
                 dns[field] = value
-                with self.assertRaisesRegex(ValueError, "requires Ipv4Only.*ParallelFastest.*1s"):
+                with self.assertRaisesRegex(ValueError, "requires Ipv4Only.*ParallelFastest.*3s"):
                     asyncio.run(DNS_VERIFY.main(self.root / "must-not-be-started", {"dns": dns}))
 
     def test_success_preserves_stdout_and_stderr(self):

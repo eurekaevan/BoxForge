@@ -16,37 +16,34 @@ internal static class DnsProfileBuilder
             CreateResolver(SingboxTags.ProxyCloudflareDns, settingsProfile.GetResolver("cloudflare"), SingboxTags.MainProxyGroup),
             CreateResolver(SingboxTags.ProxyGoogleDns, settingsProfile.GetResolver("google"), SingboxTags.MainProxyGroup)
         ];
-        var pools = new List<DnsResolverPoolPlan>();
+        var pools = new List<ResolverPoolDefinition>();
         foreach (var service in settingsProfile.Services.OrderByDescending(service => service.PrecedesDomesticRoutes))
         {
             string primary = SingboxTags.ServiceDns(service.Id, "cloudflare");
             string secondary = SingboxTags.ServiceDns(service.Id, "google");
             resolvers.Add(CreateResolver(primary, settingsProfile.GetResolver("cloudflare"), service.Name));
             resolvers.Add(CreateResolver(secondary, settingsProfile.GetResolver("google"), service.Name));
-            pools.Add(new DnsResolverPoolPlan($"service-{service.Id}", service.RuleSets, primary, secondary));
+            pools.Add(new ResolverPoolDefinition($"service-{service.Id}", service.RuleSets, primary, secondary));
         }
-        pools.Add(new DnsResolverPoolPlan("domestic", [RuleSetTags.Cn],
+        pools.Add(new ResolverPoolDefinition("domestic", [RuleSetTags.Cn],
             SingboxTags.DirectAliDns, SingboxTags.DirectTencentDns));
-        pools.Add(new DnsResolverPoolPlan("global", null,
+        pools.Add(new ResolverPoolDefinition("global", default,
             SingboxTags.ProxyCloudflareDns, SingboxTags.ProxyGoogleDns));
-        string[] blockedRuleSets = [RuleSetTags.Ads];
         bool tailscaleEnabled = settingsProfile.Features.Tailscale.Enabled;
         return new DnsPlan(settings.AddressFamily, settings.DnsSelectionMode,
             resolvers, tailscaleEnabled,
-            blockedRuleSets, pools,
             SingboxTags.ProxyCloudflareDns,
             settingsProfile.Dns.Timeout, settingsProfile.Dns.CacheCapacity,
             settingsProfile.Dns.OptimisticTimeout)
         {
-            Rules = PlanRules(settings.AddressFamily, tailscaleEnabled, blockedRuleSets, pools, settings.DnsSelectionMode)
+            Rules = PlanRules(settings.AddressFamily, tailscaleEnabled, pools, settings.DnsSelectionMode)
         };
     }
 
     private static ImmutableArray<DnsRulePlan> PlanRules(
         AddressFamilyPolicy addressFamily,
         bool tailscaleEnabled,
-        IReadOnlyList<string> blockedRuleSets,
-        IReadOnlyList<DnsResolverPoolPlan> pools,
+        IReadOnlyList<ResolverPoolDefinition> pools,
         DnsResolverSelectionMode selectionMode)
     {
         var rules = new List<DnsRulePlan>();
@@ -85,17 +82,12 @@ internal static class DnsProfileBuilder
         }
         rules.Add(new DnsRulePlan
         {
-            RuleSet = [.. blockedRuleSets],
+            RuleSet = [RuleSetTags.Ads],
             Action = DnsOperation.Predefined,
             Rcode = DnsResultCode.NameError
         });
-        foreach (DnsResolverPoolPlan pool in pools)
-        {
-            CompilePool(rules, new ResolverPoolDefinition(
-                pool.RuleSets is null ? default : [.. pool.RuleSets], pool.PrimaryResolver, pool.SecondaryResolver,
-                $"response-{pool.Name}-primary", $"response-{pool.Name}-secondary"), selectionMode,
-                addressFamily != AddressFamilyPolicy.Ipv4Only);
-        }
+        foreach (ResolverPoolDefinition pool in pools)
+            CompilePool(rules, pool, selectionMode, addressFamily != AddressFamilyPolicy.Ipv4Only);
         return [.. rules];
     }
 
@@ -153,9 +145,7 @@ internal static class DnsProfileBuilder
         {
             var addressPool = pool with
             {
-                QueryType = queryType,
-                PrimaryResponse = DnsResponseTags.ForAddressQuery(pool.PrimaryResponse, queryType),
-                SecondaryResponse = DnsResponseTags.ForAddressQuery(pool.SecondaryResponse, queryType)
+                QueryType = queryType
             };
             AddEvaluate(rules, addressPool, primary: true);
             AddEvaluate(rules, addressPool, primary: false);
@@ -236,10 +226,19 @@ internal static class DnsProfileBuilder
         });
 
     private sealed record ResolverPoolDefinition(
+        string Name,
         ImmutableArray<string> RuleSets,
         string PrimaryServer,
         string SecondaryServer,
-        string PrimaryResponse,
-        string SecondaryResponse,
-        string? QueryType = null);
+        string? QueryType = null)
+    {
+        internal string PrimaryResponse => ResponseTag("primary");
+        internal string SecondaryResponse => ResponseTag("secondary");
+
+        private string ResponseTag(string priority)
+        {
+            string tag = $"response-{Name}-{priority}";
+            return QueryType is null ? tag : DnsResponseTags.ForAddressQuery(tag, QueryType);
+        }
+    }
 }

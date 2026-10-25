@@ -13,7 +13,6 @@ namespace BoxForge.Engine;
 
 internal sealed class BoxForgeEngine(
     IClashParser clashParser,
-    IProxyCacheIdGenerator proxyCacheIdGenerator,
     ISingboxConfigBuilder configBuilder,
     ISingboxConfigValidator configValidator,
     IConfigSerializer configSerializer,
@@ -37,13 +36,11 @@ internal sealed class BoxForgeEngine(
         var profiles = PlatformOrder.Where(requestedPlatforms.Contains)
             .ToDictionary(platform => platform, platform => profile.Resolve(platform, request.Profile));
         NodeCatalog nodes;
-        string cacheId;
         try
         {
             var clash = clashParser.Parse(request.ClashYaml)
                 ?? throw new NodeParseException("YAML 解析失败，请检查文件内容。");
             nodes = NodeCatalogBuilder.Build(clash);
-            cacheId = proxyCacheIdGenerator.Generate(clash.Proxies);
         }
         catch (Exception ex) when (ex is NodeParseException or YamlException)
         {
@@ -64,6 +61,7 @@ internal sealed class BoxForgeEngine(
             try
             {
                 ConfigurationPlan plan = ConfigurationPlanner.Plan(nodes, profiles[platform]);
+                string cacheId = configSerializer.GetContentHash(request.Name + platform.ToString().ToLowerInvariant());
                 var config = configBuilder.Build(plan, cacheId);
                 configValidator.Validate(config, profiles[platform].Settings.AddressFamily);
                 string content = configSerializer.Serialize(config);

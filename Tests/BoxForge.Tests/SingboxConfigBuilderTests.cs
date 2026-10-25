@@ -27,9 +27,14 @@ public sealed class SingboxConfigBuilderTests
     [TestCase("route_empty")]
     [TestCase("hijack_removed")]
     [TestCase("hijack_narrowed")]
+    [TestCase("hijack_unscoped")]
+    [TestCase("hijack_wrong_port")]
+    [TestCase("hijack_requires_protocol")]
     [TestCase("early_guard_removed")]
     [TestCase("late_guard_narrowed")]
     [TestCase("service_dns_detour")]
+    [TestCase("service_primary_secondary_swapped")]
+    [TestCase("service_scope_consistently_changed")]
     [TestCase("node_binding_removed")]
     [TestCase("node_binding_family")]
     [TestCase("node_binding_server")]
@@ -44,21 +49,51 @@ public sealed class SingboxConfigBuilderTests
         int early = plan.Route.Rules.ToList().FindIndex(rule => rule.Phase == RoutePhase.EarlyIpv6Guard);
         int late = plan.Route.Rules.ToList().FindIndex(rule => rule.Phase == RoutePhase.LateIpv6Guard);
         var binding = plan.NodeResolvers[source.Name];
+        var blocks = plan.Dns.ResolverBlocks().ToArray();
+        var first = blocks[0];
+        var second = blocks[1];
+        string firstPrimary = plan.Dns.Rules[first.Start].Server!;
+        string firstSecondary = plan.Dns.Rules.Skip(first.Start).First(rule =>
+            rule.Action == DnsOperation.Evaluate && rule.Server != firstPrimary).Server!;
+        var reordered = plan.Dns.Rules.RemoveRange(first.Start, second.End - first.Start + 1)
+            .InsertRange(first.Start, plan.Dns.Rules.Slice(second.Start, second.End - second.Start + 1)
+                .AddRange(plan.Dns.Rules.Slice(first.Start, first.End - first.Start + 1)));
+
         plan = fault switch
         {
-            "pool_primary" => plan with { Dns = plan.Dns with { Pools = [plan.Dns.Pools[0] with { PrimaryResolver = plan.Dns.Pools[0].SecondaryResolver }, .. plan.Dns.Pools.Skip(1)] } },
-            "pool_scope" => plan with { Dns = plan.Dns with { Pools = [plan.Dns.Pools[0] with { RuleSets = [RuleSetTags.Cn] }, .. plan.Dns.Pools.Skip(1)] } },
-            "pool_order" => plan with { Dns = plan.Dns with { Pools = [plan.Dns.Pools[1], plan.Dns.Pools[0], .. plan.Dns.Pools.Skip(2)] } },
-            "pool_removed" => plan with { Dns = plan.Dns with { Pools = [.. plan.Dns.Pools.Skip(1)] } },
+            "pool_primary" => plan with { Dns = plan.Dns with { Rules = plan.Dns.Rules.SetItem(first.Start, plan.Dns.Rules[first.Start] with { Server = firstSecondary }) } },
+            "pool_scope" => plan with { Dns = plan.Dns with { Rules = plan.Dns.Rules.SetItem(first.Start, plan.Dns.Rules[first.Start] with { RuleSet = [RuleSetTags.Cn] }) } },
+            "pool_order" => plan with { Dns = plan.Dns with { Rules = reordered } },
+            "pool_removed" => plan with { Dns = plan.Dns with { Rules = plan.Dns.Rules.RemoveRange(first.Start, first.End - first.Start + 1) } },
             "selection_mode" => plan with { Dns = plan.Dns with { SelectionMode = DnsResolverSelectionMode.SequentialFallback } },
             "dns_block_removed" => plan with { Dns = plan.Dns with { Rules = plan.Dns.Rules.RemoveAt(blocking) } },
             "dns_guard_narrowed" => plan with { Dns = plan.Dns with { Rules = plan.Dns.Rules.SetItem(0, plan.Dns.Rules[0] with { RuleSet = [RuleSetTags.Cn] }) } },
             "route_empty" => plan with { Route = plan.Route with { Rules = [] } },
             "hijack_removed" => plan with { Route = plan.Route with { Rules = plan.Route.Rules.RemoveAt(hijack) } },
             "hijack_narrowed" => plan with { Route = plan.Route with { Rules = plan.Route.Rules.SetItem(hijack, plan.Route.Rules[hijack] with { Network = ["udp"] }) } },
+            "hijack_unscoped" => plan with { Route = plan.Route with { Rules = plan.Route.Rules.SetItem(hijack, plan.Route.Rules[hijack] with { Inbound = default }) } },
+            "hijack_wrong_port" => plan with { Route = plan.Route with { Rules = plan.Route.Rules.SetItem(hijack, plan.Route.Rules[hijack] with { Port = [5353] }) } },
+            "hijack_requires_protocol" => plan with { Route = plan.Route with { Rules = plan.Route.Rules.SetItem(hijack, plan.Route.Rules[hijack] with { Protocol = ["dns"] }) } },
             "early_guard_removed" => plan with { Route = plan.Route with { Rules = plan.Route.Rules.RemoveAt(early) } },
             "late_guard_narrowed" => plan with { Route = plan.Route with { Rules = plan.Route.Rules.SetItem(late, plan.Route.Rules[late] with { Port = [443] }) } },
-            "service_dns_detour" => plan with { Dns = plan.Dns with { Resolvers = [.. plan.Dns.Resolvers.Select(resolver => resolver.Name == plan.Dns.Pools[0].PrimaryResolver ? resolver with { Detour = SingboxTags.MainProxyGroup } : resolver)] } },
+            "service_dns_detour" => plan with { Dns = plan.Dns with { Resolvers = [.. plan.Dns.Resolvers.Select(resolver => resolver.Name == firstPrimary ? resolver with { Detour = SingboxTags.MainProxyGroup } : resolver)] } },
+            "service_primary_secondary_swapped" => plan with
+            {
+                Dns = plan.Dns with
+                {
+                    Rules = [.. plan.Dns.Rules.Select((rule, index) => index >= first.Start && index <= first.End
+                        && rule.Action == DnsOperation.Evaluate
+                            ? rule with { Server = rule.Server == firstPrimary ? firstSecondary : firstPrimary } : rule)]
+                }
+            },
+            "service_scope_consistently_changed" => plan with
+            {
+                Dns = plan.Dns with
+                {
+                    Rules = [.. plan.Dns.Rules.Select((rule, index) => index >= first.Start && index <= first.End
+                        && !rule.RuleSet.IsDefault ? rule with { RuleSet = [RuleSetTags.Cn] } : rule)]
+                }
+            },
             "node_binding_removed" => plan with { NodeResolvers = plan.NodeResolvers.Clear() },
             "node_binding_family" => plan with { NodeResolvers = plan.NodeResolvers.SetItem(source.Name, binding with { AddressFamily = AddressFamilyPolicy.DualStack }) },
             "node_binding_server" => plan with { NodeResolvers = plan.NodeResolvers.SetItem(source.Name, binding with { Server = SingboxTags.ProxyGoogleDns }) },
@@ -72,7 +107,7 @@ public sealed class SingboxConfigBuilderTests
     [TestCase("leaf", "IR002", "plan.groups.leaves[0]")]
     [TestCase("dns_detour", "IR003", "plan.dns.resolvers[0].detour")]
     [TestCase("dns_rule_match", "IR005", "dns_rule")]
-    [TestCase("dns_rule_set", "IR005", "plan.dns.pools[0].rule_sets[0]")]
+    [TestCase("dns_rule_set", "IR005", "dns_block_scope")]
     [TestCase("service_selector", "IR003", "service_rule")]
     [TestCase("route_final", "IR003", "plan.route.final_outbound")]
     [TestCase("resolver", "IR006", "plan.http_clients[0].resolver")]
@@ -94,12 +129,16 @@ public sealed class SingboxConfigBuilderTests
         int dnsRuleIndex = plan.Dns.Rules.Select((rule, index) => (rule, index)).First(item => !item.rule.RuleSet.IsDefaultOrEmpty).index;
         if (fault == "dns_rule_match")
             path = $"plan.dns.rules[{dnsRuleIndex}].rule_set[0]";
+        int dnsBlockStart = plan.Dns.ResolverBlocks().First().Start;
+        if (fault == "dns_rule_set")
+            path = $"plan.dns.rules[{dnsBlockStart}].rule_set[0]";
+
         plan = fault switch
         {
             "leaf" => plan with { Nodes = [] },
             "dns_detour" => plan with { Dns = plan.Dns with { Resolvers = [plan.Dns.Resolvers[0] with { Detour = "missing" }, .. plan.Dns.Resolvers.Skip(1)] } },
             "dns_rule_match" => plan with { Dns = plan.Dns with { Rules = plan.Dns.Rules.SetItem(dnsRuleIndex, plan.Dns.Rules[dnsRuleIndex] with { RuleSet = ["missing"] }) } },
-            "dns_rule_set" => plan with { Dns = plan.Dns with { Pools = [plan.Dns.Pools[0] with { RuleSets = ["missing"] }, .. plan.Dns.Pools.Skip(1)] } },
+            "dns_rule_set" => plan with { Dns = plan.Dns with { Rules = plan.Dns.Rules.SetItem(dnsBlockStart, plan.Dns.Rules[dnsBlockStart] with { RuleSet = ["missing"] }) } },
             "service_selector" => plan with { Groups = plan.Groups with { Services = [] } },
             "route_final" => plan with { Route = plan.Route with { FinalOutbound = "missing" } },
             "resolver" => plan with { HttpClients = [plan.HttpClients[0] with { Resolver = plan.HttpClients[0].Resolver with { Server = "missing" } }, .. plan.HttpClients.Skip(1)] },
@@ -115,9 +154,7 @@ public sealed class SingboxConfigBuilderTests
                 Dns = plan.Dns with
                 {
                     Resolvers = [.. plan.Dns.Resolvers.Skip(1)],
-                    Rules = [.. plan.Dns.Rules.Select(ReplaceBootstrapResolver)],
-                    Pools = [.. plan.Dns.Pools.Select(pool => pool with
-                { PrimaryResolver = pool.PrimaryResolver == SingboxTags.DirectAliDns ? SingboxTags.DirectTencentDns : pool.PrimaryResolver })]
+                    Rules = [.. plan.Dns.Rules.Select(ReplaceBootstrapResolver)]
                 }
             },
             _ => plan with { Dns = plan.Dns with { SelectionMode = DnsResolverSelectionMode.SequentialFallback } }
@@ -141,7 +178,7 @@ public sealed class SingboxConfigBuilderTests
         {
             TailscaleEndpointEnabled = false,
             Route = plan.Route with { FinalOutbound = "missing-outbound" },
-            Dns = plan.Dns with { BlockedRuleSets = ["missing-rule-set"] },
+            Dns = plan.Dns with { Rules = plan.Dns.Rules.SetItem(2, plan.Dns.Rules[2] with { RuleSet = ["missing-rule-set"] }) },
             HttpClients = [plan.HttpClients[0] with { Resolver = plan.HttpClients[0].Resolver with { Server = "missing-resolver" } }]
         };
         var first = Assert.Throws<ConfigValidationException>(() => plan.Validate())!;
@@ -152,7 +189,7 @@ public sealed class SingboxConfigBuilderTests
             ("IR004", "plan.dns.tailscale_enabled"),
             ("IR004", "plan.route.tailscale_enabled"),
             ("IR003", "plan.route.final_outbound"),
-            ("IR005", "plan.dns.blocked_rule_sets[0]"),
+            ("IR005", "plan.dns.rules[2].rule_set[0]"),
             ("IR006", "plan.http_clients[0].resolver"),
             ("IR007", "plan.services.dashboard.http_client")
         }));

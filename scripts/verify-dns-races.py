@@ -2,7 +2,7 @@
 """Exercise generated desktop DNS rules with the pinned core and local TLS DoH servers.
 
 Usage: python3 scripts/verify-dns-races.py /path/to/sing-box /path/to/Linux/config.json
-Requires generated Ipv4Only or DualStack + ParallelFastest DNS with a 1s query timeout,
+Requires generated Ipv4Only or DualStack + ParallelFastest DNS with a 3s query timeout,
 Python 3 and OpenSSL. No TUN, real upstreams, or proxy credentials are used.
 """
 
@@ -106,12 +106,12 @@ async def main(core, generated):
     ipv4_only = dns.get("strategy") == "ipv4_only"
     address_queries = [("A", "0.0.0.0/0")] + ([] if ipv4_only else [("AAAA", "::/0")])
     if (dns.get("strategy") not in ("ipv4_only", None)
-            or dns.get("timeout") != "1s"
+            or dns.get("timeout") != "3s"
             or not all(any(rule.get("action") == "respond" and rule.get("race") is True
                            and rule.get("query_type") == [query_type] and rule.get("ip_cidr") == [cidr]
                            for rule in dns.get("rules", []))
                        for query_type, cidr in address_queries)):
-        raise ValueError("DNS race verification requires Ipv4Only or DualStack + ParallelFastest DNS with a 1s query timeout")
+        raise ValueError("DNS race verification requires Ipv4Only or DualStack + ParallelFastest DNS with a 3s query timeout")
     version = subprocess.check_output([str(core), "version"], text=True, timeout=10)
     if f"sing-box version {VERSION}\n" not in version or REVISION not in version:
         raise ValueError(f"Expected official sing-box {VERSION} / {REVISION}")
@@ -235,6 +235,7 @@ async def main(core, generated):
             ("fast-secondary", "google", "a", "a", .7, .03, 1, 0, 1),
             ("failed-primary", "google", "drop", "a", 0, .03, 1, 0, 1),
             ("failed-secondary", "google", "a", "drop", .03, 0, 1, 0, 1),
+            ("slow-positive", "google", "drop", "a", 0, 1.5, 1, 0, 1),
             ("empty-primary", "google", "empty", "a", .03, .25, 1, 0, 1),
             ("empty-secondary", "google", "a", "empty", .25, .03, 1, 0, 1),
             ("cname-only", "google", "cname", "cname-a", .03, .25, 1, 0, 2),
@@ -264,6 +265,7 @@ async def main(core, generated):
                 ("aaaa-fast-secondary", "google", "aaaa", "aaaa", .7, .03, 28, 0, 1),
                 ("aaaa-failed-primary", "google", "drop", "aaaa", 0, .03, 28, 0, 1),
                 ("aaaa-failed-secondary", "google", "aaaa", "drop", .03, 0, 28, 0, 1),
+                ("aaaa-slow-positive", "google", "drop", "aaaa", 0, 1.5, 28, 0, 1),
                 ("aaaa-empty-primary", "google", "empty", "aaaa", .03, .25, 28, 0, 1),
                 ("aaaa-empty-secondary", "google", "aaaa", "empty", .25, .03, 28, 0, 1),
                 ("aaaa-cname-only", "google", "cname", "cname-aaaa", .03, .25, 28, 0, 2),
@@ -285,7 +287,10 @@ async def main(core, generated):
             name = f"case{index}.{suffix}.test"
             result = await query(label, name, qt)
             assert (result["rcode"], result["answers"]) == (rcode, answers), result
-            assert result["ms"] < 1500, result
+            if label.removeprefix("aaaa-") == "slow-positive":
+                assert 1200 < result["ms"] < 2500, result
+            else:
+                assert result["ms"] < 1500, result
             if answers:
                 address_mode = "a" if qt == 1 else "aaaa"
                 winner = pair[0] if primary == address_mode and (secondary != address_mode or pd < sd) else pair[1]
@@ -293,7 +298,7 @@ async def main(core, generated):
                 address = f"192.0.2.{winner + 1}" if qt == 1 else f"2001:db8::{winner + 1}"
                 assert result[field] == [address], result
             if label.removeprefix("aaaa-") in ("fast-primary", "fast-secondary", "failed-primary", "failed-secondary"):
-                assert result["ms"] < 500, "Fast responses must not wait for the 700ms/timeout peer"
+                assert result["ms"] < 500, "Fast responses must not wait for a slower or timed-out peer"
             if qt in (15, 64, 65):
                 assert result["ms"] < 200, "Non-address queries must still race"
             observed = {event[1] for event in events if event[0] == name}
@@ -315,10 +320,10 @@ async def main(core, generated):
             assert cached[field] == [expected] and cached["ms"] < 200, cached
             specs[2], specs[3] = (0.03, "nx", 60), (0, "drop", 60)
             negative = await query(prefix + "negative-timeout-budget", f"{prefix}negative.google.test", qt)
-            assert negative["rcode"] == 3 and 800 < negative["ms"] < 1800, negative
+            assert negative["rcode"] == 3 and 2800 < negative["ms"] < 3800, negative
             specs[2], specs[3] = (0, "drop", 60), (0, "drop", 60)
             failed = await query(prefix + "both-timeout-budget", f"{prefix}both-timeout.google.test", qt)
-            assert failed["rcode"] == 2 and 800 < failed["ms"] < 1800, failed
+            assert failed["rcode"] == 2 and 2800 < failed["ms"] < 3800, failed
         (root / "results.json").write_text(json.dumps(results, indent=2))
         print(f"PASS: {len(results)} local DoH scenarios")
     finally:

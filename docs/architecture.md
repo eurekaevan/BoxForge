@@ -31,10 +31,11 @@ BoxForge.Tests  ──→ BoxForge.Cli, BoxForge.Server, BoxForge.Core
    `IBoxForgeEngine`。
 4. `BoxForgeEngine` 是唯一的编译编排入口：校验内存请求，解析各平台配置文档，
    只解析一次 YAML（重复键、循环引用及超限展开会直接失败），生成不依赖平台的
-   `NodeCatalog` 和规范化节点内容派生的 `cache_id`。
+   `NodeCatalog`。
 5. 按 Android、Linux、Windows 顺序，`ConfigurationPlanner` 将节点绑定到该平台的
    `ResolvedProfile`，检查保留名称并确定完整策略计划；`SingboxConfigBuilder.Build`
    集中校验完整计划，再发射为 inbound、endpoint、outbound、DNS、route 和 experimental 配置。
+   每个平台的 `cache_id` 为 `SHA256(请求配置名 + 平台小写标识)`，不依赖节点内容。
 6. `SingboxConfigValidator` 检查 BoxForge 自身约束，`ConfigSerializer` 生成
    JSON 并计算小写十六进制 SHA-256。只有全部平台成功才返回
    `ConversionBundle`。
@@ -93,9 +94,9 @@ SHA-256：5 份 YAML × 3 个平台 × 8 种桌面 Tailscale、Android Tailscale
 
 正常、无循环的 YAML anchor/alias 可以复用。解析与规范化最多支持 64 层递归，
 全部代理共用 100,000 个规范化值的预算，展开后的键和字符串文本合计最多 16 MiB UTF-8
-（包括 alias 的每次展开，所有代理共享同一预算）。文本上限避免少量大型 scalar
-经重复 alias 在缓存 ID 序列化时膨胀成巨量数据。
-映射和序列均按引用身份检查当前祖先链，循环引用在 schema 校验和缓存 ID 计算之前拒绝。
+（包括 alias 的每次展开，所有代理共享同一预算）。文本预算限制大型 scalar
+经重复 alias 展开后的总规模；它属于来源解析的资源约束，与缓存身份无关。
+映射和序列均按引用身份检查当前祖先链，循环引用在 schema 校验之前拒绝。
 这些失败由引擎包装为转换错误，API 返回 422；不会等待栈溢出或内存耗尽。
 限制不是可配置项；预算内的 scalar 值和无循环共享引用保持来源值。
 
@@ -208,25 +209,29 @@ IR 检查默认项属于候选列表、引用目标存在、探测组只含至�
 完整配置的标签唯一性、重复候选等检查仍由既有 validator 执行。
 `SingboxGroupEmitter` 复制候选列表，按计划中的顺序和默认项生成目标组。
 
-DNS 规划同样先产生中立的 `DnsPlan`：`DnsHttpsResolverPlan` 记录解析器地址、TLS 名称和
-连接出口，`DnsResolverPoolPlan` 记录池名称、匹配范围和主/备解析器。计划保留地址族、
-选择模式、Tailscale 开关、广告规则集、最终解析器及服务/domestic/global 的顺序；
-每个服务独立生成池及经过该服务选择组的主/备解析器，服务顺序与业务路由一致，
-所有服务池仍位于 domestic 之前；无服务时只生成 domestic/global。
-展开后的 `Rules` 是输出的唯一权威表示；`Pools`、`BlockedRuleSets` 和选择模式是待核对的策略说明，不能单独用来解释实际输出。
-发射前检查解析器和池名称唯一、解析器引用有效、
-有范围的池位于唯一的全局池之前，以及广告规则集非空，避免生成无条件负响应。
-完整配置中的 detour、rule-set 等跨模块引用继续交给既有 validator。
+DNS 规划产生中立的 `DnsPlan`：`DnsHttpsResolverPlan` 记录解析器地址、TLS 名称和
+连接出口，不可变、有序的 `Rules` 是可执行 DNS 规则的唯一表示。
+`AddressFamily`、`SelectionMode` 和 Tailscale 开关保留为校验约束上下文；
+计划不另存解析池或广告规则集元数据。`DnsProfileBuilder` 内部的私有
+`ResolverPoolDefinition` 仅用于编译，生成规则后不进入计划。
+每个服务的主/备解析器均经该服务选择组连接；服务解析块按业务路由中的服务顺序排列，
+之后为 domestic/global；无服务时只生成后两块。
 
-`DnsProfileBuilder.Plan` 将池展开为不可变、有序的 `DnsRulePlan`，确定
-顺序回退或正响应竞速、A/AAAA 查询隔离、NXDOMAIN 接受顺序、response 标签、缓存行为、
-终止 SERVFAIL、Auto AAAA 守卫及 Tailscale 路径。服务 resolver 的 detour 在规划时
-绑定服务选择组，保留现有优先级。地址正响应竞速不混入域名 rule-set 条件，
-避免 sing-box 的 OR 语义改变匹配范围。`SingboxDnsEmitter` 只映射规则和值，
-不选择匹配范围、执行顺序或回退算法。
-计划校验核对前缀中的 AAAA 守卫、Tailscale 和广告拒绝规则，并检查池与求值规则的数量、
-顺序、主备解析器、查询范围、响应标签、超时和缓存开关一致。服务池还必须绑定对应业务出口。
-这些检查不重新运行规划器，也不等同于证明整个响应竞速算法正确；响应处理顺序由行为测试约束，官方核心检查目标配置的格式兼容性。
+`DnsProfileBuilder.Plan` 生成 AAAA 守卫、Tailscale 和广告规则，以及顺序回退或
+正响应竞速、A/AAAA 查询隔离、NXDOMAIN 接受顺序、响应标签、缓存行为和终止 SERVFAIL。
+地址正响应竞速不混入域名 rule-set 条件，避免 sing-box 的 OR 语义改变匹配范围。
+`SingboxDnsEmitter` 只映射规则和值，不选择匹配范围、执行顺序或回退算法。
+`DnsPlan.ResolverBlocks()` 从实际规则扫描并派生解析块的起止索引，不保存另一份策略数据。
+计划校验直接检查前缀守卫、Tailscale 和广告拒绝，以及各块的查询范围、缓存开关、
+超时、主备解析器一致性、正答竞速、空答后备、NXDOMAIN 顺序和终止规则；
+完整规则必须以唯一的全局解析块结束。
+
+`ConfigurationPlan` 按 `Route` 中实际服务规则的顺序，逐块检查 DNS 查询范围和
+所有求值规则的主备角色及解析器出口，再检查 domestic/global 的固定主备解析器及出口。
+按实际顺序配对允许服务的规则集范围相同或重叠，不以范围作为服务身份。
+规则集和出口引用继续在汇总计划与独立的 `SingboxConfigValidator` 中检查；
+后者不调用规划器或构建器。结构与一致性校验不替代本地 DNS 行为测试，
+官方核心检查也仅证明目标配置的格式兼容性。
 
 `RouteProfileBuilder.Plan` 产生带阶段标记的有序 `RouteRulePlan`，在规划时确定
 逻辑 AND/OR 条件、sniff 范围和超时、早晚 IPv6 守卫、服务与国内分流优先级，
@@ -260,7 +265,7 @@ TUN、endpoint 与 API service 使用计划中保存的地址、开关和 Taildr
 - **结构**：枚举、字段、逻辑树和规则数组合法。
 - **引用**：出口、解析器、规则集、HTTP client 和响应标签已声明且顺序有效。
 - **必要策略**：DNS 劫持、地址族守卫、来源 IPv4 节点的独立 resolver 绑定及路由默认 resolver 符合约定。
-- **产品一致性**：解析池说明与实际求值规则、服务 DNS 与业务出口一致；固定阶段具有实际规则。
+- **产品一致性**：实际 DNS 解析块的范围、顺序和出口与业务路由一致；固定阶段具有实际规则。
 
 嗅探器完整组合、全部响应竞速分支和服务优先级等仍由行为测试及输出基线约束，不能仅凭阶段存在断言产品策略完整。
 

@@ -15,7 +15,7 @@ public static class DnsResponseTags
         GlobalSecondary
     ]);
 
-    public static string ForAddressQuery(string responseTag) => responseTag + "-a";
+    public static string ForAddressQuery(string responseTag) => ForAddressQuery(responseTag, "A");
 
     internal static string ForAddressQuery(string responseTag, string queryType) =>
         responseTag + "-" + queryType.ToLowerInvariant();

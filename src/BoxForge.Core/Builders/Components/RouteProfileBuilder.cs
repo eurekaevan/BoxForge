@@ -50,16 +50,9 @@ internal static class RouteProfileBuilder
         [
             new RouteRulePlan(phase)
             {
-                Mode = LogicalMatchMode.And,
-                Rules =
-                [
-                    new RouteRulePlan(phase) { Inbound = [SingboxTags.TunInbound] },
-                    new RouteRulePlan(phase)
-                    {
-                        Mode = LogicalMatchMode.Or,
-                        Rules = [new RouteRulePlan(phase) { Protocol = ["dns"] }, new RouteRulePlan(phase) { Port = [53] }]
-                    }
-                ],
+                // TUN handles DNS natively; retain an explicit port 53 fallback.
+                Inbound = [SingboxTags.TunInbound],
+                Port = [53],
                 Action = RouteOperation.HijackDns
             }
         ],

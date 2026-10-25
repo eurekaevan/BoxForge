@@ -9,16 +9,14 @@ internal sealed record DnsPlan(
     DnsResolverSelectionMode SelectionMode,
     IReadOnlyList<DnsHttpsResolverPlan> Resolvers,
     bool TailscaleEnabled,
-    IReadOnlyList<string> BlockedRuleSets,
-    IReadOnlyList<DnsResolverPoolPlan> Pools,
     string FinalResolver,
     string Timeout,
     uint CacheCapacity,
     string OptimisticTimeout)
 {
-    internal const string SequentialPrimaryTimeout = "700ms";
+    internal const string SequentialPrimaryTimeout = "2s";
 
-    // Rules alone drive emission. Pools and blocking metadata describe the expected policy.
+    // Expanded rules are authoritative; resolver blocks are derived, never stored.
     internal required ImmutableArray<DnsRulePlan> Rules { get; init; }
 
     internal void Validate()
@@ -49,10 +47,6 @@ internal sealed record DnsPlan(
         }
         if (!resolvers.Contains(FinalResolver))
             diagnostics.Add(new("IR006", "plan.dns.final_resolver", "DNS 最终解析器必须已声明。"));
-        if (BlockedRuleSets.Count == 0)
-            diagnostics.Add(new("IR008", "plan.dns.blocked_rule_sets", "DNS 屏蔽必须限定规则集。"));
-        if (Pools.Count == 0 || Pools[^1].RuleSets is not null)
-            diagnostics.Add(new("IR010", "plan.dns.pools", "DNS 计划必须以全局解析池结束。"));
         if (Rules.IsDefaultOrEmpty)
             diagnostics.Add(new("IR008", "plan.dns.rules", "DNS 计划必须包含显式规则。"));
         if (TailscaleEnabled)
@@ -61,21 +55,6 @@ internal sealed record DnsPlan(
         if (!Rules.IsDefault)
             for (int index = 0; index < Rules.Length; index++)
                 ValidateRule(Rules[index], $"plan.dns.rules[{index}]");
-        var names = new HashSet<string>(StringComparer.Ordinal);
-        for (int index = 0; index < Pools.Count; index++)
-        {
-            DnsResolverPoolPlan pool = Pools[index];
-            string path = $"plan.dns.pools[{index}]";
-            if (string.IsNullOrWhiteSpace(pool.Name) || !names.Add(pool.Name))
-                diagnostics.Add(new("IR009", path + ".name", "DNS 解析池名称必须非空且唯一。"));
-            if (!resolvers.Contains(pool.PrimaryResolver))
-                diagnostics.Add(new("IR006", path + ".primary_resolver", "DNS 解析池引用了未声明的解析器。"));
-            if (!resolvers.Contains(pool.SecondaryResolver))
-                diagnostics.Add(new("IR006", path + ".secondary_resolver", "DNS 解析池引用了未声明的解析器。"));
-            if (pool.RuleSets is { Count: 0 } || (index < Pools.Count - 1 && pool.RuleSets is null))
-                diagnostics.Add(new("IR010", path + ".rule_sets", "限定解析池必须具有规则集并位于全局解析池之前。"));
-        }
-
         // Do not cascade policy errors from malformed declarations or rule trees.
         if (diagnostics.Count == initialDiagnostics)
             ValidatePolicy(diagnostics);
@@ -111,6 +90,24 @@ internal sealed record DnsPlan(
         }
     }
 
+    // Derived ranges only: the general SERVFAIL closes each resolver block.
+    internal IEnumerable<(int Start, int End)> ResolverBlocks()
+    {
+        if (Rules.IsDefault) yield break;
+        int start = -1;
+        for (int index = 0; index < Rules.Length; index++)
+        {
+            DnsRulePlan rule = Rules[index];
+            if (start < 0 && rule.Action == DnsOperation.Evaluate) start = index;
+            if (start >= 0 && rule.Action == DnsOperation.Predefined
+                && rule.Rcode == DnsResultCode.ServerFailure && rule.QueryType.IsDefault)
+            {
+                yield return (start, index);
+                start = -1;
+            }
+        }
+    }
+
     private void ValidatePolicy(List<ConfigDiagnostic> diagnostics)
     {
         int prefix = 0;
@@ -134,44 +131,34 @@ internal sealed record DnsPlan(
                 Server = SingboxTags.TailscaleDns,
                 DisableOptimisticCache = true
             });
-        RequireAt(prefix++, new() { RuleSet = [.. BlockedRuleSets], Action = DnsOperation.Predefined, Rcode = DnsResultCode.NameError });
+        RequireAt(prefix++, new() { RuleSet = [RuleSetTags.Ads], Action = DnsOperation.Predefined, Rcode = DnsResultCode.NameError });
         string?[] queryTypes = SelectionMode == DnsResolverSelectionMode.ParallelFastest
             ? AddressFamily == AddressFamilyPolicy.Ipv4Only ? ["A", null] : ["A", "AAAA", null]
             : [null];
-        int evaluationsPerPool = queryTypes.Length * 2;
-        if (Rules.Count(rule => rule.Action == DnsOperation.Evaluate) != Pools.Count * evaluationsPerPool)
-            diagnostics.Add(new("IR011", "plan.dns.pools", "DNS 解析池与实际求值规则的数量不一致。"));
-        int previous = prefix - 1;
-        for (int index = 0; index < Pools.Count; index++)
+        int next = prefix;
+        bool hasGlobal = false;
+        foreach (var (start, end) in ResolverBlocks())
         {
-            DnsResolverPoolPlan pool = Pools[index];
-            bool valid = true;
+            ImmutableArray<string> scope = Rules[start].RuleSet;
+            bool valid = start == next && !hasGlobal && (scope.IsDefault || !scope.IsEmpty);
+            hasGlobal = scope.IsDefault;
+            int cursor = start;
+            string? primaryServer = null, secondaryServer = null;
             foreach (string? queryType in queryTypes)
-                foreach (bool primary in new[] { true, false })
-                {
-                    string tag = $"response-{pool.Name}-{(primary ? "primary" : "secondary")}";
-                    if (queryType is not null)
-                        tag = DnsResponseTags.ForAddressQuery(tag, queryType);
-                    var expected = new DnsRulePlan
-                    {
-                        RuleSet = pool.RuleSets is null ? default : [.. pool.RuleSets],
-                        QueryType = queryType is not null ? [queryType] : default,
-                        DisableOptimisticCache = queryType is not null ? true : null,
-                        Action = DnsOperation.Evaluate,
-                        Server = primary ? pool.PrimaryResolver : pool.SecondaryResolver,
-                        Tag = tag,
-                        Timeout = SelectionMode == DnsResolverSelectionMode.SequentialFallback && primary ? SequentialPrimaryTimeout : null
-                    };
-                    int position = -1;
-                    for (int ruleIndex = 0; ruleIndex < Rules.Length; ruleIndex++)
-                        if (Rules[ruleIndex].Tag == tag)
-                            position = ruleIndex;
-                    valid &= position > previous && position >= 0 && Rules[position].HasSamePolicy(expected);
-                    previous = Math.Max(previous, position);
-                }
+            {
+                int terminal = cursor;
+                while (terminal <= end && Rules[terminal].Action != DnsOperation.Predefined) terminal++;
+                if (terminal > end) { valid = false; break; }
+                valid &= ValidateWindow(cursor, terminal, scope, queryType, ref primaryServer, ref secondaryServer);
+                cursor = terminal + 1;
+            }
+            valid &= cursor == end + 1;
             if (!valid)
-                diagnostics.Add(new("IR011", $"plan.dns.pools[{index}]", "DNS 解析池与实际求值规则的绑定、范围或顺序不一致。"));
+                diagnostics.Add(new("IR011", $"plan.dns.rules[{start}]", "DNS 解析块的范围、查询顺序、主备绑定、响应优先级或终止规则无效。"));
+            next = end + 1;
         }
+        if (!hasGlobal || next != Rules.Length)
+            diagnostics.Add(new("IR011", "plan.dns.rules", "DNS 规则必须由完整解析块组成，并以唯一的全局解析块结束。"));
 
         void RequireAt(int index, DnsRulePlan expected)
         {
@@ -179,12 +166,80 @@ internal sealed record DnsPlan(
                 diagnostics.Add(new("IR011", $"plan.dns.rules[{index}]", "DNS 必要守卫、控制面或屏蔽规则缺失或不符合策略。"));
         }
     }
+
+    private bool ValidateWindow(int start, int end, ImmutableArray<string> scope, string? queryType,
+        ref string? primaryServer, ref string? secondaryServer)
+    {
+        ImmutableArray<string> query = queryType is null ? default : [queryType];
+        bool parallel = SelectionMode == DnsResolverSelectionMode.ParallelFastest;
+        bool addressQuery = queryType is not null;
+        var evaluations = Enumerable.Range(start, end - start)
+            .Where(index => Rules[index].Action == DnsOperation.Evaluate).ToArray();
+        if (evaluations.Length != 2 || evaluations[0] != start) return false;
+        DnsRulePlan primary = Rules[evaluations[0]], secondary = Rules[evaluations[1]];
+        primaryServer ??= primary.Server;
+        secondaryServer ??= secondary.Server;
+        bool valid = primary.Server == primaryServer && secondary.Server == secondaryServer
+            && primary.Server != secondary.Server;
+        for (int priority = 0; priority < evaluations.Length; priority++)
+        {
+            DnsRulePlan rule = Rules[evaluations[priority]];
+            valid &= rule.HasSamePolicy(new()
+            {
+                RuleSet = scope,
+                QueryType = query,
+                Action = DnsOperation.Evaluate,
+                Server = rule.Server,
+                Tag = rule.Tag,
+                DisableOptimisticCache = addressQuery ? true : null,
+                Timeout = !parallel && priority == 0 ? SequentialPrimaryTimeout : null
+            });
+        }
+        var responses = new HashSet<(int Priority, DnsResultCode? Code, bool Race)>();
+        int previousRank = -1;
+        for (int index = start; index < end; index++)
+        {
+            DnsRulePlan rule = Rules[index];
+            if (rule.Action == DnsOperation.Evaluate) continue;
+            int priority = rule.MatchResponse == primary.Tag ? 0 : rule.MatchResponse == secondary.Tag ? 1 : -1;
+            bool positive = rule.ResponseRcode == DnsResultCode.NoError;
+            bool negative = rule.ResponseRcode == DnsResultCode.NameError;
+            bool race = parallel && positive && rule.Race == true;
+            if (priority < 0 || (!positive && !negative)) return false;
+            // Races precede empty fallbacks, which precede ordered negative answers.
+            int rank = parallel
+                ? race ? 0 : (positive ? 1 : 3) + priority
+                : priority * 2 + (negative ? 1 : 0);
+            valid &= responses.Add((priority, rule.ResponseRcode, race)) && rank >= previousRank;
+            previousRank = rank;
+            valid &= parallel ? index > evaluations[1]
+                : priority == 0 ? index < evaluations[1] : index > evaluations[1];
+            valid &= rule.HasSamePolicy(new()
+            {
+                RuleSet = race && addressQuery ? default : scope,
+                QueryType = query,
+                IpCidr = race && addressQuery ? [queryType == "A" ? "0.0.0.0/0" : "::/0"] : default,
+                MatchResponse = priority == 0 ? primary.Tag : secondary.Tag,
+                ResponseRcode = rule.ResponseRcode,
+                Action = DnsOperation.Respond,
+                Race = race ? true : null
+            });
+            // General queries have no separate empty-answer fallback after the race.
+            if (parallel && positive && !race && !addressQuery) valid = false;
+        }
+        int expectedResponses = parallel && addressQuery ? 6 : 4;
+        valid &= responses.Count == expectedResponses;
+        return valid && Rules[end].HasSamePolicy(new()
+        {
+            RuleSet = scope,
+            QueryType = query,
+            Action = DnsOperation.Predefined,
+            Rcode = DnsResultCode.ServerFailure
+        });
+    }
 }
 
 internal sealed record DnsHttpsResolverPlan(string Name, string Address, string ServerName, string? Detour);
-
-internal sealed record DnsResolverPoolPlan(
-    string Name, IReadOnlyList<string>? RuleSets, string PrimaryResolver, string SecondaryResolver);
 
 internal sealed record DnsRulePlan
 {

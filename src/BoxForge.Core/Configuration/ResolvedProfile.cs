@@ -214,8 +214,8 @@ public sealed class ResolvedProfile
             || string.IsNullOrEmpty(probe.Host) || !string.IsNullOrEmpty(probe.UserInfo) || !string.IsNullOrEmpty(probe.Fragment)
             || Tuning.UrlTestUrl.Any(char.IsWhiteSpace) || !probe.IsWellFormedOriginalString())
             throw new ProfileValidationException("profile.tuning.url_test_url", "profile.tuning.url_test_url: 必须是有效的 HTTP(S) URL，不含用户信息或片段。");
-        if (Tuning.UrlTestTolerance is < 0 or > ushort.MaxValue)
-            throw new ProfileValidationException("profile.tuning.url_test_tolerance", "profile: tolerance 必须在 0–65535 范围内。");
+        if (Tuning.UrlTestTolerance is < 1 or > ushort.MaxValue)
+            throw new ProfileValidationException("profile.tuning.url_test_tolerance", "profile: tolerance 必须在 1–65535ms 范围内；核心会将 0 解释为默认 50ms，不支持零容差。");
         if (Dns.CacheCapacity == 0)
             throw new ProfileValidationException("profile.dns.cache_capacity", "profile: 缓存容量必须为正。");
         if (Route.SniffExcludedPorts.Any(port => port is < 1 or > 65535)

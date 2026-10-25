@@ -33,7 +33,6 @@ public static class CoreServiceRegistration
 
         services.AddSingleton<IClashParser, ClashParser>();
         services.AddSingleton<IConfigSerializer, ConfigSerializer>();
-        services.AddSingleton<IProxyCacheIdGenerator, ProxyCacheIdGenerator>();
         services.AddSingleton<ISingboxConfigValidator, SingboxConfigValidator>();
 
         services.AddTransient<ISingboxConfigBuilder, SingboxConfigBuilder>();

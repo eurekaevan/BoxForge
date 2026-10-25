@@ -20,10 +20,12 @@
 `BOXFORGE_Profile` 和 HTTP 请求内联 profile 均可覆盖平台参数，具体优先级见配置参考。
 用户显式提供的节点参数优先于平台调优默认值，Tailscale 启用状态仍由
 `features.tailscale.enabled` 及平台层覆盖控制；地址族使用有效 profile 的平台值。
-DNS 顺序回退的首选 `700ms` 预算属于算法常量，不是 Android 的全局 DNS 超时。
+DNS 顺序回退的首选 `2s` 预算属于算法常量，不是 Android 的全局 DNS 超时。
 
 每个平台都只生成一个 TUN inbound，不提供本地 SOCKS/HTTP mixed 入口。
 TUN 固定启用 `auto_route`，DNS 模式显式输出 `dns_mode: hijack`。
+DNS 主要由 TUN 自身机制处理；首条路由以 `inbound: tun-in`、`port: 53`、
+`action: hijack-dns` 显式兜底 TCP/UDP 端口 53，不依赖 sniff 识别 DNS 协议。
 `strict_route` 默认仅在 Linux/Windows 显式启用；指定版本 Android feature matrix
 标记该能力未实现，因此省略。不生成 `set_system_proxy` 或
 `platform.http_proxy`，因此不会由
@@ -92,8 +94,8 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
 
 ## DNS 与持久化缓存
 
-- DNS 每次上游查询默认超时为 `1s`。Android 正常只查询首选 resolver，首选查询使用
-  `700ms` 超时，失败后才查询备用；Linux/Windows 同时查询两家。A 和允许放行的
+- DNS 每次上游查询默认超时为 `3s`。Android 正常只查询首选 resolver，首选查询使用
+  `2s` 超时，失败后才查询备用；Linux/Windows 同时查询两家。A 和允许放行的
   AAAA 查询优先让含对应地址族地址的 `NOERROR` 响应竞速，双方均无地址时才依次接受
   primary、secondary 的空答或仅 CNAME 等 `NOERROR` 后备；非地址查询让最快的
   `NOERROR` 胜出。并行模式的 A/AAAA 地址池禁用 optimistic 过期缓存，正常 TTL 缓存保留。
@@ -113,8 +115,12 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
   Tailscale split DNS 也禁用 optimistic 过期缓存。
 - 默认 `Ipv4Only` 下客户端 AAAA 查询在规则链首部无条件返回空 `NOERROR`；`Auto` 与 `DirectDualStack` 仅在出口缺少公网 IPv6 地址或接口信息未知时返回空 `NOERROR`。
 - `experimental.cache_file` 使用 `cache.db`，并通过 `store_dns` 持久化 DNS 缓存。
-- `cache_id` 是 YAML `proxies` 列表的规范化 SHA-256；字段顺序不影响身份。
-  只要核心代理列表相同，不同平台或其他 Clash 配置项会复用同一缓存身份。
+- `cache_id` 是 `SHA256(配置名 + 平台小写标识)`，使用 UTF-8 编码，输出 64 位小写十六进制。
+  配置名保留原样：CLI 使用输入文件名去掉扩展名，API 使用请求中的 `name`；
+  平台标识为 `android`、`linux`、`windows`。
+  同名、同平台稳定复用缓存，节点增减、排序、改名或元数据变化均不改变缓存身份；
+  不同平台隔离。配置改名会更换身份，不同目录中的同名配置仍共享身份。
+  从旧节点哈希算法升级时会冷启动一次；已选择节点被删除或改名时，该项选择仍会失效。
 
 ## 出站与 rule-set
 

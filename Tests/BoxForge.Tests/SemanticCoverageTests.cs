@@ -1,4 +1,6 @@
 using System.Collections;
+using System.Collections.Immutable;
+using System.Reflection;
 using BoxForge.Builders;
 using BoxForge.Builders.Components;
 using BoxForge.Configuration;
@@ -17,6 +19,83 @@ public sealed class SemanticCoverageTests
 {
     private const string RealityPublicKey =
         "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0";
+
+    private static IEnumerable<TestCaseData> PolicyCollectionProperties()
+    {
+        foreach (Type ruleType in new[] { typeof(DnsRulePlan), typeof(RouteRulePlan) })
+            foreach (PropertyInfo property in ruleType.GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                         .Where(property => property.PropertyType != typeof(string)
+                             && typeof(IEnumerable).IsAssignableFrom(property.PropertyType))
+                         .OrderBy(property => property.Name, StringComparer.Ordinal))
+                yield return new TestCaseData(ruleType, property)
+                    .SetName($"PolicyEquality_{ruleType.Name}_{property.Name}");
+    }
+
+    [TestCaseSource(nameof(PolicyCollectionProperties))]
+    public void PolicyEqualityComparesEveryCollectionByValue(Type ruleType, PropertyInfo property)
+    {
+        Type collectionType = property.PropertyType;
+        Assert.That(collectionType.IsGenericType
+            && collectionType.GetGenericTypeDefinition() == typeof(ImmutableArray<>), Is.True,
+            $"Add deliberate equality samples for the new collection type: {ruleType.Name}.{property.Name}.");
+        Type elementType = collectionType.GetGenericArguments()[0];
+        object values = Collection(changed: false, reverse: false);
+        object equalValues = Collection(changed: false, reverse: false);
+        object changedValues = Collection(changed: true, reverse: false);
+        object reversedValues = Collection(changed: false, reverse: true);
+        object defaultValues = Activator.CreateInstance(collectionType)!;
+        object emptyValues = collectionType.GetField(nameof(ImmutableArray<int>.Empty), BindingFlags.Public | BindingFlags.Static)!.GetValue(null)!;
+        Assert.That(values.Equals(equalValues), Is.False, "Equal sequences must use separate backing arrays.");
+
+        Assert.Multiple(() =>
+        {
+            Check(values, equalValues, true, "equal contents in separate storage");
+            Check(values, changedValues, false, "changed contents, including nested rules");
+            Check(values, reversedValues, false, "changed order");
+            Check(defaultValues, emptyValues, false, "default differs from empty");
+            Check(defaultValues, values, false, "default differs from populated");
+            Check(emptyValues, values, false, "empty differs from populated");
+            Check(defaultValues, defaultValues, true, "default equals default");
+            Check(emptyValues, emptyValues, true, "empty equals empty");
+        });
+
+        object Collection(bool changed, bool reverse) => elementType switch
+        {
+            Type type when type == typeof(string) => PolicyValues(changed ? "changed" : "first", "second", reverse),
+            Type type when type == typeof(int) => PolicyValues(changed ? 5353 : 53, 443, reverse),
+            Type type when type == typeof(DnsRulePlan) => PolicyValues(
+                new DnsRulePlan { Rules = [new() { QueryType = [changed ? "TXT" : "A"] }] },
+                new DnsRulePlan { Rules = [new() { QueryType = ["AAAA"] }] }, reverse),
+            Type type when type == typeof(RouteRulePlan) => PolicyValues(
+                new RouteRulePlan(RoutePhase.Sniff) { Rules = [new(RoutePhase.Sniff) { Port = [changed ? 5353 : 53] }] },
+                new RouteRulePlan(RoutePhase.Sniff) { Rules = [new(RoutePhase.Sniff) { Port = [443] }] }, reverse),
+            _ => throw new AssertionException($"Add deliberate equality samples for {ruleType.Name}.{property.Name}: {elementType}.")
+        };
+
+        void Check(object leftValues, object rightValues, bool expected, string scenario)
+        {
+            object left = WithCollection(leftValues), right = WithCollection(rightValues);
+            Assert.That(SamePolicy(left, right), Is.EqualTo(expected), scenario);
+            Assert.That(SamePolicy(right, left), Is.EqualTo(expected), $"{scenario} (symmetric)");
+        }
+
+        object WithCollection(object collection)
+        {
+            object rule = ruleType == typeof(DnsRulePlan) ? new DnsRulePlan() : new RouteRulePlan(RoutePhase.Sniff);
+            property.SetValue(rule, collection);
+            return rule;
+        }
+
+        static bool SamePolicy(object left, object right) => left switch
+        {
+            DnsRulePlan dns => dns.HasSamePolicy((DnsRulePlan)right),
+            RouteRulePlan route => route.HasSamePolicy((RouteRulePlan)right),
+            _ => throw new AssertionException($"Unsupported rule type: {left.GetType()}.")
+        };
+    }
+
+    private static ImmutableArray<T> PolicyValues<T>(T first, T second, bool reverse) =>
+        reverse ? ImmutableArray.Create(second, first) : ImmutableArray.Create(first, second);
 
     private static IEnumerable<TestCaseData> RemovedTransports()
     {

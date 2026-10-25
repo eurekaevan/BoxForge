@@ -17,7 +17,7 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
 直连规则保持原位，只在 UDP sniff 后加入 `tun-in` + UDP 限定的 bridge/bypass
 伴随规则。每条原 `DIRECT` 都保留为回退。
 
-1. **`DnsHijack`**：劫持 TUN inbound 的 DNS 流量。
+1. **`DnsHijack`**：以 `inbound: tun-in` 和 `port: 53` 兜底劫持 TCP/UDP DNS；主要入口是 TUN 自身的 `dns_mode: hijack`，不依赖后续 sniff 的协议识别。
 2. **`EarlyIpv6Guard`**（在 `DnsHijack` 之后）：`Ipv4Only` 时，以全局 `ip_version: 6` 拒绝全部 IPv6；`Auto` 与 `DirectDualStack` 时仅在缺少公网 IPv6 的出口上拒绝，先于 sniff、DIRECT、bridge 和 bypass。
 3. **`Tailscale`**（在 `EarlyIpv6Guard` 之后）：启用 Tailscale 时，路由 endpoint 声明为首选的目标，优先于私网直连。
 4. **`PreSniffDirect`**（在 `Tailscale` 之后）：直连私网地址和有效 profile 的 `alidns.server`（默认 223.5.5.5）；Linux 在每条 DIRECT 前依次展开 bypass、bridge。
@@ -139,10 +139,10 @@ DNS 构建器从本次编译的 `ResolvedProfile.Settings` 读取
 `DnsSelectionMode`：默认 Android 使用 `SequentialFallback`，Linux/Windows 使用
 `ParallelFastest`。
 
-顺序回退模式（默认 Android）先 `evaluate` primary（`timeout: 700ms`），随后按顺序判断 primary 的
+顺序回退模式（默认 Android）先 `evaluate` primary（`timeout: 2s`），随后按顺序判断 primary 的
 `NOERROR` 和 `NXDOMAIN`。只有这两个规则都不接受 primary 结果时，才会执行
-secondary `evaluate`；secondary 继承全局 `dns.timeout`（默认 `1s`）。健康情况下因此
-只产生一个上游请求。两家都不响应时，顺序预算可能累计至约 `700ms + 1s`；
+secondary `evaluate`；secondary 继承全局 `dns.timeout`（默认 `3s`）。健康情况下因此
+只产生一个上游请求。两家都不响应时，顺序预算可能累计至约 `2s + 3s`；
 这不是整条连接的总超时。
 
 并行模式（默认 Linux/Windows）先连续执行两个 `evaluate`，让 primary 和 secondary 并行查询。
@@ -160,9 +160,14 @@ A 和允许放行的 AAAA 查询分别进入独立的地址池，两条 `NOERROR
 `Auto` 下则由前述出口条件决定是否允许进入池。
 
 非地址查询的 NXDOMAIN `respond` 同样不启用 race，等待未决的 NOERROR 竞速。
-每次上游查询的默认超时来自 `dns.timeout`，默认 `1s`：快负答或空答与
+每次上游查询的默认超时来自 `dns.timeout`，默认 `3s`：快负答或空答与
 另一侧不响应的组合仍可能等满该预算。这是保留有效结果优先的代价。较短预算也可能在弱网或首次 DoH 建连时增加失败；
 可通过 profile 覆盖 `dns.timeout`，实际延迟与成功率需要真实网络测量。
+
+该预算也覆盖代理拨号与 DoH TLS 握手；默认 `3s` 为代理冷启动留出余量，
+并非每次查询固定等待。顺序首选的 `2s` 是独立预算，不随 `dns.timeout` 覆盖而改变。
+固定核心在 DoH 交换超时后会重置连接池，不能依赖已超时的连接在后台预热；
+超时失败不作为域名负答案缓存，后续查询仍可重新尝试。
 
 每个 pool 最后都有同 scope 的 `predefined SERVFAIL`。双方传输失败、超时、
 SERVFAIL 或 REFUSED 时在本 pool 终止，服务和 CN 不会穿透到后一分类。

@@ -23,6 +23,27 @@ public sealed class RouteProfileBuilderTests
         RuleSetTags.CnIp
     ];
 
+    [TestCase(TargetPlatform.Android)]
+    [TestCase(TargetPlatform.Linux)]
+    [TestCase(TargetPlatform.Windows)]
+    public void FirstRouteIsATunPort53FallbackForBothTcpAndUdp(TargetPlatform platform)
+    {
+        var plan = CreatePlan(platform);
+        Assert.DoesNotThrow(plan.Validate);
+        RouteRule rule = SingboxRouteEmitter.Emit(plan).Rules[0];
+        Assert.Multiple(() =>
+        {
+            Assert.That(rule.Action, Is.EqualTo(RouteRuleAction.HijackDns));
+            Assert.That(rule.Inbound, Is.EqualTo(new[] { SingboxTags.TunInbound }));
+            Assert.That(rule.Port, Is.EqualTo(new[] { 53 }));
+            Assert.That(rule.Network, Is.Null, "No network restriction: both TCP and UDP are covered.");
+            Assert.That(rule.Protocol, Is.Null);
+            Assert.That(rule.Type, Is.Null);
+            Assert.That(rule.Mode, Is.Null);
+            Assert.That(rule.Rules, Is.Null);
+        });
+    }
+
     [TestCase(TargetPlatform.Android, AddressFamilyPolicy.Ipv4Only)]
     [TestCase(TargetPlatform.Linux, AddressFamilyPolicy.Ipv4Only)]
     [TestCase(TargetPlatform.Windows, AddressFamilyPolicy.Ipv4Only)]
