@@ -190,7 +190,7 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
   | 来源 | 内部 tag → 文件名 | URL 基础路径 |
   | --- | --- | --- |
   | DustinWin release | `games→games.srs`、`cn→cn.srs`、`cnip→cnip.srs` | `https://github.com/DustinWin/ruleset_geodata/releases/download/sing-box-ruleset/` |
-  | MetaCubeX `sing` 分支 | `ai→category-ai-!cn.srs`、`spotify→spotify.srs`、`ads→category-ads-and-telemetry.srs`、`google→google.srs`、`microsoft→microsoft.srs` | `https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/` |
+  | MetaCubeX `sing` 分支 | `ai→category-ai-!cn.srs`、`spotify→spotify.srs`、`ads→category-ads-and-telemetry.srs`、`google→google.srs`、`github→github.srs` | `https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/` |
 
   DustinWin 同名文件共用 `{tag}.srs` 模板；MetaCubeX 的文件逐项声明。
   AI 使用 MetaCubeX 的国外 AI 分类，Spotify 使用其明确域名集合；不额外叠加
@@ -302,7 +302,7 @@ origin 被限制为同端口的 `127.0.0.1` 与 `localhost`，
   选择能力，不生成跨地区的全局 URLTest。默认选择 `route.main_default_region`
   对应的地区组（内置为 `🇺🇸 US`）；该地区仅有一个节点时直接选择该节点。
   该地区没有节点时，依次回退到首个已生成地区组、首个真实节点和 `DIRECT`。
-- AI、Google、Spotify 和 Microsoft 服务组在美国地区组存在时默认选择它；
+- AI、Google、GitHub 和 Spotify 服务组在美国地区组存在时默认选择它；
   Games 在香港地区组存在时默认选择它。偏好地区仅有一个 leaf 时直接选择该节点，
   零个 leaf 才回退主代理组；偏好定义仅来自 `route.services`。
   Service selector 不直接引用地区 AUTO，而由地区 selector 默认到 AUTO。

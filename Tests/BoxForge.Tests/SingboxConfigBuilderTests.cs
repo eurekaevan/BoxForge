@@ -775,6 +775,32 @@ public sealed class SingboxConfigBuilderTests
         });
     }
 
+    [TestCase(TargetPlatform.Android)]
+    [TestCase(TargetPlatform.Linux)]
+    [TestCase(TargetPlatform.Windows)]
+    public void GitHubUsesUnitedStatesWithPriorityRoutingAndDedicatedDns(TargetPlatform platform)
+    {
+        ProxyNode first = CreateProxy("美国 01", "us-1.example.com");
+        ProxyNode second = CreateProxy("美国 02", "us-2.example.com");
+        SingboxConfig config = PlanAndBuild(new NodeCatalog([first, second], [first.Name, second.Name]),
+            CreateProfile(platform), new string('d', 64));
+        SelectorOutbound github = config.Outbounds.OfType<SelectorOutbound>().Single(group => group.Tag == "🐙 GitHub");
+        int githubRoute = config.Route.Rules.FindIndex(rule => rule.Outbound == github.Tag);
+        int googleRoute = config.Route.Rules.FindIndex(rule => rule.Outbound == "🔎 Google");
+        int domesticUdp = config.Route.Rules.FindIndex(rule => rule.Port?.Contains(443) == true
+            && rule.RuleSet?.Contains(RuleSetTags.Cn) == true);
+        var resolvers = config.Dns.Servers.Where(server => server.Tag?.StartsWith("dns-service-github-", StringComparison.Ordinal) == true).ToArray();
+        Assert.Multiple(() =>
+        {
+            Assert.That(github.Default, Is.EqualTo("🇺🇸 US"));
+            Assert.That(github.Outbounds, Does.Contain(github.Default));
+            Assert.That(githubRoute, Is.GreaterThan(googleRoute).And.LessThan(domesticUdp));
+            Assert.That(config.Route.Rules[githubRoute].RuleSet, Is.EqualTo(new[] { "github" }));
+            Assert.That(resolvers.Select(server => server.Tag), Is.EquivalentTo(new[] { "dns-service-github-cloudflare", "dns-service-github-google" }));
+            Assert.That(resolvers.Select(server => server.Detour), Is.All.EqualTo(github.Tag));
+        });
+    }
+
     [Test]
     public void GamesServiceUsesDustinWinRuleSetAndDefaultsToHongKong()
     {

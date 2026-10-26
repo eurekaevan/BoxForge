@@ -25,10 +25,10 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
 6. **`BlockStunAndAds`**（在 `Sniff` 之后）：依次拒绝识别出的 UDP STUN 和 ads。
 7. **`LateIpv6Guard`**（在 `BlockStunAndAds` 之后）：`Ipv4Only` 时，保留独立的全局 `ip_version: 6` 后置拒绝；`Auto` 与 `DirectDualStack` 时使用相同出口条件，先于所有代理服务路由。
 8. **`ServiceIpv6Guard`**（在 `LateIpv6Guard` 之后）：仅 `DirectDualStack` 生成。仅对优先服务的规则集匹配 `ip_version: 6` 并拒绝。
-9. **`PriorityServices`**（在 `ServiceIpv6Guard` 之后）：按服务定义顺序路由 🤖 AI、🔎 Google，优先于国内 UDP/443 例外。
+9. **`PriorityServices`**（在 `ServiceIpv6Guard` 之后）：按服务定义顺序路由 🤖 AI、🔎 Google、🐙 GitHub，优先于国内 UDP/443 例外。
 10. **`DomesticUdp443`**（在 `PriorityServices` 之后）：依次放行 cn、cnip 的 UDP/443；Linux 的 DIRECT 伴随规则仅匹配 TUN UDP。其他 UDP/443 继续后续服务分流和最终代理。
 11. **`OtherServiceIpv6Guard`**（在 `DomesticUdp443` 之后）：仅 `DirectDualStack` 生成，对其他服务的规则集拒绝 IPv6，保留国内 UDP/443 先行直连的优先级。
-12. **`OtherServices`**（在 `OtherServiceIpv6Guard` 之后）：按服务定义顺序生成其他服务分流：🎵 Spotify、🎮 GAMES、🪟 Microsoft。
+12. **`OtherServices`**（在 `OtherServiceIpv6Guard` 之后）：按服务定义顺序生成其他服务分流：🎵 Spotify、🎮 GAMES。
 13. **`DomesticDirect`**（在 `OtherServices` 之后）：依次按 cn、cnip 直连国内目标；Linux 的 DIRECT 伴随规则仅匹配 TUN UDP，TCP 仍由原 DIRECT 处理。
 14. **`FinalIpv6Guard`**（在 `DomesticDirect` 之后）：仅 `DirectDualStack` 生成，以全局 `ip_version: 6` 拒绝所有未被前面规则直连的 IPv6，保证没有 IPv6 进入最终代理出口。
 15. **`FinalOutbound`**（在 `FinalIpv6Guard` 之后）：未命中规则的流量使用 route.final 的 🚀 PROXIES；不额外生成 catch-all 规则。
@@ -116,8 +116,8 @@ client DNS 依次分类：
 2. 启用 Tailscale 时，`preferred_by` 命中的 MagicDNS 和 split DNS 交给
    `dns-tailscale`，禁用 optimistic 缓存。
 3. `ads` 返回 `NXDOMAIN`。
-4. 从有效 profile 的 `route.services` 为每个服务生成独立 pool；默认 AI、Google、
-   Spotify、Games 和 Microsoft 分别通过自己的服务选择组解析，优先于 `cn`。
+4. 从有效 profile 的 `route.services` 为每个服务生成独立 pool；默认 AI、Google、GitHub、
+   Spotify 和 Games 分别通过自己的服务选择组解析，优先于 `cn`。
    服务顺序与路由一致：`PrecedesDomesticRoutes` 为真的服务在前，各阶段保留列表顺序。
    同时命中多个服务时采用最先匹配的服务；同时命中 `cn` 时仍采用该服务的 DNS。
 5. `cn` 进入 DOMESTIC pool。

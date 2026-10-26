@@ -97,7 +97,7 @@ DNS 验证脚本读取真实生成的桌面 DNS 规则，将上游替换为本�
 不匹配时会在启动核心前报错。核心版本查询限时 10 秒，配置检查和证书生成各限时 30 秒。
 需要 Python 3 和 OpenSSL，本地 DoH 通过显式信任证书使用 HTTP/1.1，不能据此
 证明生产 DoH 的 HTTP/2、代理链路或 Gmail 实际性能。它覆盖地址/空答竞争、
-CNAME、附加区与错误地址族、非地址查询、分类隔离、Spotify/Games/Microsoft
+CNAME、附加区与错误地址族、非地址查询、分类隔离、GitHub/Spotify/Games
 与 `cn` 重叠时的代理 DNS 优先和失败隔离、TTL/过期缓存和默认 3 秒
 负答等待；`DualStack` 还验证 AAAA 有效地址优先及其缓存边界。诊断和结果写入独立的 `/tmp/boxforge-dns-races.*` 目录。
 

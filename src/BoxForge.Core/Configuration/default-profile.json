@@ -114,6 +114,15 @@
         "precedes_domestic_routes": true
       },
       {
+        "id": "github",
+        "name": "🐙 GitHub",
+        "default_region": "us",
+        "rule_sets": [
+          "github"
+        ],
+        "precedes_domestic_routes": true
+      },
+      {
         "id": "spotify",
         "name": "🎵 Spotify",
         "default_region": "us",
@@ -128,15 +137,6 @@
         "default_region": "hk",
         "rule_sets": [
           "games"
-        ],
-        "precedes_domestic_routes": false
-      },
-      {
-        "id": "microsoft",
-        "name": "🪟 Microsoft",
-        "default_region": "us",
-        "rule_sets": [
-          "microsoft"
         ],
         "precedes_domestic_routes": false
       }
@@ -181,9 +181,9 @@
       },
       {
         "tags": [
-          "microsoft"
+          "github"
         ],
-        "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/microsoft.srs",
+        "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/github.srs",
         "update_interval": "1d"
       }
     ],

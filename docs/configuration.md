@@ -226,8 +226,8 @@ JSON 中反斜杠需转义。地区匹配至少两个节点才生成 selector �
 ## 服务 profile
 
 `route.services` 的完整实体包含 `id`、`name`、普通数组 `rule_sets`、
-`default_region`、`precedes_domestic_routes`。默认服务 ID 为 `ai`、`google`、
-`spotify`、`games`、`microsoft`；ID 规则与地区相同。追加示例：
+`default_region`、`precedes_domestic_routes`。默认服务 ID 为 `ai`、`google`、`github`、
+`spotify`、`games`；ID 规则与地区相同。追加示例：
 
 ```json
 {
@@ -313,7 +313,7 @@ kebab-case，并按对象用途区分。默认地区组如下，地区覆盖可�
 | 主 selector | `🚀 PROXIES` |
 | 地区 selector | `🇺🇸 US`、`🇯🇵 JP`、`🇭🇰 HK`、`🇸🇬 SG` |
 | 地区 URLTest | `🇺🇸 US AUTO`、`🇯🇵 JP AUTO`、`🇭🇰 HK AUTO`、`🇸🇬 SG AUTO` |
-| 服务 selector | `🤖 AI`、`🔎 Google`、`🎵 Spotify`、`🎮 GAMES`、`🪟 Microsoft` |
+| 服务 selector | `🤖 AI`、`🔎 Google`、`🐙 GitHub`、`🎵 Spotify`、`🎮 GAMES` |
 | 直连 outbound | `DIRECT` |
 
 内部基础设施 tag 如下：
@@ -340,8 +340,7 @@ DNS evaluate/respond 的响应 tag 使用 `response-范围-优先级`：
 `response-global-primary-a`、`response-global-secondary-a`。
 允许放行的 AAAA 查询同样使用独立 tag，后缀改为 `-aaaa`。
 这些响应 tag 均按有效 profile 的服务 ID 生成为全平台保留名称。
-内置规则集使用 BoxForge 语义 tag：`ads`、`ai`、`google`、`microsoft`、
-`spotify`、`games`、`cn`、`cnip`，可通过来源 profile 追加新 tag。外部文件名由来源映射决定，
+内置规则集使用 BoxForge 语义 tag：`ads`、`ai`、`google`、`github`、`spotify`、`games`、`cn`、`cnip`，可通过来源 profile 追加新 tag。外部文件名由来源映射决定，
 不作为内部命名约定。
 
 订阅中的真实节点保留来源名称。若节点名与任一有效地区或服务 tag、BoxForge 固定 tag、DNS 响应 tag

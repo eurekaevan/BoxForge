@@ -505,7 +505,7 @@ public sealed class RouteProfileBuilderTests
                 ["spotify"] = MetaCubeXRuleSetUrlBase + "spotify.srs",
                 [RuleSetTags.Ads] = MetaCubeXRuleSetUrlBase + "category-ads-and-telemetry.srs",
                 ["google"] = MetaCubeXRuleSetUrlBase + "google.srs",
-                ["microsoft"] = MetaCubeXRuleSetUrlBase + "microsoft.srs"
+                ["github"] = MetaCubeXRuleSetUrlBase + "github.srs"
             }));
             Assert.That(route.RuleSet.All(ruleSet =>
                 ruleSet.Type == RuleSetType.Remote

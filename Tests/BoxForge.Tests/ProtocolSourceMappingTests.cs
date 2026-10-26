@@ -65,6 +65,8 @@ public sealed class ProtocolSourceMappingTests
             .ConvertAsync(new ConversionRequest(fixture, yaml, [platform]));
         using JsonDocument document = JsonDocument.Parse(bundle.Artifacts.Single().Content);
         JsonElement config = document.RootElement;
+        Assert.That(bundle.Artifacts.Single().Content, Does.Not.Contain("microsoft").IgnoreCase,
+            "Built-in Microsoft routing, selectors, rule sets and DNS pools must be absent.");
         var outbounds = config.GetProperty("outbounds").EnumerateArray()
             .ToDictionary(outbound => outbound.GetProperty("tag").GetString()!);
         foreach (JsonElement group in outbounds.Values.Where(outbound =>

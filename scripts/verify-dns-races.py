@@ -180,7 +180,7 @@ async def main(core, generated):
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as reservation:
             reservation.bind(("127.0.0.1", 0))
             port = reservation.getsockname()[1]
-        overlap_services = ("spotify", "games", "microsoft")
+        overlap_services = ("github", "spotify", "games")
         rule_sets = [{"type": "inline", "tag": tag,
                       "rules": [{"domain_suffix": [f"{tag}.test"]
                                  + (["overlap.test"] if tag in ("google", "cn") else [])
