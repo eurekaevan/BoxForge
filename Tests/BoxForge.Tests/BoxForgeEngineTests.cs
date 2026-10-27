@@ -72,6 +72,65 @@ public sealed class BoxForgeEngineTests
         }
     }
 
+    [Test]
+    public async Task MultiPlatformRequestMatchesSeparateConversionsAndDoesNotChangeCachedProfiles()
+    {
+        using ServiceProvider provider = CreateProvider();
+        var host = provider.GetRequiredService<BoxForgeProfile>();
+        var engine = provider.GetRequiredService<IBoxForgeEngine>();
+        var platforms = Enum.GetValues<TargetPlatform>();
+        var cached = platforms.ToDictionary(platform => platform, platform => host.Resolve(platform));
+        var overlay = JsonNode.Parse("""
+            {"tuning":{"connect_timeout":"11s"},
+             "platforms":{"Linux":{"tuning":{"connect_timeout":"13s"}}}}
+            """)!.AsObject();
+        string snapshot = overlay.ToJsonString();
+        var request = new ConversionRequest("request-snapshot", ValidYaml, platforms) { Profile = overlay };
+        var defaults = await engine.ConvertAsync(request with { Profile = null });
+        var combined = await engine.ConvertAsync(request);
+        foreach (var artifact in combined.Artifacts)
+        {
+            var separate = await engine.ConvertAsync(request with { Platforms = new[] { artifact.Platform } });
+            Assert.That(artifact.Content, Is.EqualTo(separate.Artifacts.Single().Content));
+            using var document = JsonDocument.Parse(artifact.Content);
+            var proxy = document.RootElement.GetProperty("outbounds").EnumerateArray()
+                .Single(outbound => outbound.TryGetProperty("server", out _));
+            Assert.That(proxy.GetProperty("connect_timeout").GetString(),
+                Is.EqualTo(artifact.Platform == TargetPlatform.Linux ? "13s" : "11s"));
+        }
+        Assert.That(overlay.ToJsonString(), Is.EqualTo(snapshot));
+        overlay["tuning"]!["connect_timeout"] = "17s";
+        var changed = await engine.ConvertAsync(request);
+        Assert.That(changed.Artifacts.Single(artifact => artifact.Platform == TargetPlatform.Windows).Content,
+            Is.Not.EqualTo(combined.Artifacts.Single(artifact => artifact.Platform == TargetPlatform.Windows).Content));
+        var after = await engine.ConvertAsync(request with { Profile = null });
+        foreach (var artifact in defaults.Artifacts)
+        {
+            Assert.That(after.Artifacts.Single(item => item.Platform == artifact.Platform).Content, Is.EqualTo(artifact.Content));
+            Assert.That(host.Resolve(artifact.Platform), Is.SameAs(cached[artifact.Platform]));
+        }
+    }
+
+    [TestCase("{\"platforms\":{\"Linux\":{\"typo\":true}}}", false)]
+    [TestCase("{\"platforms\":{\"Linux\":{\"tuning\":{\"connect_timeout\":\"0s\"}}}}", true)]
+    public async Task RequestPlatformValidationMatchesSinglePlatformResolution(string json, bool validForWindows)
+    {
+        using ServiceProvider provider = CreateProvider();
+        var host = provider.GetRequiredService<BoxForgeProfile>();
+        var engine = provider.GetRequiredService<IBoxForgeEngine>();
+        var overlay = JsonNode.Parse(json)!.AsObject();
+        var request = new ConversionRequest("request-validation", ValidYaml, [TargetPlatform.Windows]) { Profile = overlay };
+        if (validForWindows)
+        {
+            Assert.DoesNotThrow(() => host.Resolve(TargetPlatform.Windows, overlay));
+            Assert.That((await engine.ConvertAsync(request)).Artifacts.Count, Is.EqualTo(1));
+            request = request with { Platforms = [TargetPlatform.Linux] };
+        }
+        var expected = Assert.Throws<ProfileValidationException>(() => host.Resolve(request.Platforms.Single(), overlay));
+        var actual = Assert.ThrowsAsync<ProfileValidationException>(async () => await engine.ConvertAsync(request));
+        Assert.That(actual!.Diagnostics, Is.EqualTo(expected!.Diagnostics));
+    }
+
     [TestCase("rename")]
     [TestCase("add")]
     [TestCase("remove")]
@@ -570,9 +629,13 @@ public sealed class BoxForgeEngineTests
         Assert.That(exception!.InnerException, Is.Not.Null);
     }
 
-    [TestCase(TargetPlatform.Android)]
-    [TestCase(TargetPlatform.Linux)]
-    public void PlatformReservedNamesBindAfterOneSourceParseAndPreserveFailureClassification(TargetPlatform conflictingPlatform)
+    [TestCase(TargetPlatform.Android, false, false)]
+    [TestCase(TargetPlatform.Android, true, false)]
+    [TestCase(TargetPlatform.Linux, false, false)]
+    [TestCase(TargetPlatform.Linux, false, true)]
+    [TestCase(TargetPlatform.Linux, true, false)]
+    public void PlatformReservedNamesAlwaysReportTheConflictingPlatformAfterOneSourceParse(
+        TargetPlatform conflictingPlatform, bool singlePlatform, bool reversedOrder)
     {
         var parser = new CountingParser();
         RecordingConfigBuilder? recording = null;
@@ -588,24 +651,24 @@ public sealed class BoxForgeEngineTests
                     """)
             }
         };
-        var error = Assert.CatchAsync(async () => await engine.ConvertAsync(new ConversionRequest(
-            "platform-name-binding", ValidYaml, [TargetPlatform.Android, TargetPlatform.Linux, TargetPlatform.Windows])
-        { Profile = overlay }));
+        TargetPlatform[] platforms = singlePlatform ? [conflictingPlatform]
+            : reversedOrder ? [TargetPlatform.Windows, TargetPlatform.Linux, TargetPlatform.Android]
+            : [TargetPlatform.Android, TargetPlatform.Linux, TargetPlatform.Windows];
+        var request = new ConversionRequest("platform-name-binding", ValidYaml, platforms) { Profile = overlay };
+        var error = Assert.ThrowsAsync<BoxForgePlatformConversionException>(async () => await engine.ConvertAsync(request));
         Assert.Multiple(() =>
         {
             Assert.That(parser.Calls, Is.EqualTo(1));
-            Assert.That(error!.InnerException, Is.TypeOf<NodeParseException>());
-            Assert.That(error.InnerException!.Message, Is.EqualTo("节点名称 'test' 与 BoxForge 保留 tag 冲突"));
-            Assert.That(recording!.Calls, Is.EqualTo(conflictingPlatform == TargetPlatform.Android
+            Assert.That(error!.Platform, Is.EqualTo(conflictingPlatform));
+            Assert.That(error.InnerException, Is.TypeOf<ConfigValidationException>());
+            Assert.That(error.Diagnostics, Is.EqualTo(new[]
+            {
+                new ConfigDiagnostic("IR009", "plan.nodes[0].name", "节点名称与保留名称冲突。")
+            }));
+            Assert.That(JsonSerializer.Serialize(error.Diagnostics), Does.Not.Contain("test"));
+            Assert.That(recording!.Calls, Is.EqualTo(singlePlatform || conflictingPlatform == TargetPlatform.Android
                 ? Array.Empty<TargetPlatform>() : new[] { TargetPlatform.Android }));
         });
-        if (conflictingPlatform == TargetPlatform.Android)
-            Assert.That(error, Is.TypeOf<BoxForgeConversionException>());
-        else
-        {
-            Assert.That(error, Is.TypeOf<BoxForgePlatformConversionException>());
-            Assert.That(((BoxForgePlatformConversionException)error!).Platform, Is.EqualTo(TargetPlatform.Linux));
-        }
     }
 
     [Test]

@@ -67,16 +67,20 @@ public sealed class DnsProfileBuilderTests
             Assert.That(plan.TailscaleEnabled, Is.True);
             Assert.That(DnsProfileBuilder.Plan(profile.Resolve(platform)).TailscaleEnabled, Is.True);
             Assert.That(DnsProfileBuilder.Plan(changedProfile.Resolve(platform)).TailscaleEnabled, Is.False);
-            var evaluations = plan.ResolverBlocks().Select(block => plan.Rules[block.Start]).ToArray();
+            DnsConfig emitted = SingboxDnsEmitter.Emit(plan);
+            var evaluations = ResolverBlocks(emitted.Rules).Select(block => emitted.Rules[block.Start]).ToArray();
             var scopes = ExpectedResolverScopes(profile.Resolve(platform)).ToArray();
             string suffix = settings.DnsSelectionMode == DnsResolverSelectionMode.ParallelFastest ? "-a" : "";
             Assert.That(evaluations.Select(rule => rule.Tag),
                 Is.EqualTo(scopes.Select(scope => $"response-{scope.Name}-primary{suffix}")));
             Assert.That(evaluations[0].RuleSet, Is.EqualTo(profile.Services.First().RuleSets));
             Assert.That(evaluations[^2].RuleSet, Is.EqualTo(new[] { RuleSetTags.Cn }));
-            Assert.That(evaluations[^1].RuleSet.IsDefault, Is.True);
-            Assert.That(plan.Rules.Single(rule => rule.Action == DnsOperation.Predefined
-                && rule.Rcode == DnsResultCode.NameError).RuleSet, Is.EqualTo(new[] { RuleSetTags.Ads }));
+            Assert.That(evaluations[^1].RuleSet, Is.Null);
+            Assert.That(plan.Pools.Select(pool => pool.ServiceId),
+                Is.EqualTo(profile.Services.OrderByDescending(service => service.PrecedesDomesticRoutes)
+                    .Select(service => (string?)service.Id).Concat([null, null])));
+            Assert.That(emitted.Rules.Single(rule => rule.Action == DnsRuleAction.Predefined
+                && rule.Rcode == DnsResponseCode.NameError).RuleSet, Is.EqualTo(new[] { RuleSetTags.Ads }));
         });
     }
 
@@ -137,30 +141,31 @@ public sealed class DnsProfileBuilderTests
     }
 
     [Test]
-    public void DnsPlanFixesGuardAndServiceResolverPolicyBeforeEmission()
+    public void DnsEmissionExpandsGuardAndServiceResolverPolicy()
     {
         var plan = CreatePlan(TargetPlatform.Linux, tailscaleEnabled: true, AddressFamilyPolicy.Auto);
-        var guard = plan.Rules[0];
-        var tailscale = plan.Rules[1];
-        var blocking = plan.Rules[2];
+        DnsConfig dns = SingboxDnsEmitter.Emit(plan);
+        var guard = dns.Rules[0];
+        var tailscale = dns.Rules[1];
+        var blocking = dns.Rules[2];
         var firstService = BoxForgeProfile.Default.Services
             .OrderByDescending(service => service.PrecedesDomesticRoutes).First();
         string resolverTag = $"dns-service-{firstService.Id}-cloudflare";
-        var serviceEvaluation = plan.Rules[3];
+        var serviceEvaluation = dns.Rules[3];
         Assert.Multiple(() =>
         {
-            Assert.That(guard.Mode, Is.EqualTo(LogicalMatchMode.And));
-            Assert.That(guard.Rules[0].QueryType, Is.EqualTo(new[] { "AAAA" }));
-            Assert.That(guard.Rules[1].DefaultInterfaceAddress,
+            Assert.That(guard.Mode, Is.EqualTo(RouteLogicalMode.And));
+            Assert.That(guard.Rules![0].QueryType, Is.EqualTo(new[] { "AAAA" }));
+            Assert.That(guard.Rules![1].DefaultInterfaceAddress,
                 Is.EqualTo(new[] { AddressFamilyPolicies.GlobalIpv6Prefix }));
-            Assert.That(guard.Rules[1].Invert, Is.True);
-            Assert.That(guard.Action, Is.EqualTo(DnsOperation.Predefined));
-            Assert.That(guard.Rcode, Is.EqualTo(DnsResultCode.NoError));
+            Assert.That(guard.Rules![1].Invert, Is.True);
+            Assert.That(guard.Action, Is.EqualTo(DnsRuleAction.Predefined));
+            Assert.That(guard.Rcode, Is.EqualTo(DnsResponseCode.NoError));
             Assert.That(tailscale.Server, Is.EqualTo(SingboxTags.TailscaleDns));
             Assert.That(tailscale.DisableOptimisticCache, Is.True);
             Assert.That(blocking.RuleSet, Is.EqualTo(new[] { RuleSetTags.Ads }));
-            Assert.That(blocking.Rcode, Is.EqualTo(DnsResultCode.NameError));
-            Assert.That(serviceEvaluation.Action, Is.EqualTo(DnsOperation.Evaluate));
+            Assert.That(blocking.Rcode, Is.EqualTo(DnsResponseCode.NameError));
+            Assert.That(serviceEvaluation.Action, Is.EqualTo(DnsRuleAction.Evaluate));
             Assert.That(serviceEvaluation.RuleSet, Is.EqualTo(firstService.RuleSets));
             Assert.That(serviceEvaluation.Server, Is.EqualTo(resolverTag));
             Assert.That(serviceEvaluation.QueryType, Is.EqualTo(new[] { "A" }));
@@ -170,129 +175,99 @@ public sealed class DnsProfileBuilderTests
     }
 
     [Test]
-    public void DnsDiagnosticsCollectNestedDependenciesInStableOrderWithoutDisclosingValues()
+    public void DnsDiagnosticsCollectPoolDependenciesInStableOrderWithoutDisclosingValues()
     {
         const string hostile = "secret\nforged-path";
-        var plan = CreatePlan(TargetPlatform.Linux) with
+        var plan = CreatePlan(TargetPlatform.Linux);
+        plan = plan with
         {
-            Rules =
-            [
-                new() { Mode = LogicalMatchMode.And, Rules = [new() { Server = hostile }] },
-                new() { Action = DnsOperation.Respond, MatchResponse = hostile },
-                new() { Action = DnsOperation.Evaluate, Server = "missing", Tag = hostile }
-            ]
+            Pools = plan.Pools
+                .SetItem(0, plan.Pools[0] with { PrimaryServer = hostile, SecondaryServer = "missing" })
+                .SetItem(1, plan.Pools[1] with { PrimaryServer = hostile })
         };
         var exception = Assert.Throws<ConfigValidationException>(() => plan.Validate())!;
         Assert.Multiple(() =>
         {
             Assert.That(exception.Diagnostics.Select(item => (item.Code, item.Path)), Is.EqualTo(new[]
             {
-                ("IR006", "plan.dns.rules[0].rules[0].server"),
-                ("IR010", "plan.dns.rules[1].match_response"),
-                ("IR006", "plan.dns.rules[2].server")
+                ("IR006", "plan.dns.pools[0].primary_server"),
+                ("IR006", "plan.dns.pools[0].secondary_server"),
+                ("IR006", "plan.dns.pools[1].primary_server")
             }));
             Assert.That(exception.Message, Does.Not.Contain(hostile));
         });
     }
 
     [Test]
-    public void DefaultDnsRulesProduceAContractDiagnostic()
+    public void DefaultDnsPoolsProduceAContractDiagnostic()
     {
-        var plan = CreatePlan(TargetPlatform.Linux) with { Rules = default };
+        var plan = CreatePlan(TargetPlatform.Linux) with { Pools = default };
         var exception = Assert.Throws<ConfigValidationException>(() => plan.Validate())!;
         Assert.That(exception.Diagnostics.Select(item => (item.Code, item.Path)),
-            Is.EqualTo(new[] { ("IR008", "plan.dns.rules") }));
+            Is.EqualTo(new[] { ("IR008", "plan.dns.pools") }));
     }
 
     [TestCase("final")]
-    [TestCase("pool_resolver")]
+    [TestCase("primary_resolver")]
+    [TestCase("secondary_resolver")]
+    [TestCase("same_resolvers")]
     [TestCase("duplicate_resolver")]
-    [TestCase("duplicate_pool")]
+    [TestCase("duplicate_service")]
+    [TestCase("missing_service_id")]
     [TestCase("early_global")]
     [TestCase("no_global")]
+    [TestCase("no_domestic")]
     [TestCase("empty_scope")]
-    [TestCase("empty_blocking")]
-    [TestCase("missing_terminal")]
-    [TestCase("cross_scope_response")]
-    [TestCase("race_disabled")]
+    [TestCase("default_service_scope")]
+    [TestCase("global_scope")]
+    [TestCase("domestic_scope")]
+    [TestCase("unknown_kind")]
     [TestCase("unknown_mode")]
-    [TestCase("no_rules")]
-    [TestCase("unknown_rule_action")]
-    [TestCase("unknown_rule_mode")]
-    [TestCase("unknown_rule_code")]
-    [TestCase("unknown_rule_server")]
-    [TestCase("unknown_response")]
-    [TestCase("missing_evaluation_tag")]
-    [TestCase("missing_logical_predicates")]
+    [TestCase("unknown_family")]
+    [TestCase("no_pools")]
     public void InvalidDnsPlanFailsBeforeEmittingRules(string fault)
     {
         var plan = CreatePlan(TargetPlatform.Linux);
-        var blocks = plan.ResolverBlocks().ToArray();
-        var first = blocks[0];
-        var last = blocks[^1];
-        int secondary = first.Start + 1;
+        int domestic = plan.Pools.Length - 2;
+        int global = plan.Pools.Length - 1;
         plan = fault switch
         {
             "final" => plan with { FinalResolver = "missing" },
-            "pool_resolver" => plan with { Rules = plan.Rules.SetItem(secondary, plan.Rules[secondary] with { Server = "missing" }) },
+            "primary_resolver" => plan with { Pools = plan.Pools.SetItem(0, plan.Pools[0] with { PrimaryServer = "missing" }) },
+            "secondary_resolver" => plan with { Pools = plan.Pools.SetItem(0, plan.Pools[0] with { SecondaryServer = "missing" }) },
+            "same_resolvers" => plan with { Pools = plan.Pools.SetItem(0, plan.Pools[0] with { SecondaryServer = plan.Pools[0].PrimaryServer }) },
             "duplicate_resolver" => plan with { Resolvers = [.. plan.Resolvers, plan.Resolvers[0]] },
-            "duplicate_pool" => plan with
-            {
-                Rules = plan.Rules.InsertRange(first.End + 1,
-                plan.Rules.Skip(first.Start).Take(first.End - first.Start + 1))
-            },
-            "early_global" => plan with
-            {
-                Rules = [.. plan.Rules.Take(first.Start), .. plan.Rules.Skip(last.Start),
-                .. plan.Rules.Skip(first.Start).Take(last.Start - first.Start)]
-            },
-            "no_global" => plan with { Rules = plan.Rules.RemoveRange(last.Start, last.End - last.Start + 1) },
-            "empty_scope" => plan with { Rules = plan.Rules.SetItem(first.Start, plan.Rules[first.Start] with { RuleSet = [] }) },
-            "empty_blocking" => plan with
-            {
-                Rules = [.. plan.Rules.Where(rule =>
-                rule.Action != DnsOperation.Predefined || rule.Rcode != DnsResultCode.NameError)]
-            },
-            "missing_terminal" => plan with { Rules = plan.Rules.RemoveAt(first.End) },
-            "cross_scope_response" => plan with
-            {
-                Rules = plan.Rules.SetItem(blocks[1].Start + 2,
-                plan.Rules[blocks[1].Start + 2] with { MatchResponse = plan.Rules[first.Start].Tag })
-            },
-            "race_disabled" => plan with
-            {
-                Rules = plan.Rules.SetItem(first.Start + 2,
-                plan.Rules[first.Start + 2] with { Race = false })
-            },
-            "no_rules" => plan with { Rules = [] },
-            "unknown_rule_action" => plan with { Rules = [new() { Action = (DnsOperation)999 }] },
-            "unknown_rule_mode" => plan with { Rules = [new() { Mode = (LogicalMatchMode)999 }] },
-            "unknown_rule_code" => plan with { Rules = [new() { Rcode = (DnsResultCode)999 }] },
-            "unknown_rule_server" => plan with { Rules = [new() { Server = "missing" }] },
-            "unknown_response" => plan with { Rules = [new() { Action = DnsOperation.Respond, MatchResponse = "missing" }] },
-            "missing_evaluation_tag" => plan with { Rules = [new() { Action = DnsOperation.Evaluate, Server = plan.FinalResolver }] },
-            "missing_logical_predicates" => plan with { Rules = [new() { Mode = LogicalMatchMode.And }] },
+            "duplicate_service" => plan with { Pools = plan.Pools.SetItem(1, plan.Pools[1] with { ServiceId = plan.Pools[0].ServiceId }) },
+            "missing_service_id" => plan with { Pools = plan.Pools.SetItem(0, plan.Pools[0] with { ServiceId = null }) },
+            "early_global" => plan with { Pools = plan.Pools.SetItem(0, plan.Pools[global]) },
+            "no_global" => plan with { Pools = plan.Pools.RemoveAt(global) },
+            "no_domestic" => plan with { Pools = plan.Pools.RemoveAt(domestic) },
+            "empty_scope" => plan with { Pools = plan.Pools.SetItem(0, plan.Pools[0] with { RuleSets = [] }) },
+            "default_service_scope" => plan with { Pools = plan.Pools.SetItem(0, plan.Pools[0] with { RuleSets = default }) },
+            "global_scope" => plan with { Pools = plan.Pools.SetItem(global, plan.Pools[global] with { RuleSets = [RuleSetTags.Cn] }) },
+            "domestic_scope" => plan with { Pools = plan.Pools.SetItem(domestic, plan.Pools[domestic] with { RuleSets = [RuleSetTags.Ads] }) },
+            "unknown_kind" => plan with { Pools = plan.Pools.SetItem(0, plan.Pools[0] with { Kind = (DnsPoolKind)999 }) },
+            "unknown_family" => plan with { AddressFamily = (AddressFamilyPolicy)999 },
+            "no_pools" => plan with { Pools = [] },
             _ => plan with { SelectionMode = (DnsResolverSelectionMode)999 }
         };
         var exception = Assert.Throws<ConfigValidationException>(() => plan.Validate())!;
         var expected = fault switch
         {
             "final" => ("IR006", "plan.dns.final_resolver"),
-            "pool_resolver" => ("IR006", $"plan.dns.rules[{secondary}].server"),
+            "primary_resolver" => ("IR006", "plan.dns.pools[0].primary_server"),
+            "secondary_resolver" => ("IR006", "plan.dns.pools[0].secondary_server"),
+            "same_resolvers" or "early_global" or "empty_scope" or "default_service_scope" => ("IR011", "plan.dns.pools[0]"),
             "duplicate_resolver" => ("IR009", $"plan.dns.resolvers[{plan.Resolvers.Count - 1}].name"),
-            "duplicate_pool" => ("IR009", $"plan.dns.rules[{first.End + 1}].tag"),
-            "early_global" or "no_global" => ("IR011", "plan.dns.rules"),
-            "empty_scope" or "missing_terminal" or "race_disabled" => ("IR011", $"plan.dns.rules[{first.Start}]"),
-            "empty_blocking" => ("IR011", $"plan.dns.rules[{first.Start - 1}]"),
-            "cross_scope_response" => ("IR011", $"plan.dns.rules[{blocks[1].Start}]"),
-            "no_rules" => ("IR008", "plan.dns.rules"),
-            "unknown_rule_action" => ("IR008", "plan.dns.rules[0].action"),
-            "unknown_rule_mode" => ("IR008", "plan.dns.rules[0].mode"),
-            "unknown_rule_code" => ("IR008", "plan.dns.rules[0].rcode"),
-            "unknown_rule_server" => ("IR006", "plan.dns.rules[0].server"),
-            "unknown_response" => ("IR010", "plan.dns.rules[0].match_response"),
-            "missing_evaluation_tag" => ("IR009", "plan.dns.rules[0].tag"),
-            "missing_logical_predicates" => ("IR008", "plan.dns.rules[0].rules"),
+            "duplicate_service" => ("IR009", "plan.dns.pools[1].service_id"),
+            "missing_service_id" => ("IR009", "plan.dns.pools[0].service_id"),
+            "no_global" => ("IR011", $"plan.dns.pools[{global - 1}]"),
+            "no_domestic" => ("IR011", $"plan.dns.pools[{domestic - 1}]"),
+            "global_scope" => ("IR011", $"plan.dns.pools[{global}]"),
+            "domestic_scope" => ("IR011", $"plan.dns.pools[{domestic}]"),
+            "unknown_kind" => ("IR008", "plan.dns.pools[0].kind"),
+            "unknown_family" => ("IR008", "plan.dns.address_family"),
+            "no_pools" => ("IR008", "plan.dns.pools"),
             _ => ("IR008", "plan.dns.selection_mode")
         };
         Assert.That(exception.Diagnostics.Select(item => (item.Code, item.Path)), Does.Contain(expected));
@@ -364,8 +339,8 @@ public sealed class DnsProfileBuilderTests
             Assert.That(guard.Rcode, Is.EqualTo(DnsResponseCode.NoError));
             Assert.That(guard.Rules, Has.Count.EqualTo(2));
             Assert.That(guard.Rules![0].QueryType, Is.EqualTo(new[] { "AAAA" }));
-            Assert.That(guard.Rules[1].DefaultInterfaceAddress, Is.EqualTo(new[] { "2000::/3" }));
-            Assert.That(guard.Rules[1].Invert, Is.True);
+            Assert.That(guard.Rules![1].DefaultInterfaceAddress, Is.EqualTo(new[] { "2000::/3" }));
+            Assert.That(guard.Rules![1].Invert, Is.True);
             Assert.That(JsonSerializer.Serialize(guard), Does.Not.Contain("network_interface_address").And.Not.Contain("network_type"));
         });
 
@@ -383,7 +358,7 @@ public sealed class DnsProfileBuilderTests
         })
         {
             bool addressMatches = fixture.Current.Select(System.Net.IPAddress.Parse).Any(globalPrefix.Contains);
-            bool guardMatches = guard.Rules[1].Invert == true ? !addressMatches : addressMatches;
+            bool guardMatches = guard.Rules![1].Invert == true ? !addressMatches : addressMatches;
             Assert.That(guardMatches, Is.EqualTo(fixture.Reject),
                 $"default=[{string.Join(',', fixture.Current)}], standby=[{string.Join(',', fixture.Standby)}]");
         }
@@ -458,7 +433,7 @@ public sealed class DnsProfileBuilderTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(plan.ResolverBlocks().Select(block => plan.Rules[block.Start].Tag),
+            Assert.That(ResolverBlocks(dns.Rules).Select(block => dns.Rules[block.Start].Tag),
                 Is.EqualTo(new[] { "response-service-first-primary-a", "response-service-second-primary-a",
                     "response-service-late-primary-a", "response-domestic-primary-a", "response-global-primary-a" }));
             Assert.That(serviceRoutes.Select(rule => rule.Outbound),
@@ -671,9 +646,9 @@ public sealed class DnsProfileBuilderTests
         Assert.That(dns.Rules.Skip(1).Any(rule =>
             rule.Action == DnsRuleAction.Predefined && rule.Rcode == DnsResponseCode.NoError), Is.False,
             "DNS classification cannot determine whether a selector or cnip route ultimately chooses DIRECT.");
-        var blocks = plan.ResolverBlocks().ToArray();
+        var blocks = ResolverBlocks(dns.Rules).ToArray();
         Assert.That(blocks, Has.Length.EqualTo(profile.Resolve(platform).Services.Length + 2));
-        Assert.That(plan.Rules[blocks[^1].Start].RuleSet.IsDefault, Is.True);
+        Assert.That(dns.Rules[blocks[^1].Start].RuleSet, Is.Null);
         foreach (var pool in ExpectedResolverScopes(profile.Resolve(platform)))
         {
             DnsRule evaluation = dns.Rules.Single(rule => rule.Tag == $"response-{pool.Name}-primary");
@@ -689,7 +664,7 @@ public sealed class DnsProfileBuilderTests
     {
         var plan = CreatePlan(TargetPlatform.Linux);
         DnsConfig dns = SingboxDnsEmitter.Emit(plan);
-        var blocks = plan.ResolverBlocks().ToArray();
+        var blocks = ResolverBlocks(dns.Rules).ToArray();
         var scopes = ExpectedResolverScopes(BoxForgeProfile.Default.Resolve(TargetPlatform.Linux)).ToArray();
         Assert.That(blocks, Has.Length.EqualTo(scopes.Length));
         for (int index = 0; index < blocks.Length; index++)
@@ -724,7 +699,7 @@ public sealed class DnsProfileBuilderTests
             Assert.That(servers.Keys, Does.Contain(SingboxTags.DirectTencentDns));
             Assert.That(servers.Keys, Does.Contain(SingboxTags.ProxyCloudflareDns));
             Assert.That(servers.Keys, Does.Contain(SingboxTags.ProxyGoogleDns));
-            Assert.That(servers[SingboxTags.DirectAliDns].Type, Is.EqualTo("https"));
+            Assert.That(JsonSerializer.SerializeToElement<DnsServer>(servers[SingboxTags.DirectAliDns]).GetProperty("type").GetString(), Is.EqualTo("https"));
             Assert.That(servers[SingboxTags.DirectAliDns].Server, Is.EqualTo("223.5.5.5"));
             Assert.That(servers[SingboxTags.DirectAliDns].Tls?.ServerName, Is.EqualTo("dns.alidns.com"));
             Assert.That(servers[SingboxTags.DirectTencentDns].Server, Is.EqualTo("119.29.29.29"));
@@ -804,6 +779,22 @@ public sealed class DnsProfileBuilderTests
                 [null, null]);
             AssertTerminalServfail(rules[terminalIndex], expectedRuleSets);
         });
+    }
+
+    private static IEnumerable<(int Start, int End)> ResolverBlocks(List<DnsRule> rules)
+    {
+        int start = -1;
+        for (int index = 0; index < rules.Count; index++)
+        {
+            DnsRule rule = rules[index];
+            if (start < 0 && rule.Action == DnsRuleAction.Evaluate) start = index;
+            if (start >= 0 && rule.Action == DnsRuleAction.Predefined
+                && rule.Rcode == DnsResponseCode.ServerFailure && rule.QueryType is null)
+            {
+                yield return (start, index);
+                start = -1;
+            }
+        }
     }
 
     private static List<DnsRule> GetPoolRules(

@@ -18,7 +18,7 @@ internal static class TrojanProtocol
         string server = node.GetRequiredString("server");
         var tls = TlsConfigHelper.ExtractSettings(node, server, forceTls: true)
             ?? throw new InvalidOperationException("Trojan TLS interpretation unexpectedly returned no settings.");
-        return new TrojanNode(name, server, node.GetRequiredInt("port"),
+        return new TrojanNode(name, server, node.GetRequiredPort("port"),
             node.GetRequiredRawString("password"),
             new(node.GetNullableBool("tls"), node.GetPresentField("tls") is not null),
             tls);

@@ -5,11 +5,12 @@ using BoxForge.Exceptions;
 
 namespace BoxForge.Helpers;
 
-internal static class GoDurationHelper
+internal static partial class GoDurationHelper
 {
-    private static readonly Regex Components = new(
+    [GeneratedRegex(
         @"\G([0-9]+(?:\.[0-9]*)?|\.[0-9]+)(ns|us|µs|μs|ms|s|m|h|d)",
-        RegexOptions.CultureInvariant);
+        RegexOptions.CultureInvariant)]
+    private static partial Regex Components();
 
     internal static bool IsPositiveDuration(string value) =>
         TryParseDuration(value, out long duration) && duration > 0;
@@ -47,7 +48,7 @@ internal static class GoDurationHelper
         if (unsigned == "0") return true;
         BigInteger nanoseconds = 0;
         int consumed = 0;
-        foreach (Match component in Components.Matches(unsigned))
+        foreach (Match component in Components().Matches(unsigned))
         {
             if (component.Index != consumed) return false;
             if (!allowDays && component.Groups[2].Value == "d") return false;
@@ -77,5 +78,5 @@ internal static class GoDurationHelper
     }
 
     private static NodeParseException Invalid(string field) =>
-        new($"字段 '{field}' 必须是正数秒或有效的正 Go duration，且不能超出 int64 纳秒范围");
+        NodeParseException.ForField(field, $"字段 '{field}' 必须是正数秒或有效的正 Go duration，且不能超出 int64 纳秒范围");
 }

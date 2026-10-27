@@ -4,6 +4,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Console;
 using BoxForge.App;
+using BoxForge.Exceptions;
 using BoxForge.Configuration;
 using BoxForge.Cli;
 using BoxForge.Workflows;
@@ -20,14 +21,14 @@ try
     }
 
     using var host = Host.CreateDefaultBuilder([])
-        .ConfigureAppConfiguration((context, config) =>
+        .ConfigureServices((_, services) =>
         {
             using var environment = new ConfigurationManager();
             environment.AddEnvironmentVariables(prefix: "BOXFORGE_");
             environment.ValidateBoxForgeEnvironment();
-            config.AddInMemoryCollection(environment.AsEnumerable().Where(pair => pair.Value is not null).ToArray());
             if (parsed.Options!.ProfilePath is { } path)
-                config.AddInMemoryCollection(new Dictionary<string, string?> { ["Profile"] = path });
+                environment.AddInMemoryCollection(new Dictionary<string, string?> { ["Profile"] = path });
+            services.AddBoxForge(environment);
         })
         .ConfigureLogging(logging =>
         {
@@ -40,10 +41,6 @@ try
                 options.SingleLine = true;
                 options.TimestampFormat = "[HH:mm:ss] ";
             });
-        })
-        .ConfigureServices((context, services) =>
-        {
-            services.AddBoxForge(context.Configuration);
         })
         .Build();
 
@@ -79,7 +76,7 @@ catch (OperationCanceledException)
 {
     Environment.ExitCode = GenerateCommandRunner.CancelledExitCode;
 }
-catch (FormatException exception)
+catch (ProfileValidationException exception)
 {
     Console.Error.WriteLine($"BoxForge 启动失败：配置值格式无效，请检查 profile 文件或 BOXFORGE_ 环境变量。{exception.Message}");
     Environment.ExitCode = GenerateCommandRunner.FailureExitCode;

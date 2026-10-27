@@ -52,10 +52,10 @@ internal static class ShadowsocksProtocol
         string name)
     {
         string server = node.GetRequiredString("server");
-        int port = node.GetRequiredInt("port");
+        int port = node.GetRequiredPort("port");
         string method = node.GetString("cipher")
             ?? node.GetString("method")
-            ?? throw new NodeParseException("缺失加密方式 (cipher 或 method)");
+            ?? throw NodeParseException.ForField(node.GetPresentField("cipher", "method") ?? "cipher", "缺失加密方式 (cipher 或 method)");
         string password = node.GetRequiredRawString("password");
         int version = node.GetInt("udp-over-tcp-version")
             ?? node.GetInt("udp_over_tcp_version") ?? 1;
@@ -66,14 +66,15 @@ internal static class ShadowsocksProtocol
         ShadowsocksObfs? obfs = null;
         if (plugin is not null)
         {
+            string optionsField = node.GetPresentField("plugin-opts", "plugin_opts") ?? "plugin-opts";
             if (options is null)
-                throw new NodeParseException("字段 'plugin-opts.mode' 必须显式指定");
+                throw NodeParseException.ForField(optionsField + ".mode", "字段 'plugin-opts.mode' 必须显式指定");
             string? mode = options.GetRawString("mode");
             string host = options.GetRawString("host") ?? "bing.com";
             if (!ShadowsocksObfs.IsValidHost(host))
-                throw new NodeParseException("字段 'plugin-opts.host' 必须是非空、无控制字符的主机名");
+                throw NodeParseException.ForField(optionsField + ".host", "字段 'plugin-opts.host' 必须是非空、无控制字符的主机名");
             if (mode is not ("http" or "tls"))
-                throw new NodeParseException("字段 'plugin-opts.mode' 只支持 http 或 tls");
+                throw NodeParseException.ForField(optionsField + ".mode", "字段 'plugin-opts.mode' 只支持 http 或 tls");
             obfs = new ShadowsocksObfs(
                 mode == "http" ? ShadowsocksObfsMode.Http : ShadowsocksObfsMode.Tls,
                 host);

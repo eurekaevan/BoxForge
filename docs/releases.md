@@ -24,12 +24,18 @@ HTTP/Web 提供无状态的内存转换；不包含订阅抓取、账户、持�
 | CLI | `generate` 与 `profile show --resolved`；既有参数、退出码、三平台目录结构与整批事务替换语义保持稳定 | [CLI 契约](../README.md#输出与事务语义) |
 | Behavior | 默认 Ipv4Only 地址族及显式 DirectDualStack/DualStack/Auto、DNS/route 顺序、地区 selector/URLTest、平台 TUN/bridge、默认 Tailscale 与缺失字段 tuning 均是 BoxForge 策略 | [生成配置](generated-config.md)、[DNS 与路由](routing-and-dns.md)、[开关与默认值](configuration.md) |
 
+Core 调用方需使用 `ClashObject.GetRequiredPort` 读取必填端口；原公开方法
+`GetRequiredInt` 已更名，取值范围仍为 1～65535。平台保留名称冲突统一抛出
+`BoxForgePlatformConversionException`（内部为 `ConfigValidationException`、诊断 `IR009`），
+不再因请求的平台集合不同而改为来源解析异常。
+
 手动补充发布说明时，建议记录 Input、Target、CLI、Behavior，尤其说明策略变化
 影响的平台、触发条件、前后行为，以及同一 YAML 是否会产生不同配置。
 这些说明不作为构建或发布门禁。
 
 固定 BoxForge 版本只消除工具源码漂移。复现生成文件还需要固定输入内容、目标
-平台、`BOXFORGE_` 开关和运行目录中的宿主配置（CLI 使用 .NET 默认配置加载）。
+平台、profile 文件、显式 `--profile` 路径和 `BOXFORGE_` 环境配置。
+宿主的无前缀环境变量及 `appsettings*.json` 不参与 CLI、Server 的 profile 解析。
 不要把含凭据的 YAML、配置或环境变量值写入公共发布说明或日志。
 远程 rule-set、网络环境和 sing-box 本身影响运行行为，文件一致不等于长期网络行为一致。
 

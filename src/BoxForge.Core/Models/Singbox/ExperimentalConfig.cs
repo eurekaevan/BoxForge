@@ -13,6 +13,6 @@ public record CacheFileConfig
     [JsonPropertyName("path")] public string? Path { get; init; }
     [JsonPropertyName("store_dns")] public bool StoreDns { get; init; }
 
-    // 缓存 ID，避免切换配置时节点连接复用混乱
+    // 由配置名和平台确定的持久缓存身份，节点变更不改变此值。
     [JsonPropertyName("cache_id")] public string? CacheId { get; init; }
 }

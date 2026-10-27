@@ -32,7 +32,7 @@ public sealed class ProfileHostConfigurationTests
             ["features:tailscale:enabled"] = "false",
             ["features:api:enabled"] = "true",
             ["platforms:Android:features:tailscale:enabled"] = "true",
-            ["platforms:Linux:tuning:connect_timeout"] = "\"9s\""
+            ["platforms:Linux:tuning:connect_timeout"] = "9s"
         });
         var profile = provider.GetRequiredService<BoxForgeProfile>();
         Assert.Multiple(() =>
@@ -45,13 +45,74 @@ public sealed class ProfileHostConfigurationTests
         });
     }
 
-    [TestCase("9s")]
-    [TestCase("\"9s\"")]
-    public void HostValuesAcceptRawStringsAndJsonStringScalars(string timeout)
+    [Test]
+    public void HostValuesAcceptRawDurationStrings()
     {
-        using var provider = CreateProvider(new Dictionary<string, string?> { ["tuning:connect_timeout"] = timeout });
+        using var provider = CreateProvider(new Dictionary<string, string?> { ["tuning:connect_timeout"] = "9s" });
         Assert.That(provider.GetRequiredService<BoxForgeProfile>().Resolve(TargetPlatform.Linux).Tuning.ConnectTimeout,
             Is.EqualTo("9s"));
+    }
+
+    [Test]
+    public void HostStringsPreserveLiteralValues(
+        [Values("123", "true", "false", "null", "[]", "{}", "\"quoted\"", " TRUE ", " ordinary path ")] string value,
+        [Values(false, true)] bool platformLayer)
+    {
+        string prefix = platformLayer ? "platforms:linux:" : "";
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        { [prefix + "FEATURES:TAILSCALE:TAILDROP_DIRECTORY"] = value }).Build();
+        var profile = ProfileConfiguration.ResolveProfile(configuration);
+        Assert.That(profile.Resolve(TargetPlatform.Linux).Features.Tailscale.TaildropDirectory, Is.EqualTo(value));
+        if (platformLayer)
+            Assert.That(profile.Resolve(TargetPlatform.Windows).Features.Tailscale.TaildropDirectory,
+                Is.EqualTo(BoxForgeProfile.Default.Resolve(TargetPlatform.Windows).Features.Tailscale.TaildropDirectory));
+    }
+
+    [Test]
+    public void HostTypedValuesRetainBooleanNumberEnumObjectAndArraySemantics(
+        [Values(false, true)] bool platformLayer, [Values("null", " TRUE ")] string strictRoute)
+    {
+        string prefix = platformLayer ? "platforms:Linux:" : "";
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            [prefix + "features:api"] = "{\"enabled\":true}",
+            [prefix + "features:tailscale:enabled"] = " FALSE ",
+            [prefix + "route:strict_route"] = strictRoute,
+            [prefix + "route:sniff_excluded_ports"] = "{\"replace\":[22,3306]}",
+            [prefix + "dns:address_family"] = "Auto",
+            [prefix + "dns:cache_capacity"] = "1234",
+            [prefix + "tuning:url_test_tolerance"] = "123"
+        }).Build();
+        var profile = ProfileConfiguration.ResolveProfile(configuration).Resolve(TargetPlatform.Linux);
+        using var document = JsonDocument.Parse(profile.ToResolvedJson());
+        JsonElement snapshot = document.RootElement;
+        Assert.Multiple(() =>
+        {
+            Assert.That(profile.Features.Api.Enabled, Is.True);
+            Assert.That(profile.Features.Tailscale.Enabled, Is.False);
+            Assert.That(profile.Settings.StrictRoute, Is.EqualTo(strictRoute == "null" ? (bool?)null : true));
+            Assert.That(profile.Settings.AddressFamily, Is.EqualTo(AddressFamilyPolicy.Auto));
+            Assert.That(snapshot.GetProperty("dns").GetProperty("cache_capacity").GetUInt32(), Is.EqualTo(1234));
+            Assert.That(profile.Tuning.UrlTestTolerance, Is.EqualTo(123));
+            Assert.That(snapshot.GetProperty("route").GetProperty("sniff_excluded_ports").EnumerateArray().Select(item => item.GetInt32()),
+                Is.EqualTo(new[] { 22, 3306 }));
+        });
+    }
+
+    [TestCase("features:api:enabled", "123")]
+    [TestCase("tuning:url_test_tolerance", "true")]
+    [TestCase("tuning:url_test_tolerance", "1.5")]
+    [TestCase("route:sniff_excluded_ports", "[22]")]
+    [TestCase("features:api", "true")]
+    [TestCase("features:api", "{invalid")]
+    public void HostTypedValuesRejectInvalidTypes(string path, string value)
+    {
+        foreach (string prefix in new[] { "", "platforms:Linux:" })
+        {
+            var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            { [prefix + path] = value }).Build();
+            Assert.Throws<ProfileValidationException>(() => ProfileConfiguration.ResolveProfile(configuration));
+        }
     }
 
     [TestCase("features:api:enabled", "yes")]
@@ -59,6 +120,7 @@ public sealed class ProfileHostConfigurationTests
     [TestCase("features:tailscale:enabled", "\"true\"")]
     [TestCase("dns:cache_capacity", "0")]
     [TestCase("tuning:connect_timeout", "0s")]
+    [TestCase("tuning:connect_timeout", "\"9s\"")]
     [TestCase("route:typo", "true")]
     [TestCase("platforms:MacOS:features:api:enabled", "true")]
     [TestCase("platforms:Android:features:tailscale:android_enabled", "true")]

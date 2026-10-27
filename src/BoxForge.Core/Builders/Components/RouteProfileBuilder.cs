@@ -185,6 +185,7 @@ internal static class RouteProfileBuilder
     private static RouteRulePlan CreateServiceRouteRule(ServiceDefinition service, RoutePhase phase) =>
         new(phase)
         {
+            ServiceId = service.Id,
             RuleSet = [.. service.RuleSets],
             Action = RouteOperation.Route,
             Outbound = service.Name

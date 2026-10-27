@@ -1,6 +1,5 @@
 using BoxForge.Exceptions;
 using BoxForge.Models.Clash;
-using BoxForge.Models;
 
 namespace BoxForge.Converters;
 
@@ -136,8 +135,9 @@ internal sealed class SourceFieldSchema
             string path = prefix is null ? name : $"{prefix}.{name}";
             if (!fields.TryGetValue(name, out SourceFieldDefinition? definition))
             {
-                throw new NodeParseException(
-                    $"包含当前 BoxForge 尚未分类的字段 '{path}'，无法确认转换是否保持语义");
+                throw FieldError(
+                    $"包含当前 BoxForge 尚未分类的字段 '{path}'，无法确认转换是否保持语义",
+                    prefix is null ? "[unknown]" : $"{prefix}.[unknown]");
             }
 
             if (definition.Disposition == SourceFieldDisposition.UnsupportedSemantic)
@@ -203,7 +203,7 @@ internal sealed class SourceFieldSchema
     }
 
     private static NodeParseException FieldError(string message, string path) =>
-        new(message, new ConfigDiagnostic("SRC002", $"source.{path}", "来源字段不受支持、存在冲突或值无效。"));
+        NodeParseException.ForField(path, message);
 
     private void Add(SourceFieldDefinition definition)
     {

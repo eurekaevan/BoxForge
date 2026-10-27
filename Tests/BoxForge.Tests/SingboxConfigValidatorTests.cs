@@ -122,7 +122,7 @@ public sealed class SingboxConfigValidatorTests
             Dns = valid.Dns with
             {
                 Servers = [.. valid.Dns.Servers,
-                    new TailscaleDnsServer { Tag = "tail-dns", EndpointTag = "tailscale" }],
+                    new TailscaleDnsServer { Tag = "tail-dns", Endpoint = "tailscale" }],
                 Rules = [new DnsRule
                 {
                     PreferredBy = ["tail-dns"], Action = DnsRuleAction.Route, Server = "tail-dns"
@@ -685,14 +685,14 @@ public sealed class SingboxConfigValidatorTests
                     new HttpsDnsServer
                     {
                         Tag = "broken-https",
-                        ServerAddress = "1.0.0.1",
-                        DetourTag = "missing-target",
-                        TlsConfig = new DnsTlsConfig { Enabled = true, ServerName = "" }
+                        Server = "1.0.0.1",
+                        Detour = "missing-target",
+                        Tls = new DnsTlsConfig { Enabled = true, ServerName = "" }
                     },
                     new TailscaleDnsServer
                     {
                         Tag = SingboxTags.TailscaleDns,
-                        EndpointTag = "missing-endpoint"
+                        Endpoint = "missing-endpoint"
                     }
                 ]
             }
@@ -1081,8 +1081,8 @@ public sealed class SingboxConfigValidatorTests
                     new HttpsDnsServer
                     {
                         Tag = "dns",
-                        ServerAddress = "1.1.1.1",
-                        TlsConfig = new DnsTlsConfig
+                        Server = "1.1.1.1",
+                        Tls = new DnsTlsConfig
                         {
                             Enabled = true,
                             ServerName = "cloudflare-dns.com"

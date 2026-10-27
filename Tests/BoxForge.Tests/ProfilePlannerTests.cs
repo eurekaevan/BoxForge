@@ -149,7 +149,7 @@ public sealed class ProfilePlannerTests
     [TestCase("tr-TR", "SINGAPORE", true)]
     [TestCase("tr-TR", "sİngapore", false)]
     [TestCase("tr-TR", "sıngapore", false)]
-    public void RegionPatternsPreserveGeneratedRegexCultureIndependence(string culture, string name, bool matches)
+    public void RegionPatternsPreserveCultureIndependence(string culture, string name, bool matches)
     {
         CultureInfo previous = CultureInfo.CurrentCulture;
         try

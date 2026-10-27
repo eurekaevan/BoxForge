@@ -4,7 +4,7 @@ BoxForge 使用 profile 描述功能、DNS、路由和连接调优。
 CLI 与 HTTP Server 共用配置规则；未提供覆盖时保留内置生成策略。
 旧环境开关不再兼容；不会静默忽略旧键。
 
-Core 的 profile 错误使用 `ProfileValidationException`（仍可按 `FormatException` 捕获），
+Core 的 profile 错误使用 `ProfileValidationException`（直接继承 `Exception`，应按具体类型捕获），
 其 `Diagnostics` 提供不含输入值的错误码和配置位置，详见[诊断与校验归属](architecture.md#诊断与校验归属)。
 HTTP 错误格式保持不变。
 
@@ -60,7 +60,8 @@ Server 启动后使用不可变宿主快照；修改文件或环境变量需要�
 HTTP 请求只接受内联 JSON，不能指定服务器路径或 URL。
 
 Core 注册只读取传入的 `IConfiguration`，不会自行读取进程环境变量。
-CLI、Server 在宿主边界加载并校验 `BOXFORGE_` 前缀的环境配置快照，再合并到宿主配置；
+CLI、Server 在宿主边界加载并校验独立的 `BOXFORGE_` 环境配置快照，直接传入 Core；
+无前缀环境变量、`appsettings*.json` 和其他 Server 启动参数不会参与 profile 解析。
 显式 `--profile` 路径仍优先于环境路径。嵌入其他宿主时，普通 `runtime`、`policies`、
 `regions`、`services`、`rule_sets`、`resolvers` 节不属于 BoxForge 配置，也不会作为遗留键拒绝；
 专用旧开关 `Tailscale`、`TailscaleEnabled`、`TailscaleAndroidEnabled`、`SingboxApi` 仍拒绝。
@@ -187,8 +188,11 @@ BOXFORGE_route__sniff_excluded_ports='{"replace":[22,3306]}' \
 dotnet run --project src/BoxForge.Cli -- generate --platform Linux
 ```
 
-值按 JSON 标量或原始字符串解析，再按目标字段类型校验；布尔值使用 `true`/`false`，
-数值使用 JSON 数字，时长可使用 `8s`。数组覆盖使用整个操作 JSON 对象。
+值按目标字段的声明类型解析：字符串原样保留，包括空白、双引号以及 `123`、`true`、
+`null` 等文本，不需要额外添加 JSON 双引号。布尔值建议使用 `true`/`false`，
+也接受大小写变体和首尾空白；数值使用 JSON 数字，时长可使用 `8s`。
+可空的非字符串字段可使用 JSON `null`。对象覆盖使用 JSON 对象，数组覆盖使用整个操作 JSON 对象；
+这些 JSON 内部的字符串仍须按 JSON 规则加双引号。所有值仍按目标字段类型和语义校验。
 环境键也可指向 `platforms__Android__features__tailscale__enabled` 等平台层路径。
 未知键及旧 `Tailscale__Enabled`、`TailscaleEnabled`、`Tailscale__AndroidEnabled`、
 `TailscaleAndroidEnabled`、`SingboxApi__Enabled` 均拒绝，不能作为兼容别名。

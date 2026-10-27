@@ -18,6 +18,9 @@ public sealed class NodeParseException : Exception
         Diagnostics = ImmutableArray.Create(diagnostic);
     }
 
+    internal static NodeParseException ForField(string field, string message) =>
+        new(message, new ConfigDiagnostic("SRC002", $"source.{field}", "来源字段不受支持、存在冲突或值无效。"));
+
     internal NodeParseException AtPath(string prefix)
     {
         ConfigDiagnostic diagnostic = Diagnostics[0];

@@ -219,6 +219,52 @@ public sealed class LocalGenerationWorkflowTests
         });
     }
 
+    [TestCase("CON")]
+    [TestCase("nul.txt")]
+    [TestCase("COM1")]
+    [TestCase("LPT²")]
+    [TestCase("CONIN$")]
+    [TestCase("foo ")]
+    [TestCase("foo.")]
+    [TestCase("bad:name")]
+    [TestCase("line\nbreak")]
+    [TestCase("overlong")]
+    public async Task NonPortableConfigurationNamesDiscardBatchAndPreserveOldOutput(string name)
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            Assert.Ignore("Creates names accepted by Linux but rejected by the cross-platform contract.");
+            return;
+        }
+        if (name == "overlong") name = new string('a', 101);
+        string input = CreateDirectory("input");
+        string output = CreateDirectory("output");
+        string invalidFile = System.IO.Path.Combine(input, name + ".yaml");
+        await File.WriteAllTextAsync(invalidFile, "invalid-name");
+        await File.WriteAllTextAsync(System.IO.Path.Combine(input, "good.yaml"), "valid");
+        string oldFile = System.IO.Path.Combine(output, "old.txt");
+        await File.WriteAllTextAsync(oldFile, "preserve");
+        var engine = new RecordingEngine(request => new ConversionBundle(request.Name,
+            [new ConversionArtifact(TargetPlatform.Windows, "new", "unused")]));
+        var logger = new RecordingLogger<LocalGenerationWorkflow>();
+
+        LocalGenerationSummary summary = await new LocalGenerationWorkflow(engine, logger).GenerateAsync(
+            new LocalGenerationRequest(input, output, [TargetPlatform.Windows]));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(summary.Failed, Is.EqualTo(1));
+            Assert.That(summary.Succeeded, Is.Zero);
+            Assert.That(summary.Discarded, Is.EqualTo(1));
+            Assert.That(engine.Requests.Select(request => request.Name), Is.EqualTo(new[] { "good" }));
+            Assert.That(File.ReadAllText(invalidFile), Is.EqualTo("invalid-name"));
+            Assert.That(File.ReadAllText(oldFile), Is.EqualTo("preserve"));
+            Assert.That(Directory.GetFiles(output, "*", SearchOption.AllDirectories), Is.EqualTo(new[] { oldFile }));
+            Assert.That(Directory.GetDirectories(temporaryDirectory, ".output.boxforge-*"), Is.Empty);
+            Assert.That(logger.Entries.Select(entry => entry.EventId.Id), Does.Contain(18));
+        });
+    }
+
     [TestCase("..yaml", false)]
     [TestCase("..yml", true)]
     [TestCase("...yaml", false)]
@@ -344,6 +390,7 @@ public sealed class LocalGenerationWorkflowTests
     [TestCase("relative")]
     [TestCase("chain")]
     [TestCase("directory-alias")]
+    [TestCase("directory-parent")]
     [TestCase("safe-sibling")]
     public async Task InputFileLinksCannotLoseTheirSourceDuringOutputReplacement(string linkKind)
     {
@@ -374,6 +421,14 @@ public sealed class LocalGenerationWorkflowTests
                 string alias = System.IO.Path.Combine(temporaryDirectory, "output-alias");
                 Directory.CreateSymbolicLink(alias, outputDirectory);
                 linkTarget = System.IO.Path.Combine(alias, "source.yaml");
+            }
+            if (linkKind == "directory-parent")
+            {
+                string child = System.IO.Path.Combine(outputDirectory, "child");
+                Directory.CreateDirectory(child);
+                string alias = System.IO.Path.Combine(temporaryDirectory, "output-alias");
+                Directory.CreateSymbolicLink(alias, child);
+                linkTarget = System.IO.Path.Combine(alias, "..", "source.yaml");
             }
             File.CreateSymbolicLink(inputLink, linkTarget);
         }
@@ -695,6 +750,184 @@ public sealed class LocalGenerationWorkflowTests
             Assert.That(File.GetUnixFileMode(preserved), Is.EqualTo(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute));
             Assert.That(File.GetUnixFileMode(System.IO.Path.Combine(preserved, "old.txt")), Is.EqualTo(UnixFileMode.UserRead | UnixFileMode.UserWrite));
         }
+    }
+
+    [TestCase("cycle")]
+    [TestCase("parent-cycle")]
+    [TestCase("deep-chain")]
+    [TestCase("repeated-expansion")]
+    [TestCase("repeated-safe-link")]
+    public void PhysicalPathResolutionIsBoundedAndAllowsRepeatedSafeLinks(string kind)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Ignore("Unix symbolic link regression.");
+            return;
+        }
+
+        string input = CreateDirectory("input");
+        File.WriteAllText(System.IO.Path.Combine(input, "sample.yaml"), "source");
+        string alias = System.IO.Path.Combine(temporaryDirectory, "alias");
+        string path = alias;
+        switch (kind)
+        {
+            case "cycle":
+                Directory.CreateSymbolicLink(alias, "other");
+                Directory.CreateSymbolicLink(System.IO.Path.Combine(temporaryDirectory, "other"), "alias");
+                break;
+            case "parent-cycle":
+                Directory.CreateSymbolicLink(alias, "other/child");
+                Directory.CreateSymbolicLink(System.IO.Path.Combine(temporaryDirectory, "other"), "alias/parent");
+                break;
+            case "deep-chain":
+                for (int index = 0; index < 70; index++)
+                    Directory.CreateSymbolicLink(System.IO.Path.Combine(temporaryDirectory, $"link{index}"),
+                        index == 69 ? input : $"link{index + 1}");
+                path = System.IO.Path.Combine(temporaryDirectory, "link0");
+                break;
+            case "repeated-expansion":
+                Directory.CreateSymbolicLink(System.IO.Path.Combine(temporaryDirectory, "link0"), ".");
+                for (int index = 1; index < 16; index++)
+                    Directory.CreateSymbolicLink(System.IO.Path.Combine(temporaryDirectory, $"link{index}"),
+                        $"link{index - 1}/link{index - 1}");
+                path = System.IO.Path.Combine(temporaryDirectory, "link15");
+                break;
+            case "repeated-safe-link":
+                Directory.CreateSymbolicLink(alias, input);
+                path = System.IO.Path.Combine(alias, "..", "alias");
+                break;
+        }
+
+        string output = System.IO.Path.Combine(temporaryDirectory, "output");
+        if (kind == "repeated-safe-link")
+        {
+            Assert.That(InputDiscovery.Find(path, output, NullLogger.Instance)!.Files,
+                Is.EqualTo(new[] { System.IO.Path.Combine(input, "sample.yaml") }));
+        }
+        else
+        {
+            Assert.That(Assert.Throws<IOException>(() => InputDiscovery.Find(path, output, NullLogger.Instance))!.Message,
+                Does.Contain("软链接"));
+            Assert.That(Directory.Exists(output), Is.False);
+        }
+        Assert.That(File.ReadAllText(System.IO.Path.Combine(input, "sample.yaml")), Is.EqualTo("source"));
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public async Task ReadOnlyTransactionDirectoriesAreCleanedWithoutChangingPreservedTrees(bool publicationFails)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Ignore("Unix directory permission regression.");
+            return;
+        }
+
+        const UnixFileMode readOnly = UnixFileMode.UserRead | UnixFileMode.UserExecute;
+        const UnixFileMode writable = readOnly | UnixFileMode.UserWrite;
+        string output = CreateDirectory("output");
+        string oldFile = GetOutputPath(output, "sample", TargetPlatform.Android);
+        string leaf = System.IO.Path.GetDirectoryName(oldFile)!;
+        Directory.CreateDirectory(leaf);
+        File.WriteAllText(oldFile, "old");
+        string external = CreateDirectory("external");
+        string sentinel = System.IO.Path.Combine(external, "sentinel");
+        File.WriteAllText(sentinel, "preserve");
+        Directory.CreateSymbolicLink(System.IO.Path.Combine(output, "external-link"), external);
+        foreach (string directory in new[] { output, System.IO.Path.Combine(output, "sample"), leaf, external })
+            File.SetUnixFileMode(directory, readOnly);
+
+        try
+        {
+            var logger = new RecordingLogger<LocalGenerationWorkflow>();
+            int moves = 0;
+            void Move(string source, string destination)
+            {
+                if (++moves == 2 && publicationFails) throw new IOException("publish failed");
+                Directory.Move(source, destination);
+            }
+            using (var transaction = new OutputTransaction(output, logger, Move))
+            {
+                await transaction.StageAsync("sample", new ConversionArtifact(TargetPlatform.Android, "new", "unused"), CancellationToken.None);
+                if (publicationFails) Assert.Throws<IOException>(transaction.Commit);
+                else transaction.Commit();
+            }
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(File.ReadAllText(oldFile), Is.EqualTo(publicationFails ? "old" : "new"));
+                if (!OperatingSystem.IsWindows())
+                {
+                    Assert.That(File.GetUnixFileMode(output), Is.EqualTo(readOnly));
+                    Assert.That(File.GetUnixFileMode(leaf), Is.EqualTo(readOnly));
+                    Assert.That(File.GetUnixFileMode(external), Is.EqualTo(readOnly));
+                }
+                Assert.That(File.ReadAllText(sentinel), Is.EqualTo("preserve"));
+                Assert.That(Directory.GetDirectories(temporaryDirectory, ".output.*"), Is.Empty);
+                Assert.That(logger.Entries, Is.Empty);
+            });
+        }
+        finally
+        {
+            foreach (string directory in new[] { output, System.IO.Path.Combine(output, "sample"), leaf, external })
+                File.SetUnixFileMode(directory, writable);
+        }
+    }
+
+    [Test]
+    public async Task TransactionScanDoesNotRequireReadAccessToOutputParent()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Ignore("Unix directory permission regression.");
+            return;
+        }
+
+        string parent = CreateDirectory("write-only-parent");
+        string output = System.IO.Path.Combine(parent, "output");
+        var logger = new RecordingLogger<LocalGenerationWorkflow>();
+        File.SetUnixFileMode(parent, UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        try
+        {
+            using var transaction = new OutputTransaction(output, logger);
+            await transaction.StageAsync("sample", new ConversionArtifact(TargetPlatform.Android, "new", "unused"), CancellationToken.None);
+            transaction.Commit();
+            Assert.That(File.ReadAllText(GetOutputPath(output, "sample", TargetPlatform.Android)), Is.EqualTo("new"));
+            Assert.That(logger.Entries.Select(entry => entry.EventId.Id), Does.Contain(21));
+        }
+        finally
+        {
+            File.SetUnixFileMode(parent, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+    }
+
+    [Test]
+    public async Task ExistingTransactionDirectoriesAreReportedAndRetained()
+    {
+        string staging = CreateDirectory($".output.boxforge-{Guid.NewGuid():N}");
+        string backup = CreateDirectory($".output.backup-{Guid.NewGuid():N}");
+        CreateDirectory(".output.backup-unrelated");
+        CreateDirectory($".other.boxforge-{Guid.NewGuid():N}");
+        File.WriteAllText(System.IO.Path.Combine(staging, "partial"), "partial");
+        File.WriteAllText(System.IO.Path.Combine(backup, "old"), "only-copy");
+        var logger = new RecordingLogger<LocalGenerationWorkflow>();
+        string output = System.IO.Path.Combine(temporaryDirectory, "output");
+        using (var transaction = new OutputTransaction(output, logger))
+        {
+            await transaction.StageAsync("sample", new ConversionArtifact(TargetPlatform.Android, "new", "unused"), CancellationToken.None);
+            transaction.Commit();
+        }
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(logger.Entries, Has.Count.EqualTo(2));
+            Assert.That(logger.Entries.All(entry => entry.EventId.Id == 20), Is.True);
+            Assert.That(logger.Entries.Any(entry => entry.Message.Contains(staging, StringComparison.Ordinal)), Is.True);
+            Assert.That(logger.Entries.Any(entry => entry.Message.Contains(backup, StringComparison.Ordinal)), Is.True);
+            Assert.That(File.ReadAllText(System.IO.Path.Combine(staging, "partial")), Is.EqualTo("partial"));
+            Assert.That(File.ReadAllText(System.IO.Path.Combine(backup, "old")), Is.EqualTo("only-copy"));
+            Assert.That(File.ReadAllText(GetOutputPath(output, "sample", TargetPlatform.Android)), Is.EqualTo("new"));
+        });
     }
 
     [Test]

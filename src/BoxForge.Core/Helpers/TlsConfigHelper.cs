@@ -17,20 +17,23 @@ internal static class TlsConfigHelper
             ?? node.GetObject("reality_opts");
         bool isReality = realityOptions != null;
 
+        string realityField = node.GetPresentField("reality-opts", "reality_opts") ?? "reality-opts";
         if (!forceTls && !isTls && !isReality) return null;
         if (isReality && !forceTls && !isTls)
-            throw new NodeParseException("字段 'reality-opts' 要求显式启用 tls，不能隐式改变来源 TLS 设置");
+            throw NodeParseException.ForField(realityField, "字段 'reality-opts' 要求显式启用 tls，不能隐式改变来源 TLS 设置");
 
         RealitySettings? realityConfig = null;
         if (realityOptions != null)
         {
+            string publicKeyField = realityField + "." + (realityOptions.GetPresentField("public-key", "public_key") ?? "public-key");
+            string shortIdField = realityField + "." + (realityOptions.GetPresentField("short-id", "short_id") ?? "short-id");
             string publicKey = realityOptions.GetString("public-key")
                 ?? realityOptions.GetString("public_key")
-                ?? throw new NodeParseException(
+                ?? throw NodeParseException.ForField(publicKeyField,
                     "Reality 缺失必填字段或为空: public-key");
             if (!IsValidRealityPublicKey(publicKey))
             {
-                throw new NodeParseException(
+                throw NodeParseException.ForField(publicKeyField,
                     "Reality public-key 必须是 32 字节的 Base64URL 公钥");
             }
 
@@ -38,7 +41,7 @@ internal static class TlsConfigHelper
                 ?? realityOptions.GetRawString("short_id");
             if (rawShortId == null)
             {
-                throw new NodeParseException(
+                throw NodeParseException.ForField(shortIdField,
                     "Reality 缺失必填字段: short-id");
             }
 
@@ -47,7 +50,7 @@ internal static class TlsConfigHelper
                 || shortId.Length % 2 != 0
                 || shortId.Any(character => !Uri.IsHexDigit(character)))
             {
-                throw new NodeParseException(
+                throw NodeParseException.ForField(shortIdField,
                     "Reality short-id 必须是 0 到 8 字节的偶数位十六进制字符串");
             }
 
@@ -62,11 +65,11 @@ internal static class TlsConfigHelper
         if (fingerprint is not (null or "" or "none"))
         {
             if (!IsSupportedFingerprint(fingerprint))
-                throw new NodeParseException("字段 'client-fingerprint' 无法精确映射到目标核心；不支持旧版本、历史别名、random 或未知指纹");
+                throw NodeParseException.ForField(node.GetPresentField("client-fingerprint", "client_fingerprint") ?? "client-fingerprint", "字段 'client-fingerprint' 无法精确映射到目标核心；不支持旧版本、历史别名、random 或未知指纹");
             effectiveFingerprint = fingerprint;
         }
         if (isReality && effectiveFingerprint == null)
-            throw new NodeParseException("字段 'reality-opts' 要求有效的 client-fingerprint；空值或 none 不支持 Reality");
+            throw NodeParseException.ForField(realityField, "字段 'reality-opts' 要求有效的 client-fingerprint；空值或 none 不支持 Reality");
 
         return new TlsSettings(
             node.GetString("sni") ?? node.GetString("servername") ?? server,

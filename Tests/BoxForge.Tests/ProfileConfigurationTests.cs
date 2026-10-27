@@ -35,6 +35,30 @@ public sealed class ProfileConfigurationTests
     [TestCase(TargetPlatform.Android)]
     [TestCase(TargetPlatform.Linux)]
     [TestCase(TargetPlatform.Windows)]
+    public void PlatformResultsAndRegionPatternsAreReusedWithoutSharingAcrossProfiles(TargetPlatform platform)
+    {
+        var original = BoxForgeProfile.Default;
+        var customized = original.ApplyOverrides(JsonNode.Parse("""{"tuning":{"connect_timeout":"7s"}}""")!.AsObject());
+        foreach (var profile in new[] { original, customized })
+        {
+            var resolved = profile.Resolve(platform);
+            Parallel.For(0, 32, _ =>
+            {
+                Assert.That(profile.Resolve(platform), Is.SameAs(resolved));
+                Assert.That(profile.Resolve(platform).Regions[0].Pattern, Is.SameAs(resolved.Regions[0].Pattern));
+            });
+        }
+        Assert.Multiple(() =>
+        {
+            Assert.That(customized.Resolve(platform), Is.Not.SameAs(original.Resolve(platform)));
+            Assert.That(customized.Resolve(platform).Tuning.ConnectTimeout, Is.EqualTo("7s"));
+            Assert.Throws<ArgumentOutOfRangeException>(() => original.Resolve((TargetPlatform)(-1)));
+        });
+    }
+
+    [TestCase(TargetPlatform.Android)]
+    [TestCase(TargetPlatform.Linux)]
+    [TestCase(TargetPlatform.Windows)]
     public async Task AutoAddressFamilyWorksThroughFilesEnvironmentAndRequestsWithoutChangingDefaults(TargetPlatform platform)
     {
         var overlay = JsonNode.Parse("""{"dns":{"address_family":"Auto"}}""")!.AsObject();
@@ -908,8 +932,11 @@ public sealed class ProfileConfigurationTests
         using var ordinary = CreateProvider(null);
         var customEngine = custom.GetRequiredService<IBoxForgeEngine>();
         var ordinaryEngine = ordinary.GetRequiredService<IBoxForgeEngine>();
-        Assert.ThrowsAsync<BoxForgeConversionException>(() => customEngine.ConvertAsync(
-            new ConversionRequest("reserved", Yaml("Provider US"), [TargetPlatform.Linux])));
+        var reserved = Assert.ThrowsAsync<BoxForgePlatformConversionException>(() => customEngine.ConvertAsync(
+            new ConversionRequest("reserved", Yaml("Provider US"), [TargetPlatform.Linux])))!;
+        Assert.That(reserved.Platform, Is.EqualTo(TargetPlatform.Linux));
+        Assert.That(reserved.InnerException, Is.TypeOf<ConfigValidationException>());
+        Assert.That(reserved.Diagnostics.Single().Code, Is.EqualTo("IR009"));
         Assert.DoesNotThrowAsync(() => ordinaryEngine.ConvertAsync(
             new ConversionRequest("ordinary", Yaml("Provider US"), [TargetPlatform.Linux])));
         var request = new ConversionRequest("same", Yaml("US01", "US02"), [TargetPlatform.Linux]);
@@ -937,8 +964,11 @@ public sealed class ProfileConfigurationTests
         };
         using var provider = CreateProvider(null);
         var engine = provider.GetRequiredService<IBoxForgeEngine>();
-        Assert.ThrowsAsync<BoxForgeConversionException>(() => engine.ConvertAsync(
-            new ConversionRequest("reserved", Yaml("Request US"), [TargetPlatform.Linux]) { Profile = overlay }));
+        var reserved = Assert.ThrowsAsync<BoxForgePlatformConversionException>(() => engine.ConvertAsync(
+            new ConversionRequest("reserved", Yaml("Request US"), [TargetPlatform.Linux]) { Profile = overlay }))!;
+        Assert.That(reserved.Platform, Is.EqualTo(TargetPlatform.Linux));
+        Assert.That(reserved.InnerException, Is.TypeOf<ConfigValidationException>());
+        Assert.That(reserved.Diagnostics.Single().Code, Is.EqualTo("IR009"));
         var request = new ConversionRequest("valid", Yaml("US01", "US02"), [TargetPlatform.Linux]);
         using var custom = JsonDocument.Parse((await engine.ConvertAsync(request with { Profile = overlay })).Artifacts.Single().Content);
         using var ordinary = JsonDocument.Parse((await engine.ConvertAsync(request)).Artifacts.Single().Content);
@@ -1311,7 +1341,7 @@ public sealed class ProfileConfigurationTests
                 """)!.AsObject()))!;
         Assert.That(error.Diagnostics[0].Path, Is.EqualTo("profile.effective.Linux.dns.resolvers[2].server"));
         Assert.That(JsonSerializer.Serialize(error.Diagnostics), Does.Not.Contain("sensitive-address"));
-        Assert.That(error, Is.InstanceOf<FormatException>());
+        Assert.That(error, Is.Not.InstanceOf<FormatException>());
     }
 
     private static JsonObject Resolved(ResolvedProfile profile) => JsonNode.Parse(profile.ToResolvedJson())!.AsObject();

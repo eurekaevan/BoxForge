@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using BoxForge.Helpers;
 
 namespace BoxForge.Workflows;
 
@@ -86,7 +87,7 @@ internal sealed partial class InputDiscovery
             return null;
         }
 
-        if (configName is "." or "..")
+        if (!ConfigurationNameValidator.IsValid(configName))
         {
             LogUnsafeConfigName(logger, inputFile);
             return null;
@@ -125,47 +126,76 @@ internal sealed partial class InputDiscovery
 
     private static string ResolvePhysicalPath(string path)
     {
-        string current;
-        string relativePath;
-        if (Path.IsPathRooted(path))
+        int remainingLinks = 64;
+        return ResolvePhysicalPath(path, new HashSet<string>(PathComparer), ref remainingLinks);
+    }
+
+    private static string ResolvePhysicalPath(string path, HashSet<string> resolving, ref int remainingLinks)
+    {
+        if (!resolving.Add(path))
         {
-            current = Path.GetPathRoot(path)
-                ?? throw new InvalidOperationException("路径缺少文件系统根目录。");
-            relativePath = path[current.Length..];
-        }
-        else
-        {
-            current = Environment.CurrentDirectory;
-            relativePath = path;
+            throw new IOException($"软链接路径存在循环：{path}");
         }
 
-        foreach (string segment in relativePath.Split(
-            [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
-            StringSplitOptions.RemoveEmptyEntries))
+        try
         {
-            if (segment == ".")
+            string current;
+            string relativePath;
+            if (Path.IsPathRooted(path))
             {
-                continue;
+                current = Path.GetPathRoot(path)
+                    ?? throw new InvalidOperationException("路径缺少文件系统根目录。");
+                relativePath = path[current.Length..];
+            }
+            else
+            {
+                current = Environment.CurrentDirectory;
+                relativePath = path;
             }
 
-            if (segment == "..")
+            foreach (string segment in relativePath.Split(
+                [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+                StringSplitOptions.RemoveEmptyEntries))
             {
-                current = Directory.GetParent(current)?.FullName ?? current;
-                continue;
+                if (segment == ".")
+                {
+                    continue;
+                }
+
+                if (segment == "..")
+                {
+                    current = Directory.GetParent(current)?.FullName ?? current;
+                    continue;
+                }
+
+                string candidate = Path.Combine(current, segment);
+                FileSystemInfo entry = Directory.Exists(candidate)
+                    ? new DirectoryInfo(candidate)
+                    : new FileInfo(candidate);
+                // Inspect links even when Exists is false (dangling links and cycles).
+                string? target = entry.LinkTarget;
+                if (target is null)
+                {
+                    current = candidate;
+                    continue;
+                }
+
+                if (remainingLinks-- == 0)
+                {
+                    throw new IOException($"软链接路径超过 64 次展开上限：{path}");
+                }
+
+                // FullName would collapse target components such as alias/.. too early.
+                string targetPath = Path.IsPathRooted(target) ? target : Path.Combine(current, target);
+                current = ResolvePhysicalPath(targetPath, resolving, ref remainingLinks);
             }
 
-            string candidate = Path.Combine(current, segment);
-            FileSystemInfo? entry = Directory.Exists(candidate)
-                ? new DirectoryInfo(candidate)
-                : File.Exists(candidate)
-                    ? new FileInfo(candidate)
-                    : null;
-            FileSystemInfo? target = entry?.ResolveLinkTarget(returnFinalTarget: true);
-            // A file link's final target can still contain directory links.
-            current = target is null ? candidate : ResolvePhysicalPath(target.FullName);
+            return Path.GetFullPath(current);
         }
-
-        return Path.GetFullPath(current);
+        finally
+        {
+            resolving.Remove(path);
+        }
     }
 
     private static StringComparer PathComparer => OperatingSystem.IsWindows()
@@ -193,7 +223,7 @@ internal sealed partial class InputDiscovery
     [LoggerMessage(9, LogLevel.Error, "配置名重复，无法确定输出目录：{ConfigName}")]
     private static partial void LogDuplicateConfigName(ILogger logger, string configName);
 
-    [LoggerMessage(18, LogLevel.Error, "配置文件名不能使用目录导航名称 . 或 ..：{InputFile}")]
+    [LoggerMessage(18, LogLevel.Error, "配置名必须为 1～100 个 Unicode 标量值、最多 255 个 UTF-8 字节，且必须是有效的跨平台目录名：{InputFile}")]
     private static partial void LogUnsafeConfigName(ILogger logger, string inputFile);
 
     [LoggerMessage(19, LogLevel.Error, "输入文件指向待替换的输出目录内，无法安全生成：{InputFile} → {PhysicalFile}")]

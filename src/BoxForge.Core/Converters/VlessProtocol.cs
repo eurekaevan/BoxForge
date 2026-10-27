@@ -24,7 +24,7 @@ internal static class VlessProtocol
     {
         string server = node.GetRequiredString("server");
         TlsSettings? tls = TlsConfigHelper.ExtractSettings(node, server);
-        int port = node.GetRequiredInt("port");
+        int port = node.GetRequiredPort("port");
         string userId = node.GetRequiredString("uuid");
         VlessFlow flow = ExtractFlow(node);
         string? encoding = node.GetRawString("packet-encoding") ?? node.GetRawString("packet_encoding");
@@ -43,7 +43,7 @@ internal static class VlessProtocol
             return VlessFlow.None;
         if (flow.StartsWith("xtls-rprx-vision", StringComparison.Ordinal))
             return VlessFlow.Vision;
-        throw new NodeParseException("字段 'flow' 的前 16 字节必须是 xtls-rprx-vision");
+        throw NodeParseException.ForField("flow", "字段 'flow' 的前 16 字节必须是 xtls-rprx-vision");
     }
 
 }

@@ -22,8 +22,8 @@ public sealed class SingboxConfigBuilderTests
     [TestCase("pool_order")]
     [TestCase("pool_removed")]
     [TestCase("selection_mode")]
-    [TestCase("dns_block_removed")]
-    [TestCase("dns_guard_narrowed")]
+    [TestCase("pool_kind")]
+    [TestCase("pool_service_id")]
     [TestCase("route_empty")]
     [TestCase("hijack_removed")]
     [TestCase("hijack_narrowed")]
@@ -34,7 +34,6 @@ public sealed class SingboxConfigBuilderTests
     [TestCase("late_guard_narrowed")]
     [TestCase("service_dns_detour")]
     [TestCase("service_primary_secondary_swapped")]
-    [TestCase("service_scope_consistently_changed")]
     [TestCase("node_binding_removed")]
     [TestCase("node_binding_family")]
     [TestCase("node_binding_server")]
@@ -44,30 +43,24 @@ public sealed class SingboxConfigBuilderTests
         var source = CreateProxy("US01", "us.example.com") with { AddressFamily = AddressFamilyPolicy.Ipv4Only };
         var plan = ConfigurationPlanner.Plan(new NodeCatalog([source], [source.Name]), CreateDirectDualStackProfile(TargetPlatform.Linux));
         Assert.DoesNotThrow(plan.Validate);
-        int blocking = plan.Dns.Rules.ToList().FindIndex(rule => rule.Rcode == DnsResultCode.NameError);
         int hijack = plan.Route.Rules.ToList().FindIndex(rule => rule.Phase == RoutePhase.DnsHijack);
         int early = plan.Route.Rules.ToList().FindIndex(rule => rule.Phase == RoutePhase.EarlyIpv6Guard);
         int late = plan.Route.Rules.ToList().FindIndex(rule => rule.Phase == RoutePhase.LateIpv6Guard);
         var binding = plan.NodeResolvers[source.Name];
-        var blocks = plan.Dns.ResolverBlocks().ToArray();
-        var first = blocks[0];
-        var second = blocks[1];
-        string firstPrimary = plan.Dns.Rules[first.Start].Server!;
-        string firstSecondary = plan.Dns.Rules.Skip(first.Start).First(rule =>
-            rule.Action == DnsOperation.Evaluate && rule.Server != firstPrimary).Server!;
-        var reordered = plan.Dns.Rules.RemoveRange(first.Start, second.End - first.Start + 1)
-            .InsertRange(first.Start, plan.Dns.Rules.Slice(second.Start, second.End - second.Start + 1)
-                .AddRange(plan.Dns.Rules.Slice(first.Start, first.End - first.Start + 1)));
+        var first = plan.Dns.Pools[0];
+        string firstPrimary = first.PrimaryServer;
+        string firstSecondary = first.SecondaryServer;
+        var reordered = plan.Dns.Pools.SetItem(0, plan.Dns.Pools[1]).SetItem(1, first);
 
         plan = fault switch
         {
-            "pool_primary" => plan with { Dns = plan.Dns with { Rules = plan.Dns.Rules.SetItem(first.Start, plan.Dns.Rules[first.Start] with { Server = firstSecondary }) } },
-            "pool_scope" => plan with { Dns = plan.Dns with { Rules = plan.Dns.Rules.SetItem(first.Start, plan.Dns.Rules[first.Start] with { RuleSet = [RuleSetTags.Cn] }) } },
-            "pool_order" => plan with { Dns = plan.Dns with { Rules = reordered } },
-            "pool_removed" => plan with { Dns = plan.Dns with { Rules = plan.Dns.Rules.RemoveRange(first.Start, first.End - first.Start + 1) } },
+            "pool_primary" => plan with { Dns = plan.Dns with { Pools = plan.Dns.Pools.SetItem(0, first with { PrimaryServer = firstSecondary }) } },
+            "pool_scope" => plan with { Dns = plan.Dns with { Pools = plan.Dns.Pools.SetItem(0, first with { RuleSets = [RuleSetTags.Cn] }) } },
+            "pool_order" => plan with { Dns = plan.Dns with { Pools = reordered } },
+            "pool_removed" => plan with { Dns = plan.Dns with { Pools = plan.Dns.Pools.RemoveAt(0) } },
             "selection_mode" => plan with { Dns = plan.Dns with { SelectionMode = DnsResolverSelectionMode.SequentialFallback } },
-            "dns_block_removed" => plan with { Dns = plan.Dns with { Rules = plan.Dns.Rules.RemoveAt(blocking) } },
-            "dns_guard_narrowed" => plan with { Dns = plan.Dns with { Rules = plan.Dns.Rules.SetItem(0, plan.Dns.Rules[0] with { RuleSet = [RuleSetTags.Cn] }) } },
+            "pool_kind" => plan with { Dns = plan.Dns with { Pools = plan.Dns.Pools.SetItem(0, first with { Kind = DnsPoolKind.Global }) } },
+            "pool_service_id" => plan with { Dns = plan.Dns with { Pools = plan.Dns.Pools.SetItem(0, first with { ServiceId = "other-service" }) } },
             "route_empty" => plan with { Route = plan.Route with { Rules = [] } },
             "hijack_removed" => plan with { Route = plan.Route with { Rules = plan.Route.Rules.RemoveAt(hijack) } },
             "hijack_narrowed" => plan with { Route = plan.Route with { Rules = plan.Route.Rules.SetItem(hijack, plan.Route.Rules[hijack] with { Network = ["udp"] }) } },
@@ -81,17 +74,7 @@ public sealed class SingboxConfigBuilderTests
             {
                 Dns = plan.Dns with
                 {
-                    Rules = [.. plan.Dns.Rules.Select((rule, index) => index >= first.Start && index <= first.End
-                        && rule.Action == DnsOperation.Evaluate
-                            ? rule with { Server = rule.Server == firstPrimary ? firstSecondary : firstPrimary } : rule)]
-                }
-            },
-            "service_scope_consistently_changed" => plan with
-            {
-                Dns = plan.Dns with
-                {
-                    Rules = [.. plan.Dns.Rules.Select((rule, index) => index >= first.Start && index <= first.End
-                        && !rule.RuleSet.IsDefault ? rule with { RuleSet = [RuleSetTags.Cn] } : rule)]
+                    Pools = plan.Dns.Pools.SetItem(0, first with { PrimaryServer = firstSecondary, SecondaryServer = firstPrimary })
                 }
             },
             "node_binding_removed" => plan with { NodeResolvers = plan.NodeResolvers.Clear() },
@@ -100,14 +83,42 @@ public sealed class SingboxConfigBuilderTests
             _ => plan with { NodeResolvers = plan.NodeResolvers.SetItem(source.Name, binding with { DisableOptimisticCache = false }) }
         };
         var error = Assert.Throws<ConfigValidationException>(() => new SingboxConfigBuilder().Build(plan, "cache"))!;
-        Assert.That(error.Diagnostics.Any(item => item.Code == "IR011"), Is.True);
+        // The mode is lowered at emission; changing it only contradicts the enclosing platform policy.
+        string expectedCode = fault == "selection_mode" ? "IR001" : "IR011";
+        Assert.That(error.Diagnostics.Any(item => item.Code == expectedCode), Is.True);
         Assert.That(JsonSerializer.Serialize(error.Diagnostics), Does.Not.Contain("us.example.com"));
+    }
+
+    [TestCase("missing_primary", "IR006", "plan.dns.pools[0].primary_server")]
+    [TestCase("missing_secondary", "IR006", "plan.dns.pools[0].secondary_server")]
+    [TestCase("duplicate_service", "IR009", "plan.dns.pools[1].service_id")]
+    [TestCase("invalid_kind", "IR008", "plan.dns.pools[0].kind")]
+    [TestCase("empty_pools", "IR008", "plan.dns.pools")]
+    [TestCase("default_pools", "IR008", "plan.dns.pools")]
+    [TestCase("null_pool", "IR008", "plan.dns.pools[0]")]
+    public void DnsPlanRejectsMalformedPoolDeclarations(string fault, string code, string path)
+    {
+        var plan = ConfigurationPlanner.Plan(new NodeCatalog([], []), CreateProfile(TargetPlatform.Linux)).Dns;
+        var first = plan.Pools[0];
+        plan = fault switch
+        {
+            "missing_primary" => plan with { Pools = plan.Pools.SetItem(0, first with { PrimaryServer = "sensitive-missing-resolver" }) },
+            "missing_secondary" => plan with { Pools = plan.Pools.SetItem(0, first with { SecondaryServer = "sensitive-missing-resolver" }) },
+            "null_pool" => plan with { Pools = plan.Pools.SetItem(0, null!) },
+            "duplicate_service" => plan with { Pools = plan.Pools.Insert(1, first) },
+            "invalid_kind" => plan with { Pools = plan.Pools.SetItem(0, first with { Kind = (DnsPoolKind)(-1) }) },
+            "empty_pools" => plan with { Pools = [] },
+            _ => plan with { Pools = default }
+        };
+        var error = Assert.Throws<ConfigValidationException>(plan.Validate)!;
+        Assert.That(error.Diagnostics.Any(diagnostic => diagnostic.Code == code && diagnostic.Path == path), Is.True);
+        Assert.That(JsonSerializer.Serialize(error.Diagnostics), Does.Not.Contain("sensitive"));
     }
 
     [TestCase("leaf", "IR002", "plan.groups.leaves[0]")]
     [TestCase("dns_detour", "IR003", "plan.dns.resolvers[0].detour")]
-    [TestCase("dns_rule_match", "IR005", "dns_rule")]
-    [TestCase("dns_rule_set", "IR005", "dns_block_scope")]
+    [TestCase("dns_block_rule_set", "IR005", "plan.dns.blocked_rule_set")]
+    [TestCase("dns_pool_scope", "IR005", "plan.dns.pools[0].rule_sets[0]")]
     [TestCase("service_selector", "IR003", "service_rule")]
     [TestCase("route_final", "IR003", "plan.route.final_outbound")]
     [TestCase("resolver", "IR006", "plan.http_clients[0].resolver")]
@@ -126,19 +137,13 @@ public sealed class SingboxConfigBuilderTests
         var plan = ConfigurationPlanner.Plan(nodes, CreateProfile(TargetPlatform.Linux, apiEnabled: true));
         if (fault == "service_selector")
             path = $"plan.route.rules[{plan.Route.Rules.Select((rule, index) => (rule, index)).First(item => item.rule.Phase == RoutePhase.PriorityServices).index}].outbound";
-        int dnsRuleIndex = plan.Dns.Rules.Select((rule, index) => (rule, index)).First(item => !item.rule.RuleSet.IsDefaultOrEmpty).index;
-        if (fault == "dns_rule_match")
-            path = $"plan.dns.rules[{dnsRuleIndex}].rule_set[0]";
-        int dnsBlockStart = plan.Dns.ResolverBlocks().First().Start;
-        if (fault == "dns_rule_set")
-            path = $"plan.dns.rules[{dnsBlockStart}].rule_set[0]";
 
         plan = fault switch
         {
             "leaf" => plan with { Nodes = [] },
             "dns_detour" => plan with { Dns = plan.Dns with { Resolvers = [plan.Dns.Resolvers[0] with { Detour = "missing" }, .. plan.Dns.Resolvers.Skip(1)] } },
-            "dns_rule_match" => plan with { Dns = plan.Dns with { Rules = plan.Dns.Rules.SetItem(dnsRuleIndex, plan.Dns.Rules[dnsRuleIndex] with { RuleSet = ["missing"] }) } },
-            "dns_rule_set" => plan with { Dns = plan.Dns with { Rules = plan.Dns.Rules.SetItem(dnsBlockStart, plan.Dns.Rules[dnsBlockStart] with { RuleSet = ["missing"] }) } },
+            "dns_block_rule_set" => plan with { Route = plan.Route with { RuleSets = [.. plan.Route.RuleSets.Where(source => !source.Tags.Contains(RuleSetTags.Ads))] } },
+            "dns_pool_scope" => plan with { Dns = plan.Dns with { Pools = plan.Dns.Pools.SetItem(0, plan.Dns.Pools[0] with { RuleSets = ["missing"] }) } },
             "service_selector" => plan with { Groups = plan.Groups with { Services = [] } },
             "route_final" => plan with { Route = plan.Route with { FinalOutbound = "missing" } },
             "resolver" => plan with { HttpClients = [plan.HttpClients[0] with { Resolver = plan.HttpClients[0].Resolver with { Server = "missing" } }, .. plan.HttpClients.Skip(1)] },
@@ -154,7 +159,8 @@ public sealed class SingboxConfigBuilderTests
                 Dns = plan.Dns with
                 {
                     Resolvers = [.. plan.Dns.Resolvers.Skip(1)],
-                    Rules = [.. plan.Dns.Rules.Select(ReplaceBootstrapResolver)]
+                    Pools = [.. plan.Dns.Pools.Select(pool => pool.PrimaryServer == SingboxTags.DirectAliDns
+                        ? pool with { PrimaryServer = SingboxTags.DirectTencentDns } : pool)]
                 }
             },
             _ => plan with { Dns = plan.Dns with { SelectionMode = DnsResolverSelectionMode.SequentialFallback } }
@@ -162,12 +168,6 @@ public sealed class SingboxConfigBuilderTests
         var error = Assert.Throws<ConfigValidationException>(() => plan.Validate());
         Assert.That(error!.Diagnostics.Any(diagnostic => diagnostic.Code == code && diagnostic.Path == path), Is.True);
         Assert.That(error.Diagnostics.All(diagnostic => diagnostic.Code.StartsWith("IR", StringComparison.Ordinal)), Is.True);
-
-        static DnsRulePlan ReplaceBootstrapResolver(DnsRulePlan rule) => rule with
-        {
-            Server = rule.Server == SingboxTags.DirectAliDns ? SingboxTags.DirectTencentDns : rule.Server,
-            Rules = rule.Rules.IsDefault ? default : [.. rule.Rules.Select(ReplaceBootstrapResolver)]
-        };
     }
 
     [Test]
@@ -178,18 +178,18 @@ public sealed class SingboxConfigBuilderTests
         {
             TailscaleEndpointEnabled = false,
             Route = plan.Route with { FinalOutbound = "missing-outbound" },
-            Dns = plan.Dns with { Rules = plan.Dns.Rules.SetItem(2, plan.Dns.Rules[2] with { RuleSet = ["missing-rule-set"] }) },
+            Dns = plan.Dns with { Pools = plan.Dns.Pools.SetItem(0, plan.Dns.Pools[0] with { RuleSets = ["missing-rule-set"] }) },
             HttpClients = [plan.HttpClients[0] with { Resolver = plan.HttpClients[0].Resolver with { Server = "missing-resolver" } }]
         };
         var first = Assert.Throws<ConfigValidationException>(() => plan.Validate())!;
         var second = Assert.Throws<ConfigValidationException>(() => plan.Validate())!;
         Assert.That(first.Diagnostics.Select(diagnostic => (diagnostic.Code, diagnostic.Path)), Is.EqualTo(new[]
         {
-            ("IR011", "plan.dns.rules[2]"),
             ("IR004", "plan.dns.tailscale_enabled"),
             ("IR004", "plan.route.tailscale_enabled"),
             ("IR003", "plan.route.final_outbound"),
-            ("IR005", "plan.dns.rules[2].rule_set[0]"),
+            ("IR005", "plan.dns.pools[0].rule_sets[0]"),
+            ("IR011", "plan.dns.pools[0]"),
             ("IR006", "plan.http_clients[0].resolver"),
             ("IR007", "plan.services.dashboard.http_client")
         }));
@@ -203,14 +203,14 @@ public sealed class SingboxConfigBuilderTests
         plan = plan with
         {
             Groups = plan.Groups with { Main = plan.Groups.Main with { Preferred = "sensitive-group" } },
-            Dns = plan.Dns with { Rules = default },
+            Dns = plan.Dns with { Pools = default },
             Route = plan.Route with { Rules = default, FinalOutbound = "sensitive-outbound" }
         };
         var error = Assert.Throws<ConfigValidationException>(plan.Validate)!;
         Assert.That(error.Diagnostics.Select(item => (item.Code, item.Path)), Is.EqualTo(new[]
         {
             ("IR010", "plan.groups.main.preferred"),
-            ("IR008", "plan.dns.rules"),
+            ("IR008", "plan.dns.pools"),
             ("IR008", "plan.route.rules"),
             ("IR003", "plan.route.final_outbound")
         }));
@@ -255,7 +255,8 @@ public sealed class SingboxConfigBuilderTests
     }
 
     [TestCase("groups", "IR010", "plan.groups.main.preferred")]
-    [TestCase("dns", "IR008", "plan.dns.rules")]
+    [TestCase("dns", "IR008", "plan.dns.pools")]
+    [TestCase("dns_null", "IR008", "plan.dns.pools[0]")]
     [TestCase("route", "IR010", "plan.route.rules[0].phase")]
     public void BuildRejectsInvalidComponentPlansBeforeMappingTargets(string component, string code, string path)
     {
@@ -263,7 +264,8 @@ public sealed class SingboxConfigBuilderTests
         plan = component switch
         {
             "groups" => plan with { Groups = plan.Groups with { Main = plan.Groups.Main with { Preferred = "missing" } } },
-            "dns" => plan with { Dns = plan.Dns with { Rules = default } },
+            "dns" => plan with { Dns = plan.Dns with { Pools = default } },
+            "dns_null" => plan with { Dns = plan.Dns with { Pools = plan.Dns.Pools.SetItem(0, null!) } },
             _ => plan with { Route = plan.Route with { Rules = plan.Route.Rules.SetItem(0, plan.Route.Rules[0] with { Phase = (RoutePhase)(-1) }) } }
         };
         var error = Assert.Throws<ConfigValidationException>(() => new SingboxConfigBuilder().Build(plan, null))!;
@@ -789,7 +791,8 @@ public sealed class SingboxConfigBuilderTests
         int googleRoute = config.Route.Rules.FindIndex(rule => rule.Outbound == "🔎 Google");
         int domesticUdp = config.Route.Rules.FindIndex(rule => rule.Port?.Contains(443) == true
             && rule.RuleSet?.Contains(RuleSetTags.Cn) == true);
-        var resolvers = config.Dns.Servers.Where(server => server.Tag?.StartsWith("dns-service-github-", StringComparison.Ordinal) == true).ToArray();
+        var resolvers = config.Dns.Servers.OfType<HttpsDnsServer>()
+            .Where(server => server.Tag?.StartsWith("dns-service-github-", StringComparison.Ordinal) == true).ToArray();
         Assert.Multiple(() =>
         {
             Assert.That(github.Default, Is.EqualTo("🇺🇸 US"));

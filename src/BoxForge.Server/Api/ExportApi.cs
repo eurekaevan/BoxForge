@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using BoxForge.Engine;
+using BoxForge.Helpers;
 using BoxForge.Exceptions;
 using Microsoft.Net.Http.Headers;
 
@@ -87,7 +88,7 @@ internal static class ExportApi
         if (!TryResolveConfigurationName(form, fileStem, out string name))
         {
             return ApiProblems.BadRequest(
-                "配置名必须为 1～100 个 Unicode 字符、最多 255 个 UTF-8 字节，且必须是有效的跨平台目录名。");
+                "配置名必须为 1～100 个 Unicode 标量值、最多 255 个 UTF-8 字节，且必须是有效的跨平台目录名。");
         }
 
         if (!ApiRequestValidation.TryParsePlatforms(
@@ -169,7 +170,7 @@ internal static class ExportApi
                 "attachment; filename=\"boxforge-output.zip\"";
             return Results.File(archive, "application/zip");
         }
-        catch (FormatException)
+        catch (ProfileValidationException)
         {
             return ApiProblems.BadRequest("profile 必须是有效的配置覆盖对象。");
         }
@@ -239,6 +240,6 @@ internal static class ExportApi
             name = fileStem;
         }
 
-        return ApiRequestValidation.IsValidConfigurationName(name);
+        return ConfigurationNameValidator.IsValid(name);
     }
 }

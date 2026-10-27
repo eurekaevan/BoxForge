@@ -83,17 +83,17 @@ public class ClashObject
 
     public string GetRequiredString(string key) =>
         GetString(key)
-        ?? throw new NodeParseException($"缺失必填字段或为空: {key}");
+        ?? throw NodeParseException.ForField(key, $"缺失必填字段或为空: {key}");
 
     public string GetRequiredRawString(string key) =>
         GetRawString(key) is { Length: > 0 } value
             ? value
-            : throw new NodeParseException($"缺失必填字段或为空: {key}");
+            : throw NodeParseException.ForField(key, $"缺失必填字段或为空: {key}");
 
     public int? GetInt(string key) =>
         int.TryParse(GetRawString(key), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) ? value : null;
 
-    public int GetRequiredInt(string key)
+    public int GetRequiredPort(string key)
     {
         var value = GetInt(key);
         if (value is > 0 and <= 65535)
@@ -101,7 +101,7 @@ public class ClashObject
             return value.Value;
         }
 
-        throw new NodeParseException($"缺失必填字段或端口格式无效: {key}");
+        throw NodeParseException.ForField(key, $"缺失必填字段或端口格式无效: {key}");
     }
 
     public bool GetBool(string key) => GetNullableBool(key) ?? false;
@@ -116,7 +116,7 @@ public class ClashObject
 
         return bool.TryParse(rawValue, out var value)
             ? value
-            : throw new NodeParseException($"字段 '{key}' 必须是 true 或 false");
+            : throw NodeParseException.ForField(key, $"字段 '{key}' 必须是 true 或 false");
     }
 
     public ClashObject? GetObject(string key) => GetValue(key) as ClashObject;

@@ -7,6 +7,49 @@ namespace BoxForge.Tests;
 [TestFixture]
 public sealed class ConfigSerializerDefaultsTests
 {
+    [TestCase(null)]
+    [TestCase(false)]
+    [TestCase(true)]
+    public void DnsServersSerializeAndRoundTripThroughTheirPolymorphicBase(bool? acceptDefaultResolvers)
+    {
+        var config = new SingboxConfig
+        {
+            Dns = new DnsConfig
+            {
+                Servers =
+                [
+                    new HttpsDnsServer
+                    {
+                        Tag = "https", Server = "1.1.1.1", Detour = "proxy",
+                        Tls = new DnsTlsConfig { Enabled = true, ServerName = "cloudflare-dns.com" }
+                    },
+                    new TailscaleDnsServer
+                    {
+                        Tag = "tailscale", Endpoint = "endpoint", AcceptDefaultResolvers = acceptDefaultResolvers
+                    }
+                ]
+            }
+        };
+        using var document = JsonDocument.Parse(new ConfigSerializer().Serialize(config));
+        JsonElement dns = document.RootElement.GetProperty("dns");
+        JsonElement servers = dns.GetProperty("servers");
+        var restored = JsonSerializer.Deserialize<DnsConfig>(dns.GetRawText())!;
+        Assert.Multiple(() =>
+        {
+            Assert.That(servers[0].GetProperty("type").GetString(), Is.EqualTo("https"));
+            Assert.That(servers[0].EnumerateObject().Select(property => property.Name),
+                Is.EqualTo(new[] { "type", "tag", "server", "detour", "tls" }));
+            Assert.That(servers[1].GetProperty("type").GetString(), Is.EqualTo("tailscale"));
+            Assert.That(servers[1].EnumerateObject().Select(property => property.Name),
+                Is.EqualTo(acceptDefaultResolvers is null ? new[] { "type", "tag", "endpoint" }
+                    : new[] { "type", "tag", "endpoint", "accept_default_resolvers" }));
+            Assert.That(restored.Servers[0], Is.EqualTo(config.Dns.Servers[0]));
+            Assert.That(restored.Servers[1], Is.EqualTo(config.Dns.Servers[1]));
+            if (acceptDefaultResolvers is { } expected)
+                Assert.That(servers[1].GetProperty("accept_default_resolvers").GetBoolean(), Is.EqualTo(expected));
+        });
+    }
+
     [Test]
     public void TargetModelsDoNotInventProductPolicyWhenFieldsAreOmitted()
     {
@@ -17,8 +60,8 @@ public sealed class ConfigSerializerDefaultsTests
                 Optimistic = new DnsOptimisticConfig(),
                 Servers = [new HttpsDnsServer
                 {
-                    Tag = "resolver", ServerAddress = "1.1.1.1",
-                    TlsConfig = new DnsTlsConfig { ServerName = "cloudflare-dns.com" }
+                    Tag = "resolver", Server = "1.1.1.1",
+                    Tls = new DnsTlsConfig { ServerName = "cloudflare-dns.com" }
                 }]
             },
             Outbounds = [new TrojanOutbound
@@ -266,7 +309,7 @@ public sealed class ConfigSerializerDefaultsTests
             HttpClients = [new HttpClientConfig { Tag = "first", Detour = "direct" }],
             Dns = new DnsConfig
             {
-                Servers = [new HttpsDnsServer { Tag = "dns", ServerAddress = "1.1.1.1", TlsConfig = new DnsTlsConfig { Enabled = true, ServerName = "cloudflare-dns.com" } }],
+                Servers = [new HttpsDnsServer { Tag = "dns", Server = "1.1.1.1", Tls = new DnsTlsConfig { Enabled = true, ServerName = "cloudflare-dns.com" } }],
                 Final = "dns",
                 Timeout = "2s",
                 Rules = [new DnsRule { Timeout = "2000ms", Server = "dns" }, new DnsRule { Timeout = "10s", Server = "dns" }]

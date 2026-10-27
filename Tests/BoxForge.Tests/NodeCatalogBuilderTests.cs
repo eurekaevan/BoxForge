@@ -14,7 +14,7 @@ namespace BoxForge.Tests;
 public sealed class NodeCatalogBuilderTests
 {
     [TestCase("network", "source.proxies[1].network")]
-    [TestCase("unknown-secret-key", "source.proxies[1]")]
+    [TestCase("unknown-secret-key", "source.proxies[1].[unknown]")]
     [TestCase("type", "source.proxies[1].type")]
     public void SourceDiagnosticsLocateNodesWithoutExposingInput(string field, string expectedPath)
     {
@@ -37,7 +37,7 @@ public sealed class NodeCatalogBuilderTests
         Assert.Multiple(() =>
         {
             Assert.That(diagnostic.Path, Is.EqualTo(expectedPath));
-            Assert.That(diagnostic.Code, Is.EqualTo(field == "unknown-secret-key" ? "SRC001" : "SRC002"));
+            Assert.That(diagnostic.Code, Is.EqualTo("SRC002"));
             Assert.That(serialized, Does.Not.Contain("secret"));
             Assert.That(error.Message, Does.Contain("node-secret"));
             Assert.That(error.InnerException, Is.TypeOf<NodeParseException>());
@@ -60,6 +60,91 @@ public sealed class NodeCatalogBuilderTests
         Assert.That(error.Diagnostics.Single(), Is.EqualTo(new ConfigDiagnostic("SRC002",
             "source.proxies[0].reality-opts.support-x25519mlkem768", "来源字段不受支持、存在冲突或值无效。")));
         Assert.That(JsonSerializer.Serialize(error.Diagnostics), Does.Not.Contain("secret"));
+    }
+
+    [TestCase("ss", "name", null, "name")]
+    [TestCase("ss", "server", null, "server")]
+    [TestCase("ss", "port", "sensitive-port", "port")]
+    [TestCase("ss", "password", "", "password")]
+    [TestCase("ss", "cipher", "", "cipher")]
+    [TestCase("ss", "udp-over-tcp", "sensitive-bool", "udp-over-tcp")]
+    [TestCase("ss", "udp_over_tcp", "sensitive-bool", "udp_over_tcp")]
+    [TestCase("ss", "udp-over-tcp-version", 3, "udp-over-tcp-version")]
+    [TestCase("ss", "plugin-opts.mode", "sensitive-mode", "plugin-opts.mode")]
+    [TestCase("ss", "plugin_opts.host", "sensitive\nhost", "plugin_opts.host")]
+    [TestCase("ss", "plugin_opts.sensitive-key", "sensitive-value", "plugin_opts.[unknown]")]
+    [TestCase("ss", "smux.enabled", "sensitive-bool", "smux.enabled")]
+    [TestCase("vless", "uuid", null, "uuid")]
+    [TestCase("vless", "flow", "sensitive-unsupported-flow", "flow")]
+    [TestCase("vless", "tls", "sensitive-bool", "tls")]
+    [TestCase("vless", "sni", "node.example.com", "tls")]
+    [TestCase("trojan", "skip-cert-verify", "sensitive-bool", "skip-cert-verify")]
+    [TestCase("trojan", "client_fingerprint", "sensitive-fingerprint", "client_fingerprint")]
+    [TestCase("trojan", "reality-opts.public-key", "sensitive-key", "reality-opts.public-key")]
+    [TestCase("trojan", "reality_opts.short_id", "sensitive-id", "reality_opts.short_id")]
+    [TestCase("anytls", "min-idle-session", -1, "min-idle-session")]
+    [TestCase("anytls", "min_idle_session", "sensitive-count", "min_idle_session")]
+    [TestCase("anytls", "client-metadata", 123, "client-metadata")]
+    [TestCase("anytls", "client_metadata", "sensitive\nmetadata", "client_metadata")]
+    [TestCase("anytls", "idle_timeout", "sensitive-duration", "idle_timeout")]
+    [TestCase("hysteria2", "up", "sensitive-bandwidth", "up")]
+    [TestCase("hysteria2", "down", "100 Kbps", "down")]
+    [TestCase("hysteria2", "ports", "443,,8443", "ports")]
+    [TestCase("hysteria2", "ports", "sensitive-port", "ports")]
+    [TestCase("hysteria2", "ports", "443-1", "ports")]
+    [TestCase("hysteria2", "hop_interval", "sensitive-interval", "hop_interval")]
+    [TestCase("hysteria2", "bbr_profile", "sensitive-profile", "bbr_profile")]
+    [TestCase("hysteria2", "obfs_min_packet_size", -1, "obfs_min_packet_size")]
+    [TestCase("hysteria2", "obfs-password", "", "obfs-password")]
+    public void InterpretedFieldDiagnosticsPreserveAliasesNestedPathsAndNodeIndices(
+        string protocol, string field, object? value, string expectedField)
+    {
+        var fields = new Hashtable
+        {
+            ["name"] = "sensitive-node",
+            ["type"] = protocol,
+            ["server"] = "node.example.com",
+            ["port"] = 443
+        };
+        if (protocol == "vless") fields["uuid"] = "00000000-0000-4000-8000-000000000001";
+        else fields["password"] = "sensitive-password";
+        if (protocol == "ss") fields["cipher"] = "aes-128-gcm";
+        if (field.StartsWith("plugin", StringComparison.Ordinal)) fields["plugin"] = "obfs";
+        if (field == "obfs-password") fields["obfs"] = "salamander";
+        if (field.StartsWith("reality", StringComparison.Ordinal)) fields["client-fingerprint"] = "chrome";
+        // Exercise errors discovered while a different field is being checked.
+        if (field == "sni") fields["tls"] = "sensitive-bool";
+        string[] path = field.Split('.');
+        if (path.Length == 2)
+        {
+            var nested = new Hashtable();
+            if (path[0].StartsWith("reality", StringComparison.Ordinal))
+            {
+                nested["public-key"] = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+                if (path[1] == "public-key") nested.Remove("public-key");
+            }
+            nested[path[1]] = value;
+            fields[path[0]] = nested;
+        }
+        else fields[field] = value;
+        var valid = new Hashtable
+        {
+            ["name"] = "safe",
+            ["type"] = "trojan",
+            ["server"] = "node.example.com",
+            ["port"] = 443,
+            ["password"] = "test-only"
+        };
+        var config = new ClashConfig { Proxies = [new(valid), new(fields)] };
+
+        var error = Assert.Throws<NodeParseException>(() => NodeCatalogBuilder.Build(config))!;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(error.Diagnostics.Single(), Is.EqualTo(new ConfigDiagnostic("SRC002",
+                $"source.proxies[1].{expectedField}", "来源字段不受支持、存在冲突或值无效。")));
+            Assert.That(JsonSerializer.Serialize(error.Diagnostics), Does.Not.Contain("sensitive"));
+        });
     }
 
     [Test]
@@ -143,11 +228,13 @@ public sealed class NodeCatalogBuilderTests
 
         var nodes = NodeCatalogBuilder.Build(config);
         Assert.That(nodes.Names, Is.EqualTo(new[] { reservedTag }));
-        var exception = Assert.Throws<NodeParseException>(() =>
+        var exception = Assert.Throws<ConfigValidationException>(() =>
             ConfigurationPlanner.Plan(nodes, BoxForgeProfile.Default.Resolve(TargetPlatform.Linux)));
 
-        Assert.That(exception!.Message,
-            Is.EqualTo($"节点名称 '{reservedTag}' 与 BoxForge 保留 tag 冲突"));
+        Assert.That(exception!.Diagnostics, Is.EqualTo(new[]
+        {
+            new ConfigDiagnostic("IR009", "plan.nodes[0].name", "节点名称与保留名称冲突。")
+        }));
     }
 
     [TestCase(null)]

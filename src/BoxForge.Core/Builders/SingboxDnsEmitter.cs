@@ -21,67 +21,150 @@ internal static class SingboxDnsEmitter
         dns.Servers.AddRange(plan.Resolvers.Select(resolver => new HttpsDnsServer
         {
             Tag = resolver.Name,
-            ServerAddress = resolver.Address,
-            DetourTag = resolver.Detour,
-            TlsConfig = new DnsTlsConfig { Enabled = true, ServerName = resolver.ServerName }
+            Server = resolver.Address,
+            Detour = resolver.Detour,
+            Tls = new DnsTlsConfig { Enabled = true, ServerName = resolver.ServerName }
         }));
         if (plan.TailscaleEnabled)
         {
             dns.Servers.Add(new TailscaleDnsServer
             {
                 Tag = SingboxTags.TailscaleDns,
-                EndpointTag = SingboxTags.TailscaleEndpoint,
-                AcceptDefaultResolversValue = false
+                Endpoint = SingboxTags.TailscaleEndpoint,
+                AcceptDefaultResolvers = false
             });
         }
-        dns.Rules.AddRange(plan.Rules.Select(EmitRule));
+        EmitRules(dns.Rules, plan);
         return dns;
     }
 
-    private static DnsRule EmitRule(DnsRulePlan rule) => new()
+    private static void EmitRules(List<DnsRule> rules, DnsPlan plan)
     {
-        Type = rule.Mode is null ? null : RouteRuleType.Logical,
-        Mode = rule.Mode switch
+        if (plan.AddressFamily == AddressFamilyPolicy.Ipv4Only)
+            rules.Add(new DnsRule
+            {
+                QueryType = ["AAAA"],
+                Action = DnsRuleAction.Predefined,
+                Rcode = DnsResponseCode.NoError
+            });
+        else if (plan.AddressFamily.UsesInterfaceGuard())
+            rules.Add(new DnsRule
+            {
+                Type = RouteRuleType.Logical,
+                Mode = RouteLogicalMode.And,
+                Rules =
+                [
+                    new DnsRule { QueryType = ["AAAA"] },
+                    new DnsRule { DefaultInterfaceAddress = [AddressFamilyPolicies.GlobalIpv6Prefix], Invert = true }
+                ],
+                Action = DnsRuleAction.Predefined,
+                Rcode = DnsResponseCode.NoError
+            });
+        if (plan.TailscaleEnabled)
+            rules.Add(new DnsRule
+            {
+                PreferredBy = [SingboxTags.TailscaleDns],
+                Action = DnsRuleAction.Route,
+                Server = SingboxTags.TailscaleDns,
+                DisableOptimisticCache = true
+            });
+        rules.Add(new DnsRule
         {
-            null => null,
-            LogicalMatchMode.And => RouteLogicalMode.And,
-            LogicalMatchMode.Or => RouteLogicalMode.Or,
-            _ => throw new InvalidOperationException("Unsupported DNS logical mode.")
-        },
-        Rules = rule.Rules.IsDefault ? null : rule.Rules.Select(EmitRule).ToList(),
-        Invert = rule.Invert,
-        DefaultInterfaceAddress = Copy(rule.DefaultInterfaceAddress),
-        Timeout = rule.Timeout,
-        RuleSet = Copy(rule.RuleSet),
-        QueryType = Copy(rule.QueryType),
-        PreferredBy = Copy(rule.PreferredBy),
-        IpCidr = Copy(rule.IpCidr),
-        MatchResponse = rule.MatchResponse,
-        ResponseRcode = EmitResultCode(rule.ResponseRcode),
-        Action = rule.Action switch
+            RuleSet = [RuleSetTags.Ads],
+            Action = DnsRuleAction.Predefined,
+            Rcode = DnsResponseCode.NameError
+        });
+        foreach (DnsResolverPoolPlan pool in plan.Pools)
         {
-            null => null,
-            DnsOperation.Predefined => DnsRuleAction.Predefined,
-            DnsOperation.Route => DnsRuleAction.Route,
-            DnsOperation.Evaluate => DnsRuleAction.Evaluate,
-            DnsOperation.Respond => DnsRuleAction.Respond,
-            _ => throw new InvalidOperationException("Unsupported DNS operation.")
-        },
-        Server = rule.Server,
-        Tag = rule.Tag,
-        Race = rule.Race,
-        DisableOptimisticCache = rule.DisableOptimisticCache,
-        Rcode = EmitResultCode(rule.Rcode)
-    };
+            switch (plan.SelectionMode)
+            {
+                case DnsResolverSelectionMode.SequentialFallback:
+                    AddEvaluate(rules, pool, primary: true, timeout: "2s");
+                    AddResponse(rules, pool, primary: true, DnsResponseCode.NoError);
+                    AddResponse(rules, pool, primary: true, DnsResponseCode.NameError);
+                    AddEvaluate(rules, pool, primary: false);
+                    AddResponse(rules, pool, primary: false, DnsResponseCode.NoError);
+                    AddResponse(rules, pool, primary: false, DnsResponseCode.NameError);
+                    break;
+                case DnsResolverSelectionMode.ParallelFastest:
+                    foreach (string queryType in plan.AddressFamily == AddressFamilyPolicy.Ipv4Only
+                        ? new[] { "A" } : new[] { "A", "AAAA" })
+                    {
+                        AddEvaluate(rules, pool, primary: true, queryType);
+                        AddEvaluate(rules, pool, primary: false, queryType);
+                        AddResponse(rules, pool, primary: true, DnsResponseCode.NoError, queryType, race: true);
+                        AddResponse(rules, pool, primary: false, DnsResponseCode.NoError, queryType, race: true);
+                        // Empty answers and negative responses follow both address races.
+                        AddResponse(rules, pool, primary: true, DnsResponseCode.NoError, queryType);
+                        AddResponse(rules, pool, primary: false, DnsResponseCode.NoError, queryType);
+                        AddResponse(rules, pool, primary: true, DnsResponseCode.NameError, queryType);
+                        AddResponse(rules, pool, primary: false, DnsResponseCode.NameError, queryType);
+                        AddTerminalServfail(rules, pool, queryType);
+                    }
+                    // Scoped address terminals prevent repeated queries in the general pool.
+                    AddEvaluate(rules, pool, primary: true);
+                    AddEvaluate(rules, pool, primary: false);
+                    AddResponse(rules, pool, primary: true, DnsResponseCode.NoError, race: true);
+                    AddResponse(rules, pool, primary: false, DnsResponseCode.NoError, race: true);
+                    AddResponse(rules, pool, primary: true, DnsResponseCode.NameError);
+                    AddResponse(rules, pool, primary: false, DnsResponseCode.NameError);
+                    break;
+                default:
+                    throw new InvalidOperationException("Unsupported DNS selection mode.");
+            }
+            AddTerminalServfail(rules, pool);
+        }
+    }
+
+    private static void AddTerminalServfail(List<DnsRule> rules, DnsResolverPoolPlan pool, string? queryType = null) =>
+        rules.Add(new DnsRule
+        {
+            RuleSet = Copy(pool.RuleSets),
+            QueryType = queryType is null ? null : [queryType],
+            Action = DnsRuleAction.Predefined,
+            Rcode = DnsResponseCode.ServerFailure
+        });
+
+    private static void AddEvaluate(List<DnsRule> rules, DnsResolverPoolPlan pool, bool primary,
+        string? queryType = null, string? timeout = null) =>
+        rules.Add(new DnsRule
+        {
+            RuleSet = Copy(pool.RuleSets),
+            QueryType = queryType is null ? null : [queryType],
+            DisableOptimisticCache = queryType is not null ? true : null,
+            Action = DnsRuleAction.Evaluate,
+            Server = primary ? pool.PrimaryServer : pool.SecondaryServer,
+            Tag = ResponseTag(pool, primary, queryType),
+            Timeout = timeout
+        });
+
+    private static void AddResponse(List<DnsRule> rules, DnsResolverPoolPlan pool, bool primary,
+        DnsResponseCode rcode, string? queryType = null, bool race = false) =>
+        rules.Add(new DnsRule
+        {
+            // Domain rule-sets and IP predicates share an OR group in sing-box.
+            // The evaluated-response tag already carries the pool's domain scope.
+            RuleSet = race && queryType is not null ? null : Copy(pool.RuleSets),
+            QueryType = queryType is null ? null : [queryType],
+            IpCidr = race && queryType is not null ? [queryType == "A" ? "0.0.0.0/0" : "::/0"] : null,
+            MatchResponse = ResponseTag(pool, primary, queryType),
+            ResponseRcode = rcode,
+            Action = DnsRuleAction.Respond,
+            Race = race ? true : null
+        });
+
+    private static string ResponseTag(DnsResolverPoolPlan pool, bool primary, string? queryType)
+    {
+        string name = pool.Kind switch
+        {
+            DnsPoolKind.Service => $"service-{pool.ServiceId}",
+            DnsPoolKind.Domestic => "domestic",
+            DnsPoolKind.Global => "global",
+            _ => throw new InvalidOperationException("Unsupported DNS pool kind.")
+        };
+        string tag = $"response-{name}-{(primary ? "primary" : "secondary")}";
+        return queryType is null ? tag : DnsResponseTags.ForAddressQuery(tag, queryType);
+    }
 
     private static List<string>? Copy(ImmutableArray<string> values) => values.IsDefault ? null : [.. values];
-
-    private static DnsResponseCode? EmitResultCode(DnsResultCode? code) => code switch
-    {
-        null => null,
-        DnsResultCode.NoError => DnsResponseCode.NoError,
-        DnsResultCode.NameError => DnsResponseCode.NameError,
-        DnsResultCode.ServerFailure => DnsResponseCode.ServerFailure,
-        _ => throw new InvalidOperationException("Unsupported DNS response code.")
-    };
 }

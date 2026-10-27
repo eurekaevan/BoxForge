@@ -11,6 +11,7 @@ public sealed class BoxForgeProfile
 {
     private readonly BuiltInProfile data;
     private readonly ImmutableArray<ImmutableDictionary<TargetPlatform, JsonElement>> platformLayers;
+    private readonly ImmutableDictionary<TargetPlatform, ResolvedProfile> resolvedPlatforms;
 
     internal BoxForgeProfile(BuiltInProfile data,
         ImmutableArray<ImmutableDictionary<TargetPlatform, JsonElement>> platformLayers = default,
@@ -20,7 +21,8 @@ public sealed class BoxForgeProfile
         this.platformLayers = platformLayers.IsDefault ? [data.Platforms] : platformLayers;
         try { _ = ResolvedProfile.ValidateDefinitions(data, validateReferences: false); }
         catch (ProfileValidationException ex) { throw ex.AtOrigin(origin); }
-        foreach (var platform in Enum.GetValues<TargetPlatform>()) _ = Resolve(platform);
+        resolvedPlatforms = Enum.GetValues<TargetPlatform>().ToImmutableDictionary(
+            platform => platform, platform => ResolveCore(platform, null));
     }
 
     public static BoxForgeProfile Default { get; } = new(BuiltInProfile.Default);
@@ -34,6 +36,26 @@ public sealed class BoxForgeProfile
     public ResolvedProfile Resolve(TargetPlatform platform, JsonObject? request = null)
     {
         if (!Enum.IsDefined(platform)) throw new ArgumentOutOfRangeException(nameof(platform));
+        return request is null ? resolvedPlatforms[platform] : ResolveCore(platform, SnapshotRequest(request));
+    }
+
+    internal Dictionary<TargetPlatform, ResolvedProfile> ResolvePlatforms(
+        IEnumerable<TargetPlatform> platforms, JsonObject? request)
+    {
+        JsonObject? patch = request is null ? null : SnapshotRequest(request);
+        return platforms.ToDictionary(platform => platform,
+            platform => patch is null ? Resolve(platform) : ResolveCore(platform, patch));
+    }
+
+    private static JsonObject SnapshotRequest(JsonObject request)
+    {
+        try { return ProfileOverlay.Snapshot(request); }
+        catch (ProfileValidationException ex) { throw ex.AtOrigin("profile.request"); }
+        catch (JsonException ex) { throw new ProfileValidationException("profile", "profile: 字段类型无效、缺失必填字段或存在未知字段。", ex); }
+    }
+
+    private ResolvedProfile ResolveCore(TargetPlatform platform, JsonObject? request)
+    {
         try
         {
             BuiltInProfile selected = data with { Platforms = ImmutableDictionary<TargetPlatform, JsonElement>.Empty };
@@ -45,11 +67,8 @@ public sealed class BoxForgeProfile
                 }
             if (request is not null)
             {
-                JsonObject patch;
-                try { patch = ProfileOverlay.Snapshot(request); }
-                catch (ProfileValidationException ex) { throw ex.AtOrigin("profile.request"); }
-                selected = ProfileOverlay.Apply(selected, patch, "profile.request");
-                var layers = ReadPlatforms(patch, "profile.request");
+                selected = ProfileOverlay.Apply(selected, request, "profile.request");
+                var layers = ReadPlatforms(request, "profile.request");
                 if (layers.TryGetValue(platform, out var platformPatch))
                 {
                     string path = $"profile.request.platforms.{platform}";

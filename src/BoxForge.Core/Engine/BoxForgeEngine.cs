@@ -33,8 +33,7 @@ internal sealed class BoxForgeEngine(
         cancellationToken.ThrowIfCancellationRequested();
 
         var requestedPlatforms = request.Platforms.ToHashSet();
-        var profiles = PlatformOrder.Where(requestedPlatforms.Contains)
-            .ToDictionary(platform => platform, platform => profile.Resolve(platform, request.Profile));
+        var profiles = profile.ResolvePlatforms(PlatformOrder.Where(requestedPlatforms.Contains), request.Profile);
         NodeCatalog nodes;
         try
         {
@@ -70,13 +69,7 @@ internal sealed class BoxForgeEngine(
                     content,
                     configSerializer.GetContentHash(content)));
             }
-            // Preserve the existing error contract for a conflict on the first requested platform.
-            // Name binding belongs to platform planning even though this historical case is a conversion error.
-            catch (NodeParseException ex) when (platform == profiles.First().Key)
-            {
-                throw new BoxForgeConversionException("Clash YAML 转换失败。", ex);
-            }
-            catch (Exception ex) when (ex is ConfigValidationException or RegexMatchTimeoutException or NodeParseException)
+            catch (Exception ex) when (ex is ConfigValidationException or RegexMatchTimeoutException)
             {
                 throw new BoxForgePlatformConversionException(platform, ex);
             }

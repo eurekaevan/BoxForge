@@ -22,24 +22,36 @@ function updateFileNote() {
   fileNote.textContent = file
     ? `${file.name} · ${(file.size / 1024).toFixed(1)} KiB`
     : "尚未选择文件";
+  if (file && status.dataset.state === "error") {
+    setStatus("准备就绪");
+  }
 }
 
 fileInput.addEventListener("change", updateFileNote);
 
-for (const eventName of ["dragenter", "dragover"]) {
-  dropZone.addEventListener(eventName, event => {
-    event.preventDefault();
-    dropZone.classList.add("is-over");
-  });
-}
+let dragDepth = 0;
+
+dropZone.addEventListener("dragenter", event => {
+  event.preventDefault();
+  dragDepth++;
+  dropZone.classList.add("is-over");
+});
+
+dropZone.addEventListener("dragover", event => {
+  event.preventDefault();
+});
 
 dropZone.addEventListener("dragleave", event => {
   event.preventDefault();
-  dropZone.classList.remove("is-over");
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (dragDepth === 0) {
+    dropZone.classList.remove("is-over");
+  }
 });
 
 dropZone.addEventListener("drop", event => {
   event.preventDefault();
+  dragDepth = 0;
   dropZone.classList.remove("is-over");
   if (event.dataTransfer.files.length === 1) {
     fileInput.files = event.dataTransfer.files;

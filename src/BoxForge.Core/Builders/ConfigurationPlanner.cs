@@ -1,6 +1,8 @@
 using System.Collections.Immutable;
 using BoxForge.Builders.Components;
 using BoxForge.Configuration;
+using BoxForge.Exceptions;
+using BoxForge.Models;
 using BoxForge.Models.Intermediate;
 
 namespace BoxForge.Builders;
@@ -12,8 +14,8 @@ internal static class ConfigurationPlanner
         PlatformProfile platform = settings.Settings;
         for (int index = 0; index < nodes.Names.Count; index++)
             if (settings.IsReservedTag(nodes.Names[index]))
-                throw new BoxForge.Exceptions.NodeParseException($"节点名称 '{nodes.Names[index]}' 与 BoxForge 保留 tag 冲突",
-                    new BoxForge.Models.ConfigDiagnostic("IR009", $"plan.nodes[{index}].name", "节点名称与保留名称冲突。"));
+                throw new ConfigValidationException([
+                    new ConfigDiagnostic("IR009", $"plan.nodes[{index}].name", "节点名称与保留名称冲突。")]);
         var groups = ProfilePlanner.PlanGroups(nodes, settings);
         var dns = DnsProfileBuilder.Plan(settings);
         var route = RouteProfileBuilder.Plan(settings);

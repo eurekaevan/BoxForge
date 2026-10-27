@@ -324,8 +324,11 @@ public sealed class ServerApiTests
     [TestCase(true, "singbox_api")]
     [TestCase(true, "unknown_environment")]
     [TestCase(true, "structured_profile_environment")]
+    [TestCase(true, null, "environment")]
+    [TestCase(true, null, "appsettings")]
+    [TestCase(true, null, "arguments")]
     public async Task KestrelValidatesDeploymentConfigurationBeforeServingRequests(
-        bool tailscaleEnabled, string? invalidConfiguration)
+        bool tailscaleEnabled, string? invalidConfiguration, string? hostSource = null)
     {
         string directory = Directory.CreateTempSubdirectory("boxforge-server-profile-").FullName;
         string profile = Path.Combine(directory, "profile.json");
@@ -381,6 +384,34 @@ public sealed class ServerApiTests
             startInfo.Environment["BOXFORGE_regions__host_only"] = "private-environment-value";
         if (invalidConfiguration == "structured_profile_environment")
             startInfo.Environment["BOXFORGE_Profile__child"] = "private-environment-value";
+        if (hostSource != null)
+        {
+            // With no prefixed feature overrides, host values must not enable the API or disable Tailscale.
+            startInfo.Environment.Remove("BOXFORGE_features__tailscale__enabled");
+            startInfo.Environment.Remove("BOXFORGE_platforms__Android__features__tailscale__enabled");
+            startInfo.Environment.Remove("BOXFORGE_features__api__enabled");
+            if (hostSource == "environment")
+            {
+                startInfo.Environment["PROFILE"] = "/etc/profile";
+                startInfo.Environment["FEATURES__api__enabled"] = "true";
+                startInfo.Environment["FEATURES__tailscale__enabled"] = "false";
+                startInfo.Environment["DNS__timeout"] = "invalid";
+                startInfo.Environment["TailscaleEnabled"] = "invalid";
+            }
+            else if (hostSource == "appsettings")
+            {
+                await File.WriteAllTextAsync(Path.Combine(directory, "appsettings.json"),
+                    """{"Profile":{"child":"missing.json"},"features":{"api":{"enabled":true},"tailscale":{"enabled":false}},"dns":{"timeout":"invalid"},"TailscaleEnabled":"invalid"}""");
+            }
+            else
+            {
+                startInfo.ArgumentList.Add("--Profile:child=missing.json");
+                startInfo.ArgumentList.Add("--features:api:enabled=true");
+                startInfo.ArgumentList.Add("--features:tailscale:enabled=false");
+                startInfo.ArgumentList.Add("--dns:timeout=invalid");
+                startInfo.ArgumentList.Add("--TailscaleEnabled=invalid");
+            }
+        }
         startInfo.Environment["Logging__LogLevel__Default"] = "Information";
         startInfo.Environment["Logging__LogLevel__Microsoft.Hosting.Lifetime"] = "Information";
         using var process = Process.Start(startInfo)!;
@@ -788,11 +819,13 @@ public sealed class ServerApiTests
         });
     }
 
-    [TestCase(false, false)]
-    [TestCase(false, true)]
-    [TestCase(true, false)]
-    [TestCase(true, true)]
-    public async Task UnexpectedEngineFailureReturnsInternalServerError(bool export, bool argumentError)
+    [TestCase(false, nameof(InvalidOperationException))]
+    [TestCase(false, nameof(ArgumentException))]
+    [TestCase(false, nameof(FormatException))]
+    [TestCase(true, nameof(InvalidOperationException))]
+    [TestCase(true, nameof(ArgumentException))]
+    [TestCase(true, nameof(FormatException))]
+    public async Task UnexpectedEngineFailureReturnsInternalServerError(bool export, string exceptionType)
     {
         var logs = new RecordingLogProvider();
         using WebApplicationFactory<ServerProgram> failingFactory =
@@ -801,7 +834,7 @@ public sealed class ServerApiTests
                 {
                     services.AddSingleton<ILoggerProvider>(logs);
                     services.RemoveAll<ISingboxConfigBuilder>();
-                    services.AddSingleton<ISingboxConfigBuilder>(new ThrowingConfigBuilder(argumentError));
+                    services.AddSingleton<ISingboxConfigBuilder>(new ThrowingConfigBuilder(exceptionType));
                 }));
         using HttpClient client = failingFactory.CreateClient();
         using var multipart = new MultipartFormDataContent();
@@ -813,18 +846,17 @@ public sealed class ServerApiTests
         string problem = await response.Content.ReadAsStringAsync();
         using var document = JsonDocument.Parse(problem);
         string traceId = document.RootElement.GetProperty("traceId").GetString()!;
-        string expectedType = argumentError ? nameof(ArgumentException) : nameof(InvalidOperationException);
 
         Assert.Multiple(() =>
         {
             Assert.That(
                 response.StatusCode,
                 Is.EqualTo(HttpStatusCode.InternalServerError));
-            Assert.That(problem, Does.Not.Contain(expectedType));
+            Assert.That(problem, Does.Not.Contain(exceptionType));
             Assert.That(problem, Does.Not.Contain("unexpected test failure"));
             Assert.That(traceId, Is.Not.Empty);
             Assert.That(logs.Errors.Any(message => message.Contains(traceId, StringComparison.Ordinal)
-                && message.Contains(expectedType, StringComparison.Ordinal)), Is.True,
+                && message.Contains(exceptionType, StringComparison.Ordinal)), Is.True,
                 $"Response trace: {traceId}; captured errors: {string.Join(Environment.NewLine, logs.Errors)}");
             Assert.That(logs.Errors.All(message => !message.Contains("unexpected test failure", StringComparison.Ordinal)), Is.True);
         });
@@ -884,11 +916,14 @@ public sealed class ServerApiTests
         string Sha256,
         string Content);
 
-    private sealed class ThrowingConfigBuilder(bool argumentError) : ISingboxConfigBuilder
+    private sealed class ThrowingConfigBuilder(string exceptionType) : ISingboxConfigBuilder
     {
-        public SingboxConfig Build(ConfigurationPlan plan, string? cacheId) => throw (argumentError
-            ? new ArgumentException("unexpected test failure")
-            : new InvalidOperationException("unexpected test failure"));
+        public SingboxConfig Build(ConfigurationPlan plan, string? cacheId) => throw (exceptionType switch
+        {
+            nameof(ArgumentException) => new ArgumentException("unexpected test failure"),
+            nameof(FormatException) => new FormatException("unexpected test failure"),
+            _ => new InvalidOperationException("unexpected test failure")
+        });
     }
 
     private sealed class RecordingLogProvider : ILoggerProvider, ILogger

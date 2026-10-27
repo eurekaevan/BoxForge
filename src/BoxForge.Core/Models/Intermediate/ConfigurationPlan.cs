@@ -69,47 +69,39 @@ internal sealed record ConfigurationPlan(
         }
 
         var ruleSets = Route.RuleSets.Where(source => !source.Tags.IsDefault).SelectMany(source => source.Tags).ToHashSet(StringComparer.Ordinal);
-        for (int index = 0; !Dns.Rules.IsDefault && index < Dns.Rules.Length; index++)
-            RequireDnsRuleSets(Dns.Rules[index], $"plan.dns.rules[{index}]");
-        if (!Dns.Rules.IsDefaultOrEmpty)
+        Require(ruleSets, RuleSetTags.Ads, "IR005", "plan.dns.blocked_rule_set");
+        if (!Dns.Pools.IsDefaultOrEmpty)
         {
             var serviceRoutes = Route.Rules.IsDefault ? [] : Route.Rules
                 .Where(rule => rule.Phase is RoutePhase.PriorityServices or RoutePhase.OtherServices).ToArray();
-            var blocks = Dns.ResolverBlocks().ToArray();
-            if (blocks.Length != serviceRoutes.Length + 2)
-                diagnostics.Add(new("IR011", "plan.dns.rules", "DNS 必须依次包含各服务、国内和全局解析块。"));
-            for (int index = 0; index < Math.Min(blocks.Length, serviceRoutes.Length + 2); index++)
+            if (Dns.Pools.Length != serviceRoutes.Length + 2)
+                diagnostics.Add(new("IR011", "plan.dns.pools", "DNS 必须依次包含各服务、国内和全局解析池。"));
+            for (int index = 0; index < Dns.Pools.Length; index++)
             {
+                if (Dns.Pools[index] is not { } pool) continue;
+                string path = $"plan.dns.pools[{index}]";
+                if (!pool.RuleSets.IsDefault)
+                    for (int scope = 0; scope < pool.RuleSets.Length; scope++)
+                        Require(ruleSets, pool.RuleSets[scope], "IR005", $"{path}.rule_sets[{scope}]");
+                if (index >= serviceRoutes.Length + 2) continue;
                 bool service = index < serviceRoutes.Length;
                 bool domestic = index == serviceRoutes.Length;
-                ImmutableArray<string> scope = service ? serviceRoutes[index].RuleSet : domestic ? [RuleSetTags.Cn] : default;
+                string? serviceId = service ? serviceRoutes[index].ServiceId : null;
+                ImmutableArray<string> scopeSets = service ? serviceRoutes[index].RuleSet : domestic ? [RuleSetTags.Cn] : default;
                 string? detour = service ? serviceRoutes[index].Outbound : domestic ? null : Groups.Main.Name;
-                string[]? resolverNames = service ? null : domestic
-                    ? [SingboxTags.DirectAliDns, SingboxTags.DirectTencentDns]
-                    : [SingboxTags.ProxyCloudflareDns, SingboxTags.ProxyGoogleDns];
-                var (start, end) = blocks[index];
-                var evaluations = Dns.Rules.Skip(start).Take(end - start + 1)
-                    .Where(rule => rule.Action == DnsOperation.Evaluate).ToArray();
-                bool valid = evaluations.Length >= 2;
-                if (service && evaluations.Length >= 2)
-                {
-                    // Resolver tags carry the fixed Cloudflare/Google roles used by emission.
-                    string primary = evaluations[0].Server ?? string.Empty;
-                    bool cloudflare = primary.StartsWith("dns-service-", StringComparison.Ordinal)
-                        && primary.EndsWith("-cloudflare", StringComparison.Ordinal);
-                    valid &= cloudflare;
-                    resolverNames = [primary, cloudflare ? primary[..^"cloudflare".Length] + "google" : string.Empty];
-                }
-                for (int evaluation = 0; evaluation < evaluations.Length; evaluation++)
-                {
-                    DnsRulePlan rule = evaluations[evaluation];
-                    valid &= rule.RuleSet.IsDefault == scope.IsDefault && (scope.IsDefault || rule.RuleSet.SequenceEqual(scope));
-                    valid &= Dns.Resolvers.Count(resolver => resolver.Name == rule.Server && resolver.Detour == detour) == 1;
-                    if (resolverNames is not null)
-                        valid &= rule.Server == resolverNames[evaluation % 2];
-                }
+                string primary = service ? SingboxTags.ServiceDns(serviceId ?? string.Empty, "cloudflare")
+                    : domestic ? SingboxTags.DirectAliDns : SingboxTags.ProxyCloudflareDns;
+                string secondary = service ? SingboxTags.ServiceDns(serviceId ?? string.Empty, "google")
+                    : domestic ? SingboxTags.DirectTencentDns : SingboxTags.ProxyGoogleDns;
+                bool valid = pool.Kind == (service ? DnsPoolKind.Service : domestic ? DnsPoolKind.Domestic : DnsPoolKind.Global)
+                    && pool.ServiceId == serviceId
+                    && pool.RuleSets.IsDefault == scopeSets.IsDefault
+                    && (scopeSets.IsDefault || pool.RuleSets.SequenceEqual(scopeSets))
+                    && pool.PrimaryServer == primary && pool.SecondaryServer == secondary
+                    && Dns.Resolvers.Count(resolver => resolver.Name == primary && resolver.Detour == detour) == 1
+                    && Dns.Resolvers.Count(resolver => resolver.Name == secondary && resolver.Detour == detour) == 1;
                 if (!valid)
-                    diagnostics.Add(new("IR011", $"plan.dns.rules[{start}]", "DNS 解析块的顺序、匹配范围和主备出口必须与服务、国内及全局路由一致。"));
+                    diagnostics.Add(new("IR011", path, "DNS 解析池的服务绑定、顺序、匹配范围和主备出口必须与路由一致。"));
             }
         }
         var resolvers = Dns.Resolvers.Select(resolver => resolver.Name).ToHashSet(StringComparer.Ordinal);
@@ -155,16 +147,6 @@ internal sealed record ConfigurationPlan(
         {
             if (!Enum.IsDefined(resolver.AddressFamily))
                 diagnostics.Add(new("IR008", path + ".address_family", "解析器地址族无效。"));
-        }
-
-        void RequireDnsRuleSets(DnsRulePlan rule, string path)
-        {
-            if (!rule.RuleSet.IsDefault)
-                for (int index = 0; index < rule.RuleSet.Length; index++)
-                    Require(ruleSets, rule.RuleSet[index], "IR005", $"{path}.rule_set[{index}]");
-            if (!rule.Rules.IsDefault)
-                for (int index = 0; index < rule.Rules.Length; index++)
-                    RequireDnsRuleSets(rule.Rules[index], $"{path}.rules[{index}]");
         }
 
         void RequireRouteReferences(RouteRulePlan rule, string path)

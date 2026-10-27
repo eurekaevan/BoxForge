@@ -54,6 +54,9 @@ profile 根分区为 `features`、`dns`、`route`、`tuning`、`privacy`；`plat
 是按 Android、Linux、Windows 选择的同结构稀疏层，不允许嵌套 `platforms`；根与平台项均不接受 `version` 字段。
 对每个目标先合并内置根值、文件根值、统一环境根值，再依来源顺序应用平台层；
 请求根值及请求自身的目标平台层最后应用。宿主快照启动时加载，请求快照彼此隔离。
+每个 `BoxForgeProfile` 在构造时验证并缓存三个平台的 `ResolvedProfile`，包含地区正则与保留名称；
+无请求覆盖时直接复用缓存。一次转换中的请求覆盖只创建一次快照，再分别合并和校验所选平台，
+不会写入宿主缓存；未选中平台的请求层仍执行结构校验。
 `BoxForgeProfile.Resolve(platform, request)` 在构建前一次性应用覆盖层，返回绑定单个平台的
 `ResolvedProfile`。文档上的分区属性表示根值；已解析配置保存最终分区、平台参数、
 地区匹配表达式与保留名称，不支持继续叠加或切换平台。节点名称检查和策略规划只接收已解析配置；来源解析不接收平台配置。
@@ -210,28 +213,28 @@ IR 检查默认项属于候选列表、引用目标存在、探测组只含至�
 `SingboxGroupEmitter` 复制候选列表，按计划中的顺序和默认项生成目标组。
 
 DNS 规划产生中立的 `DnsPlan`：`DnsHttpsResolverPlan` 记录解析器地址、TLS 名称和
-连接出口，不可变、有序的 `Rules` 是可执行 DNS 规则的唯一表示。
-`AddressFamily`、`SelectionMode` 和 Tailscale 开关保留为校验约束上下文；
-计划不另存解析池或广告规则集元数据。`DnsProfileBuilder` 内部的私有
-`ResolverPoolDefinition` 仅用于编译，生成规则后不进入计划。
-每个服务的主/备解析器均经该服务选择组连接；服务解析块按业务路由中的服务顺序排列，
-之后为 domestic/global；无服务时只生成后两块。
+连接出口，不可变、有序的 `Pools` 是解析策略的唯一表示；每个 `DnsResolverPoolPlan`
+显式保存池类型、服务 ID、规则集范围和主备解析器引用，不保存展开后的规则。
+`AddressFamily`、`SelectionMode` 和 Tailscale 开关决定全局守卫及解析算法。
+每个服务的主备解析器均经该服务选择组连接；服务池按业务路由中的服务顺序排列，
+之后为 domestic/global；无服务时只保留后两池。
 
-`DnsProfileBuilder.Plan` 生成 AAAA 守卫、Tailscale 和广告规则，以及顺序回退或
-正响应竞速、A/AAAA 查询隔离、NXDOMAIN 接受顺序、响应标签、缓存行为和终止 SERVFAIL。
-地址正响应竞速不混入域名 rule-set 条件，避免 sing-box 的 OR 语义改变匹配范围。
-`SingboxDnsEmitter` 只映射规则和值，不选择匹配范围、执行顺序或回退算法。
-`DnsPlan.ResolverBlocks()` 从实际规则扫描并派生解析块的起止索引，不保存另一份策略数据。
-计划校验直接检查前缀守卫、Tailscale 和广告拒绝，以及各块的查询范围、缓存开关、
-超时、主备解析器一致性、正答竞速、空答后备、NXDOMAIN 顺序和终止规则；
-完整规则必须以唯一的全局解析块结束。
+`DnsProfileBuilder.Plan` 只选择解析器及解析池。
+`SingboxDnsEmitter` 在发射时生成 AAAA 守卫、Tailscale 和广告规则，并将解析池展开为
+顺序回退或正响应竞速规则，包括 A/AAAA 查询隔离、NXDOMAIN 接受顺序、响应标签、
+缓存行为和终止 SERVFAIL。地址正响应竞速不混入域名 rule-set 条件，避免 sing-box 的
+OR 语义改变匹配范围。展开结果不回写计划，每次发射独立拥有所有可变集合。
 
-`ConfigurationPlan` 按 `Route` 中实际服务规则的顺序，逐块检查 DNS 查询范围和
-所有求值规则的主备角色及解析器出口，再检查 domestic/global 的固定主备解析器及出口。
-按实际顺序配对允许服务的规则集范围相同或重叠，不以范围作为服务身份。
+`DnsPlan` 直接检查解析池类型、顺序、服务标识、匹配范围及主备引用。
+服务 `RouteRulePlan` 保留显式 `ServiceId`；`ConfigurationPlan` 按实际路由顺序检查
+服务 ID、规则集范围、主备角色及解析器出口，再检查 domestic/global 的固定绑定，
+不扫描扁平 DNS 规则，也不从 DNS 标签字符串反推服务身份。
+服务的规则集范围允许相同或重叠，匹配范围不充当服务身份。
+必要规则由发射器生成，测试直接检查产物中的守卫、响应优先级和终止行为。
 规则集和出口引用继续在汇总计划与独立的 `SingboxConfigValidator` 中检查；
-后者不调用规划器或构建器。结构与一致性校验不替代本地 DNS 行为测试，
-官方核心检查也仅证明目标配置的格式兼容性。
+后者检查发射后模型的引用、响应标签顺序及地址族守卫，不调用规划器或构建器。
+内部 DNS 计划诊断使用 `plan.dns.pools[index]` 定位解析池；外部配置格式保持不变。
+结构与一致性校验不替代本地 DNS 行为测试，官方核心检查也仅证明目标配置的格式兼容性。
 
 `RouteProfileBuilder.Plan` 产生带阶段标记的有序 `RouteRulePlan`，在规划时确定
 逻辑 AND/OR 条件、sniff 范围和超时、早晚 IPv6 守卫、服务与国内分流优先级，
@@ -242,6 +245,9 @@ DNS 规划产生中立的 `DnsPlan`：`DnsHttpsResolverPlan` 记录解析器地�
 早晚地址族守卫符合 Ipv4Only／ Auto／ DirectDualStack／ DualStack 策略（DirectDualStack 还要求服务规则集和最终出口之前的 IPv6 拒绝），必要固定阶段存在规则，启用 Tailscale 时保留其控制面路径。
 
 `SingboxRouteEmitter` 将规则逐项映射到目标字段，不按阶段重新推导策略。
+`RouteRulePlan.HasSamePolicy` 显式比较全部标量、集合顺序及嵌套规则，区分未初始化与空集合，
+不依赖 record 对集合的默认相等性，也不创建临时规则副本。
+测试自动发现所有可初始化的策略属性，新增属性必须具有相等性样例并参与比较。
 DNS 与路由发射均为每次输出创建独立的规则、嵌套条件与列表；修改输出不会污染计划。
 同一计划可重复或并发发射。跨模块引用在汇总计划与完整目标配置中分别检查。
 
@@ -254,22 +260,29 @@ bootstrap resolver、HTTP client 的出口和解析器，以及 dashboard 的 HT
 
 `ConfigurationPlanner.Plan` 汇总完整策略，`SingboxConfigBuilder.Build(plan, cacheId)`
 在唯一的完整计划校验入口检查局部约束与跨模块引用，通过后才生成目标配置。
-组件 planner 只构造计划，组件 emitter 只映射目标模型；独立的局部 `Validate` 入口用于按模块检查计划。
+组件 planner 构造语义计划，组件 emitter 转换为目标模型（DNS 解析池在此展开规则）；
+独立的局部 `Validate` 入口用于按模块检查计划。
 `DomainResolverPlan` 明确保存路由、HTTP client 和受来源 IPv4 约束的
 节点解析器：服务器、地址族及 optimistic 缓存开关均已确定，发射只转换模型。
 TUN、endpoint 与 API service 使用计划中保存的地址、开关和 Taildrop 目录，
 发射时不重新读取宿主配置，也不再次规划。
+DNS server 与 outbound、endpoint、service 使用相同的 `JsonPolymorphic` / `JsonDerivedType`
+序列化方式，以 `type` 区分具体模型。`DnsServer` 基类仅保留 `Tag`；
+`HttpsDnsServer` 直接声明 `Server`、`Detour`、`Tls`，`TailscaleDnsServer` 直接声明
+`Endpoint`、`AcceptDefaultResolvers`，不再提供 `Type` 或旧的转发初始化属性
+`ServerAddress`、`DetourTag`、`TlsConfig`、`EndpointTag`、`AcceptDefaultResolversValue`。
+直接使用这些 public 模型的 C# 调用者需迁移到对应的新属性，并通过 `DnsServer` 基类契约序列化。
+生成 JSON 的 DNS server 将 `type` 写在 `tag` 之前；字段值与 DNS 行为不变，内容哈希随字段顺序变化。
 完整目标 validator 继续检查标签重复、目标模型内部字段及地址族守卫，
 汇总校验检查以下不同层次，不能将“通过校验”理解为所有产品行为已获证明：
 
 - **结构**：枚举、字段、逻辑树和规则数组合法。
 - **引用**：出口、解析器、规则集、HTTP client 和响应标签已声明且顺序有效。
 - **必要策略**：DNS 劫持、地址族守卫、来源 IPv4 节点的独立 resolver 绑定及路由默认 resolver 符合约定。
-- **产品一致性**：实际 DNS 解析块的范围、顺序和出口与业务路由一致；固定阶段具有实际规则。
+- **产品一致性**：DNS 解析池的服务绑定、范围、顺序和出口与业务路由一致；固定阶段具有实际规则。
 
 嗅探器完整组合、全部响应竞速分支和服务优先级等仍由行为测试及输出基线约束，不能仅凭阶段存在断言产品策略完整。
 
-配置文档在构造时解析所有平台进行验证，转换时仍会重新解析请求平台；当前没有平台快照缓存。
 取消检查位于转换开始及各平台编译之前，不能视为解析、规划、发射全过程的有限工作预算。
 现有来源大小、展开数量和正则超时各自约束局部工作；不承诺统一的编译截止时间。
 官方 `check` 继续由验证脚本执行，不改变 CLI/Server 运行时依赖。
@@ -278,19 +291,22 @@ TUN、endpoint 与 API service 使用计划中保存的地址、开关和 Taildr
 ### 诊断与校验归属
 
 编译器诊断共用 `ConfigDiagnostic(Code, Path, Message)`。来源错误由
-`NodeParseException.Diagnostics` 提供，profile 错误由继承 `FormatException` 的
+`NodeParseException.Diagnostics` 提供，profile 错误由直接继承 `Exception` 的
 `ProfileValidationException.Diagnostics` 提供，计划与目标校验使用
 `ConfigValidationException.Diagnostics`。引擎的转换异常保留原有分类，并转交已知错误的诊断。
 诊断集合是不可变快照，调用方修改原始列表不会改变异常中保存的结果。
-引擎按 Android → Linux → Windows 的固定顺序处理请求平台。为保持既有异常契约，
-首个请求平台的保留名称冲突包装为 `BoxForgeConversionException`，后续平台冲突包装为
-`BoxForgePlatformConversionException`；两者都转交安全诊断。此例外只用于异常分类，
-来源仍只解析一次，失败不返回部分产物，由引擎回归测试固定边界。
+字段诊断保留节点索引、实际使用的字段别名及已知嵌套路径；未知键使用 `[unknown]`
+占位，不将原始字段名或字段值放入公共诊断。YAML 结构及资源预算错误仍使用 `SRC001`。
+引擎按 Android → Linux → Windows 的固定顺序处理请求平台，来源只解析一次。
+来源解析失败包装为 `BoxForgeConversionException`；平台规划或目标校验失败统一包装为
+`BoxForgePlatformConversionException`，并标明失败平台，不受该平台是否为请求中的首个平台影响。
+保留名称冲突属于计划校验，内部异常为 `ConfigValidationException`，诊断为 `IR009`；
+失败不返回部分产物。
 
 | 错误码 | 归属与含义 |
 | --- | --- |
 | `SRC001` | 来源 YAML 语法、结构、资源边界，或无法精确归属字段的节点错误 |
-| `SRC002` | 已声明协议字段的类型、语义或协议类型错误 |
+| `SRC002` | 协议字段的类型、语义、冲突、未知字段或协议类型错误 |
 | `PF001` | profile 文档、覆盖操作或最终平台配置无效 |
 | `IR001` | 汇总计划与平台策略不一致 |
 | `IR002` | 引用了 catalog 中不存在的 leaf |
@@ -366,8 +382,8 @@ VLESS/Trojan 只接受原生 TCP，旧传输选项作为不支持的来源语义
 可省略的目标字段使用 nullable 表示未指定，序列化不会为它们补值；显式 `false` 和 `0` 仍保留。
 `SingboxConfig` 中空的 DNS／route／log 对象及空集合初始化仅用于结构，不填充策略。
 直接构造 DTO 的调用方须自行提供所需值；需要完整产品配置时使用引擎。
-顺序 DNS 主解析器预算由 `DnsPlan.SequentialPrimaryTimeout` 单独定义，规划与计划一致性校验共用，
-协议默认语义及目标校验器的独立安全断言仍保留。
+顺序 DNS 主解析器的固定 `2s` 预算由 `SingboxDnsEmitter` 在展开解析池时写入，
+不作为可变规则保存在计划中；协议默认语义及目标校验器的独立安全断言仍保留。
 连接超时来自平台 profile，路由 sniff 超时来自 `route.sniff_timeout`，默认仍为
 `300ms`。当前 YAML 显式
 HY2 hop/BBR 值优先于调优。显式固定间隔不会补入调优的随机上限；显式带宽
@@ -429,7 +445,12 @@ Android 依赖客户端通过 libbox 提供默认物理接口和地址，缺少�
 - 内容比较使用完整文本；仅当内容与文件集同时相同时，整批才视为无变更。
 - 替换时先将旧输出移到同级备份目录，再移入新输出；第二步失败时恢复备份。
   若恢复也失败，保留备份目录，并同时报告两次失败和旧输出的备份位置。
-- 临时目录与备份目录的清理失败会记录警告，不会将已生效的新输出误报为失败。
+- Unix 清理事务目录前按父目录优先恢复所有者读写和遍历权限，不跟随软链接；
+  发布后的目录及回滚恢复的旧输出仍保留原权限。清理失败会记录警告，不会将已生效的新输出误报为失败。
+- 后续运行识别同一输出对应的 GUID 暂存及备份目录并警告，保留数据供人工恢复或清理；
+  不依据名称自动删除，以保护唯一备份及其他活动实例。
+- 物理路径逐组件解析软链接，用当前解析链的路径集合检测循环，并设每条路径总计 64 次链接展开上限；
+  悬空或循环链接也会检查，循环或超限以 I/O 错误终止，避免无界递归。
 
 ## 校验边界
 

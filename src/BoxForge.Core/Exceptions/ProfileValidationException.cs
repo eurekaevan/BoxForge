@@ -4,7 +4,7 @@ using BoxForge.Models;
 namespace BoxForge.Exceptions;
 
 /// <summary>A profile error whose diagnostics contain schema locations, never input values.</summary>
-public sealed class ProfileValidationException : FormatException
+public sealed class ProfileValidationException : Exception
 {
     public IReadOnlyList<ConfigDiagnostic> Diagnostics { get; }
 

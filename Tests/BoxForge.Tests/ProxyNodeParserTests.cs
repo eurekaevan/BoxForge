@@ -233,6 +233,8 @@ public sealed class ProxyNodeParserTests
     [TestCase("0", 30L, null)]
     [TestCase("30-15", 15L, 30L)]
     [TestCase("2-3", 5L, 5L)]
+    [TestCase("0-10", 30L, 30L)]
+    [TestCase("10-0", 30L, 30L)]
     public void Hysteria2PreservesFixedAndRangedHopIntervals(string input, long? minimum, long? maximum)
     {
         var fields = new Hashtable { ["password"] = "test-only" };
@@ -853,6 +855,8 @@ public sealed class ProxyNodeParserTests
     [TestCase("packet-encoding", "PACKETADDR", "xudp")]
     [TestCase("packet-encoding", " packetaddr ", "xudp")]
     [TestCase("packet-encoding", "unknown", "xudp")]
+    [TestCase("packet-encoding", "packet_addr", "xudp")]
+    [TestCase("packet-encoding", "none", "xudp")]
     public void VlessMapsPacketEncodingFromSource(
         string inputKey,
         string inputValue,
@@ -875,9 +879,13 @@ public sealed class ProxyNodeParserTests
     [TestCase(null, null)]
     [TestCase("", null)]
     [TestCase("short-ignored", null)]
+    [TestCase("xtls-rprx-visio", null)]
+    [TestCase("none", null)]
+    [TestCase("invalid", null)]
     [TestCase("xtls-rprx-vision", "xtls-rprx-vision")]
     [TestCase("xtls-rprx-vision-udp443", "xtls-rprx-vision")]
     [TestCase("xtls-rprx-vision任意后缀", "xtls-rprx-vision")]
+    [TestCase("xtls-rprx-vision-foo", "xtls-rprx-vision")]
     public void VlessMapsEffectiveSourceFlow(string? flow, string? expected)
     {
         VlessOutbound outbound = Convert<VlessOutbound>(CreateNode("vless", new Hashtable

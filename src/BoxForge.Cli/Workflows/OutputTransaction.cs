@@ -22,6 +22,7 @@ internal sealed partial class OutputTransaction : IDisposable
         string outputParent = Directory.GetParent(outputDirectory)?.FullName
             ?? throw new InvalidOperationException("输出目录不能是文件系统根目录。");
         Directory.CreateDirectory(outputParent);
+        ReportExistingTransactions(outputParent);
         stagingDirectory = Path.Combine(
             outputParent,
             $".{Path.GetFileName(outputDirectory)}.boxforge-{Guid.NewGuid():N}");
@@ -118,7 +119,7 @@ internal sealed partial class OutputTransaction : IDisposable
         {
             try
             {
-                Directory.Delete(backupDirectory, recursive: true);
+                DeleteTransactionDirectory(backupDirectory);
             }
             catch (Exception ex)
             {
@@ -135,13 +136,58 @@ internal sealed partial class OutputTransaction : IDisposable
         {
             try
             {
-                Directory.Delete(staging, recursive: true);
+                DeleteTransactionDirectory(staging);
             }
             catch (Exception ex)
             {
                 LogStagingCleanupFailure(logger, ex, staging);
             }
         }
+    }
+
+    private void ReportExistingTransactions(string parent)
+    {
+        string name = Path.GetFileName(outputDirectory);
+        string[] prefixes = [$".{name}.boxforge-", $".{name}.backup-"];
+        try
+        {
+            foreach (string directory in Directory.EnumerateDirectories(parent))
+            {
+                string directoryName = Path.GetFileName(directory);
+                if (prefixes.Any(prefix => directoryName.StartsWith(prefix, OperatingSystem.IsWindows()
+                    ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)
+                    && Guid.TryParseExact(directoryName[prefix.Length..], "N", out _)))
+                {
+                    LogExistingTransaction(logger, directory);
+                }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Reading the parent is optional; write and traversal access suffice for publication.
+            LogTransactionScanFailure(logger, ex, parent);
+        }
+    }
+
+    private static void DeleteTransactionDirectory(string directory)
+    {
+        // A backup can contain links to external trees. Never follow them or change their modes.
+        if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0)
+        {
+            Directory.Delete(directory);
+            return;
+        }
+
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(directory, File.GetUnixFileMode(directory) | PrivateDirectoryMode);
+        }
+
+        foreach (string child in Directory.EnumerateDirectories(directory))
+        {
+            DeleteTransactionDirectory(child);
+        }
+        Directory.Delete(directory, recursive: true);
     }
 
     private static bool HaveSameFileSet(string stagingDirectory, string outputDirectory)
@@ -177,6 +223,12 @@ internal sealed partial class OutputTransaction : IDisposable
     private static StringComparer PathComparer => OperatingSystem.IsWindows()
         ? StringComparer.OrdinalIgnoreCase
         : StringComparer.Ordinal;
+
+    [LoggerMessage(21, LogLevel.Warning, "无法检查已有事务目录，将继续生成：{ParentDirectory}")]
+    private static partial void LogTransactionScanFailure(ILogger logger, Exception exception, string parentDirectory);
+
+    [LoggerMessage(20, LogLevel.Warning, "发现已有事务目录（可能为异常退出遗留或其他实例正在使用），已保留，请确认无生成进程后检查并手动恢复或清理：{Directory}")]
+    private static partial void LogExistingTransaction(ILogger logger, string directory);
 
     [LoggerMessage(16, LogLevel.Warning, "暂存目录清理失败：{StagingDirectory}")]
     private static partial void LogStagingCleanupFailure(ILogger logger, Exception exception, string stagingDirectory);

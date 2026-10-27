@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using BoxForge.Engine;
+using BoxForge.Helpers;
 using BoxForge.Exceptions;
 
 namespace BoxForge.Server.Api;
@@ -93,7 +94,7 @@ internal static class ConversionApi
             return ApiProblems.BadRequest("请求体不能为空。");
         }
 
-        if (!ApiRequestValidation.IsValidConfigurationName(request.Name))
+        if (!ConfigurationNameValidator.IsValid(request.Name))
         {
             return ApiProblems.BadRequest(
                 "name 必须为 1～100 个 Unicode 标量值、最多 255 个 UTF-8 字节，且必须是有效的跨平台目录名。");
@@ -136,7 +137,7 @@ internal static class ConversionApi
                             artifact.Content))
                 ]));
         }
-        catch (FormatException)
+        catch (ProfileValidationException)
         {
             return ApiProblems.BadRequest("profile 必须是有效的配置覆盖对象。");
         }

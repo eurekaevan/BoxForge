@@ -10,7 +10,7 @@ namespace BoxForge.Configuration;
 
 public static class CoreServiceRegistration
 {
-    /// <summary>Validate the roots of a source loaded with BOXFORGE_ before merging it into host configuration.</summary>
+    /// <summary>Validate the roots of an isolated source loaded with BOXFORGE_ before registering Core.</summary>
     public static void ValidateBoxForgeEnvironment(this IConfiguration environment)
     {
         foreach (var section in environment.GetChildren())

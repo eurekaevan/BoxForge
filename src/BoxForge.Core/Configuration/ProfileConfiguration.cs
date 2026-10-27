@@ -2,6 +2,7 @@ using BoxForge.Exceptions;
 using Microsoft.Extensions.Configuration;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization.Metadata;
 
 namespace BoxForge.Configuration;
 
@@ -26,27 +27,30 @@ internal static class ProfileConfiguration
         if (values.Any(parent => values.Any(child => child.Key.StartsWith(parent.Key + ":", StringComparison.OrdinalIgnoreCase))))
             throw new ProfileValidationException("profile.host", "配置不能同时设置对象与其子字段。");
         var patch = new JsonObject();
-        JsonObject schema = JsonSerializer.SerializeToNode(BuiltInProfile.Default, BuiltInProfile.JsonOptions)!.AsObject();
+        JsonTypeInfo schema = BuiltInProfile.JsonOptions.GetTypeInfo(typeof(BuiltInProfile));
         foreach (var (key, value) in values)
         {
             string[] path = key.Split(':');
-            Set(patch, schema, path, Parse(value!));
+            Set(patch, schema, path, value!);
         }
         return profile.ApplyOverrides(patch, "profile.host");
     }
 
-    private static JsonNode? Parse(string value)
+    private static JsonNode? Parse(string value, Type type)
     {
-        if (bool.TryParse(value, out bool boolean)) return JsonValue.Create(boolean);
+        if (type == typeof(string)) return JsonValue.Create(value);
+        if ((type == typeof(bool) || type == typeof(bool?)) && bool.TryParse(value, out bool boolean))
+            return JsonValue.Create(boolean);
         try { return JsonNode.Parse(value); }
         catch (JsonException) { return JsonValue.Create(value); }
     }
 
-    private static void Set(JsonObject target, JsonObject schema, ReadOnlySpan<string> path, JsonNode? value)
+    private static void Set(JsonObject target, JsonTypeInfo schema, ReadOnlySpan<string> path, string value)
     {
         string segment = path[0];
-        string? key = schema.Select(pair => pair.Key).SingleOrDefault(key => key.Equals(segment, StringComparison.OrdinalIgnoreCase));
-        if (key is null) throw new ProfileValidationException("profile.host", "配置路径不是已声明的 profile 键。");
+        var property = schema.Properties.SingleOrDefault(property => property.Name.Equals(segment, StringComparison.OrdinalIgnoreCase))
+            ?? throw new ProfileValidationException("profile.host", "配置路径不是已声明的 profile 键。");
+        string key = property.Name;
         if (key == "platforms")
         {
             if (path.Length < 3 || !Enum.TryParse<BoxForge.Models.TargetPlatform>(path[1], true, out var platform) || !Enum.IsDefined(platform)
@@ -62,10 +66,11 @@ internal static class ProfileConfiguration
         if (path.Length == 1)
         {
             if (target.ContainsKey(key)) throw new ProfileValidationException("profile.host", "配置不能同时设置对象与其子字段。");
-            target[key] = value;
+            target[key] = Parse(value, property.PropertyType);
             return;
         }
-        if (schema[key] is not JsonObject childSchema) throw new ProfileValidationException("profile.host", "宿主配置必须直接设置标量或完整数组操作。");
+        JsonTypeInfo childSchema = BuiltInProfile.JsonOptions.GetTypeInfo(property.PropertyType);
+        if (childSchema.Kind != JsonTypeInfoKind.Object) throw new ProfileValidationException("profile.host", "宿主配置必须直接设置标量或完整数组操作。");
         if (target.TryGetPropertyValue(key, out var existing) && existing is not JsonObject)
             throw new ProfileValidationException("profile.host", "配置不能同时设置对象与其子字段。");
         var child = existing as JsonObject ?? new JsonObject();

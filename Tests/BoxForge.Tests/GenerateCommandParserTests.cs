@@ -1,7 +1,9 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using BoxForge.App;
 using BoxForge.Cli;
+using BoxForge.Configuration;
 using BoxForge.Models;
 
 namespace BoxForge.Tests;
@@ -200,34 +202,54 @@ public sealed class GenerateCommandParserTests
         }
     }
 
-    [TestCase(false)]
-    [TestCase(true)]
-    public async Task EnvironmentSnapshotCoexistsWithHostSectionsAndPreservesParentChildConflicts(bool conflictingParent)
+    [Test]
+    public async Task PrefixedEnvironmentStillRejectsParentChildConflicts()
+    {
+        var result = await RunCliAsync(["profile", "show", "--resolved"], new()
+        {
+            ["BOXFORGE_features"] = "{}",
+            ["BOXFORGE_features__api__enabled"] = "true"
+        });
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.ExitCode, Is.EqualTo(GenerateCommandRunner.FailureExitCode));
+            Assert.That(result.Error, Does.Contain("不能同时设置对象与其子字段"));
+        });
+    }
+
+    [TestCase(false, false)]
+    [TestCase(false, true)]
+    [TestCase(true, false)]
+    [TestCase(true, true)]
+    public async Task ProfileIgnoresHostConfiguration(bool conflictingParent, bool prefixedOverride)
     {
         string directory = Directory.CreateTempSubdirectory("boxforge-host-settings-").FullName;
         try
         {
             var settings = new Dictionary<string, object>
             {
-                ["regions"] = new[] { "host-region" },
-                ["services"] = new { mode = "host-service" },
-                ["features"] = conflictingParent ? """{"api":{"enabled":false}}""" : new { api = new { enabled = false } }
+                ["Profile"] = new { child = "missing.json" },
+                ["TailscaleEnabled"] = "invalid",
+                ["dns"] = new { timeout = "invalid" },
+                ["features"] = conflictingParent ? """{"api":{"enabled":true}}""" : new { api = new { enabled = true } }
             };
             await File.WriteAllTextAsync(Path.Combine(directory, "appsettings.json"), JsonSerializer.Serialize(settings));
-            var result = await RunCliAsync(["profile", "show", "--resolved"],
-                new() { ["BOXFORGE_features__api__enabled"] = "true" }, directory);
+            var environment = new Dictionary<string, string>
+            {
+                ["PROFILE"] = "/etc/profile",
+                ["FEATURES__api__enabled"] = "true",
+                ["DNS__cache_capacity"] = "0",
+                ["ROUTE__typo"] = "true",
+                ["TailscaleEnabled"] = "invalid"
+            };
+            if (prefixedOverride) environment["BOXFORGE_features__api__enabled"] = "true";
+            var result = await RunCliAsync(["profile", "show", "--resolved"], environment, directory);
 
-            if (conflictingParent)
-            {
-                Assert.That(result.ExitCode, Is.EqualTo(GenerateCommandRunner.FailureExitCode));
-                Assert.That(result.Error, Does.Contain("不能同时设置对象与其子字段"));
-            }
-            else
-            {
-                Assert.That(result.ExitCode, Is.Zero, result.Error);
-                using var resolved = JsonDocument.Parse(result.Output);
-                Assert.That(resolved.RootElement.GetProperty("features").GetProperty("api").GetProperty("enabled").GetBoolean(), Is.True);
-            }
+            Assert.That(result.ExitCode, Is.Zero, result.Error);
+            var expected = prefixedOverride
+                ? BoxForgeProfile.Default.ApplyOverrides(JsonNode.Parse("""{"features":{"api":{"enabled":true}}}""")!.AsObject())
+                : BoxForgeProfile.Default;
+            Assert.That(JsonNode.DeepEquals(JsonNode.Parse(result.Output), JsonNode.Parse(expected.ToResolvedJson())), Is.True);
         }
         finally
         {

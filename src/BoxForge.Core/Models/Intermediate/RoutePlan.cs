@@ -41,6 +41,7 @@ internal sealed record RoutePlan(
         if (!tags.IsSupersetOf([RuleSetTags.Ads, RuleSetTags.Cn, RuleSetTags.CnIp]))
             diagnostics.Add(new("IR009", "plan.route.rule_sets", "路由计划缺少广告或国内规则集。"));
         var services = new HashSet<string>(StringComparer.Ordinal);
+        var serviceIds = new HashSet<string>(StringComparer.Ordinal);
         RoutePhase previous = RoutePhase.DnsHijack;
         if (Rules.IsDefault)
             diagnostics.Add(new("IR008", "plan.route.rules", "路由规则数组必须初始化。"));
@@ -56,6 +57,8 @@ internal sealed record RoutePlan(
                 ValidateRule(rule, path);
                 if (rule.Phase is RoutePhase.PriorityServices or RoutePhase.OtherServices)
                 {
+                    if (string.IsNullOrWhiteSpace(rule.ServiceId) || !serviceIds.Add(rule.ServiceId))
+                        diagnostics.Add(new("IR009", path + ".service_id", "路由服务标识必须非空且唯一。"));
                     if (rule.Action != RouteOperation.Route)
                         diagnostics.Add(new("IR008", path + ".action", "路由服务必须使用路由动作。"));
                     if (string.IsNullOrWhiteSpace(rule.Outbound) || !services.Add(rule.Outbound))
@@ -180,6 +183,7 @@ internal sealed record RuleSetPlan(ImmutableArray<string> Tags, string Url, stri
 /// <summary>An ordered policy decision; the emitter only maps its fields to the target model.</summary>
 internal sealed record RouteRulePlan(RoutePhase Phase)
 {
+    internal string? ServiceId { get; init; }
     public LogicalMatchMode? Mode { get; init; }
     public ImmutableArray<RouteRulePlan> Rules { get; init; }
     public ImmutableArray<string> Inbound { get; init; }
@@ -198,14 +202,22 @@ internal sealed record RouteRulePlan(RoutePhase Phase)
     public ImmutableArray<string> Sniffer { get; init; }
     public string? Timeout { get; init; }
 
-    internal bool HasSamePolicy(RouteRulePlan other) =>
-        (this with { Rules = default, Inbound = default, Protocol = default, Port = default, Network = default, RuleSet = default, IpCidr = default, PreferredBy = default, DefaultInterfaceAddress = default, Sniffer = default })
-        == (other with { Rules = default, Inbound = default, Protocol = default, Port = default, Network = default, RuleSet = default, IpCidr = default, PreferredBy = default, DefaultInterfaceAddress = default, Sniffer = default })
-        && Same(Inbound, other.Inbound) && Same(Protocol, other.Protocol) && Same(Port, other.Port)
-        && Same(Network, other.Network) && Same(RuleSet, other.RuleSet) && Same(IpCidr, other.IpCidr)
-        && Same(PreferredBy, other.PreferredBy) && Same(DefaultInterfaceAddress, other.DefaultInterfaceAddress) && Same(Sniffer, other.Sniffer)
-        && Rules.IsDefault == other.Rules.IsDefault
-        && (Rules.IsDefault || Rules.Length == other.Rules.Length && Rules.Zip(other.Rules).All(pair => pair.First.HasSamePolicy(pair.Second)));
+    internal bool HasSamePolicy(RouteRulePlan other)
+    {
+        if (Phase != other.Phase || ServiceId != other.ServiceId || Mode != other.Mode
+            || IpVersion != other.IpVersion || Action != other.Action || IpIsPrivate != other.IpIsPrivate
+            || Invert != other.Invert || Outbound != other.Outbound || Timeout != other.Timeout
+            || !Same(Inbound, other.Inbound) || !Same(Protocol, other.Protocol) || !Same(Port, other.Port)
+            || !Same(Network, other.Network) || !Same(RuleSet, other.RuleSet) || !Same(IpCidr, other.IpCidr)
+            || !Same(PreferredBy, other.PreferredBy) || !Same(DefaultInterfaceAddress, other.DefaultInterfaceAddress)
+            || !Same(Sniffer, other.Sniffer) || Rules.IsDefault != other.Rules.IsDefault)
+            return false;
+        if (Rules.IsDefault) return true;
+        if (Rules.Length != other.Rules.Length) return false;
+        for (int index = 0; index < Rules.Length; index++)
+            if (!Rules[index].HasSamePolicy(other.Rules[index])) return false;
+        return true;
+    }
 
     private static bool Same<T>(ImmutableArray<T> left, ImmutableArray<T> right) =>
         left.IsDefault == right.IsDefault && (left.IsDefault || left.SequenceEqual(right));

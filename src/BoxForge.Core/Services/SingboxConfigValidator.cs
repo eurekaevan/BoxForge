@@ -400,15 +400,22 @@ internal sealed class SingboxConfigValidator : ISingboxConfigValidator
         for (var index = 0; index < servers.Count; index++)
         {
             DnsServer server = servers[index];
-            ValidateReference(
-                server.Detour,
-                context.RouteTargets,
-                "SB005",
-                $"dns.servers[{index}].detour",
-                "引用了不存在的 outbound 或 endpoint。",
-                context.Diagnostics);
-
-            if (server is TailscaleDnsServer tailscaleServer)
+            if (server is HttpsDnsServer httpsServer)
+            {
+                ValidateReference(
+                    httpsServer.Detour,
+                    context.RouteTargets,
+                    "SB005",
+                    $"dns.servers[{index}].detour",
+                    "引用了不存在的 outbound 或 endpoint。",
+                    context.Diagnostics);
+                if (string.IsNullOrWhiteSpace(httpsServer.Tls?.ServerName))
+                    context.Diagnostics.Add(new ConfigDiagnostic(
+                        "SB054",
+                        $"dns.servers[{index}].tls.server_name",
+                        "HTTPS DNS TLS server_name 不能为空。"));
+            }
+            else if (server is TailscaleDnsServer tailscaleServer)
             {
                 ValidateReference(
                     tailscaleServer.Endpoint,
@@ -417,14 +424,6 @@ internal sealed class SingboxConfigValidator : ISingboxConfigValidator
                     $"dns.servers[{index}].endpoint",
                     "引用了不存在的 Tailscale endpoint。",
                     context.Diagnostics);
-            }
-            else if (server is HttpsDnsServer httpsServer
-                && string.IsNullOrWhiteSpace(httpsServer.Tls?.ServerName))
-            {
-                context.Diagnostics.Add(new ConfigDiagnostic(
-                    "SB054",
-                    $"dns.servers[{index}].tls.server_name",
-                    "HTTPS DNS TLS server_name 不能为空。"));
             }
         }
     }

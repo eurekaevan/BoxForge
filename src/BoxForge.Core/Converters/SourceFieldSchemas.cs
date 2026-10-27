@@ -1,5 +1,6 @@
 using BoxForge.Models.Clash;
 using BoxForge.Helpers;
+using BoxForge.Exceptions;
 
 namespace BoxForge.Converters;
 
@@ -26,11 +27,18 @@ internal static class SourceFieldSchemas
                 ? "启用 MPTCP 尚未映射"
                 : null)
         .Conditional("smux", SourceFieldDisposition.IgnoredByDesign,
-            (_, value) => value is ClashObject options
-                && options.GetNullableBool("enabled") == false
-                    ? null
-                    : "多路复用配置尚未映射",
-            SourceFieldValueKind.Mapping)
+            (_, value) =>
+            {
+                try
+                {
+                    return value is ClashObject options && options.GetNullableBool("enabled") == false
+                        ? null : "多路复用配置尚未映射";
+                }
+                catch (NodeParseException ex)
+                {
+                    throw ex.AtPath("source.smux");
+                }
+            }, SourceFieldValueKind.Mapping)
         .Unsupported("指定出站连接方式尚未映射", "interface-name", "routing-mark", "dialer-proxy");
 
     public static SourceFieldSchema Tls(
