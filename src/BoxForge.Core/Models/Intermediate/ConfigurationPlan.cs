@@ -60,8 +60,9 @@ internal sealed record ConfigurationPlan(
             diagnostics.Add(new("IR004", "plan.route.tailscale_enabled", "Tailscale 路由需要已声明的 endpoint。"));
         Require(targets, Route.FinalOutbound, "IR003", "plan.route.final_outbound");
         Require(targets, SingboxTags.DirectOutbound, "IR003", "plan.route.direct");
-        for (int index = 0; !Route.Rules.IsDefault && index < Route.Rules.Length; index++)
-            RequireRouteReferences(Route.Rules[index], $"plan.route.rules[{index}]");
+        for (int index = 0; !Route.Services.IsDefault && index < Route.Services.Length; index++)
+            if (Route.Services[index] is { } service)
+                Require(targets, service.Outbound, "IR003", $"plan.route.services[{index}].outbound");
         for (int index = 0; index < Dns.Resolvers.Count; index++)
         {
             if (Dns.Resolvers[index].Detour is { } detour)
@@ -72,8 +73,7 @@ internal sealed record ConfigurationPlan(
         Require(ruleSets, RuleSetTags.Ads, "IR005", "plan.dns.blocked_rule_set");
         if (!Dns.Pools.IsDefaultOrEmpty)
         {
-            var serviceRoutes = Route.Rules.IsDefault ? [] : Route.Rules
-                .Where(rule => rule.Phase is RoutePhase.PriorityServices or RoutePhase.OtherServices).ToArray();
+            var serviceRoutes = Route.Services.IsDefault ? [] : Route.Services;
             if (Dns.Pools.Length != serviceRoutes.Length + 2)
                 diagnostics.Add(new("IR011", "plan.dns.pools", "DNS 必须依次包含各服务、国内和全局解析池。"));
             for (int index = 0; index < Dns.Pools.Length; index++)
@@ -86,8 +86,9 @@ internal sealed record ConfigurationPlan(
                 if (index >= serviceRoutes.Length + 2) continue;
                 bool service = index < serviceRoutes.Length;
                 bool domestic = index == serviceRoutes.Length;
+                if (service && serviceRoutes[index] is null) continue;
                 string? serviceId = service ? serviceRoutes[index].ServiceId : null;
-                ImmutableArray<string> scopeSets = service ? serviceRoutes[index].RuleSet : domestic ? [RuleSetTags.Cn] : default;
+                ImmutableArray<string> scopeSets = service ? serviceRoutes[index].RuleSets : domestic ? [RuleSetTags.Cn] : default;
                 string? detour = service ? serviceRoutes[index].Outbound : domestic ? null : Groups.Main.Name;
                 string primary = service ? SingboxTags.ServiceDns(serviceId ?? string.Empty, "cloudflare")
                     : domestic ? SingboxTags.DirectAliDns : SingboxTags.ProxyCloudflareDns;
@@ -147,17 +148,6 @@ internal sealed record ConfigurationPlan(
         {
             if (!Enum.IsDefined(resolver.AddressFamily))
                 diagnostics.Add(new("IR008", path + ".address_family", "解析器地址族无效。"));
-        }
-
-        void RequireRouteReferences(RouteRulePlan rule, string path)
-        {
-            // The endpoint dependency already has a specific IR004 diagnostic above.
-            if (rule.Outbound is { } outbound
-                && !(outbound == SingboxTags.TailscaleEndpoint && Route.TailscaleEnabled && !TailscaleEndpointEnabled))
-                Require(targets, outbound, "IR003", path + ".outbound");
-            if (!rule.Rules.IsDefault)
-                for (int index = 0; index < rule.Rules.Length; index++)
-                    RequireRouteReferences(rule.Rules[index], $"{path}.rules[{index}]");
         }
 
         void Require(HashSet<string> declarations, string reference, string code, string path)

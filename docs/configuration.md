@@ -188,8 +188,11 @@ BOXFORGE_route__sniff_excluded_ports='{"replace":[22,3306]}' \
 dotnet run --project src/BoxForge.Cli -- generate --platform Linux
 ```
 
-值按目标字段的声明类型解析：字符串原样保留，包括空白、双引号以及 `123`、`true`、
-`null` 等文本，不需要额外添加 JSON 双引号。布尔值建议使用 `true`/`false`，
+值按目标字段的声明类型解析：字符串原样保留，包括空白、双引号以及 `123`、`true`
+等文本，不需要额外添加 JSON 双引号。仅可空字符串将 JSON `null`（允许首尾空白）解释为清空：
+`BOXFORGE_tuning__tcp_keep_alive=null` 和 `BOXFORGE_tuning__tcp_keep_alive_interval=null`
+可取消平台默认值，平台层的同名键也适用；非可空字符串的 `null` 仍是字面量文本。
+布尔值建议使用 `true`/`false`，
 也接受大小写变体和首尾空白；数值使用 JSON 数字，时长可使用 `8s`。
 可空的非字符串字段可使用 JSON `null`。对象覆盖使用 JSON 对象，数组覆盖使用整个操作 JSON 对象；
 这些 JSON 内部的字符串仍须按 JSON 规则加双引号。所有值仍按目标字段类型和语义校验。

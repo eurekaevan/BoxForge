@@ -1,4 +1,3 @@
-using BoxForge.Exceptions;
 using BoxForge.Models.Clash;
 
 namespace BoxForge.Converters;
@@ -25,13 +24,14 @@ internal sealed record SourceFieldDefinition(
     string? CanonicalName = null,
     string? Reason = null,
     SourceFieldSchema? NestedSchema = null,
-    Func<ClashProxyNode, object?, string?>? ValidateValue = null,
+    Func<NodeFieldReader, object?, string?>? ValidateValue = null,
     SourceFieldValueKind ValueKind = SourceFieldValueKind.Scalar);
 
 internal sealed class SourceFieldSchema
 {
     private readonly Dictionary<string, SourceFieldDefinition> fields =
         new(StringComparer.Ordinal);
+    private readonly Dictionary<string, List<string>> aliasesByCanonical = new(StringComparer.Ordinal);
 
     public IReadOnlyCollection<SourceFieldDefinition> Fields => fields.Values;
 
@@ -98,10 +98,12 @@ internal sealed class SourceFieldSchema
         return this;
     }
 
-    public SourceFieldSchema Nested(string name, SourceFieldSchema schema)
+    public SourceFieldSchema Nested(string name, SourceFieldSchema schema,
+        Func<NodeFieldReader, object?, string?>? guard = null,
+        SourceFieldDisposition disposition = SourceFieldDisposition.Mapped)
     {
         Add(new SourceFieldDefinition(
-            name, SourceFieldDisposition.Mapped, NestedSchema: schema,
+            name, disposition, NestedSchema: schema, ValidateValue: guard,
             ValueKind: SourceFieldValueKind.Mapping));
         return this;
     }
@@ -109,7 +111,7 @@ internal sealed class SourceFieldSchema
     public SourceFieldSchema Conditional(
         string name,
         SourceFieldDisposition disposition,
-        Func<ClashProxyNode, object?, string?> validate,
+        Func<NodeFieldReader, object?, string?> validate,
         SourceFieldValueKind valueKind = SourceFieldValueKind.Scalar)
     {
         Add(new SourceFieldDefinition(
@@ -117,65 +119,76 @@ internal sealed class SourceFieldSchema
         return this;
     }
 
-    public void Validate(ClashProxyNode node) =>
-        ValidateObject(node, node, null);
+    internal NodeFieldReader Bind(ClashProxyNode source, out string name)
+    {
+        var reader = new NodeFieldReader(source, this);
+        name = reader.RequiredString("name");
+        Validate(reader);
+        return reader;
+    }
 
-    internal void ValidateNested(ClashObject source, ClashProxyNode node, string prefix) =>
-        ValidateObject(source, node, prefix);
+    internal string? FindAlias(ClashObject source, string name)
+    {
+        if (aliasesByCanonical.TryGetValue(name, out var aliases))
+            foreach (string alias in aliases)
+                if (source.GetPresentField(alias) is not null) return alias;
+        return null;
+    }
 
-    private void ValidateObject(
-        ClashObject source,
-        ClashProxyNode node,
-        string? prefix)
+    internal SourceFieldSchema? NestedSchema(string name) => fields.GetValueOrDefault(name)?.NestedSchema;
+
+    internal void Validate(NodeFieldReader reader)
     {
         var present = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach ((string name, object? value) in source.Properties
+        foreach ((string name, object? value) in reader.Properties
                      .OrderBy(property => property.Key, StringComparer.Ordinal))
         {
-            string path = prefix is null ? name : $"{prefix}.{name}";
+            string path = reader.FieldPath(name);
             if (!fields.TryGetValue(name, out SourceFieldDefinition? definition))
             {
-                throw FieldError(
-                    $"包含当前 BoxForge 尚未分类的字段 '{path}'，无法确认转换是否保持语义",
-                    prefix is null ? "[unknown]" : $"{prefix}.[unknown]");
+                throw reader.ErrorAtActualField(name,
+                    $"包含当前 BoxForge 尚未分类的字段 '{path}'，无法确认转换是否保持语义");
             }
 
             if (definition.Disposition == SourceFieldDisposition.UnsupportedSemantic)
             {
-                throw FieldError(
-                    $"包含尚未支持的语义字段 '{path}'；{definition.Reason}", path);
+                throw reader.Error(
+                    name, $"包含尚未支持的语义字段 '{path}'；{definition.Reason}");
             }
 
             string canonical = definition.CanonicalName ?? name;
             if (present.TryGetValue(canonical, out string? previous))
             {
-                throw FieldError(
-                    $"字段 '{previous}' 与 '{path}' 同时指定同一语义，请只保留一个", path);
+                throw reader.Error(
+                    name, $"字段 '{previous}' 与 '{path}' 同时指定同一语义，请只保留一个");
             }
 
             present.Add(canonical, path);
 
-            ValidateValueKind(definition.ValueKind, value, path);
-
-            string? error = definition.ValidateValue?.Invoke(node, value);
-            if (error is not null)
+            // Nested guards run first so protocol preconditions keep their diagnostic precedence.
+            string? error = definition.NestedSchema is not null ? definition.ValidateValue?.Invoke(reader, value) : null;
+            if (error is not null) throw reader.Error(name, $"字段 '{path}' {error}");
+            ValidateValueKind(reader, definition.ValueKind, value, name);
+            if (definition.NestedSchema is null)
             {
-                throw FieldError($"字段 '{path}' {error}", path);
+                error = definition.ValidateValue?.Invoke(reader, value);
+                if (error is not null) throw reader.Error(name, $"字段 '{path}' {error}");
             }
 
             if (definition.NestedSchema is not null)
             {
-                if (value is not ClashObject nested)
+                if (value is not ClashObject)
                 {
-                    throw FieldError($"字段 '{path}' 必须是对象", path);
+                    throw reader.Error(name, $"字段 '{path}' 必须是对象");
                 }
 
-                definition.NestedSchema.ValidateObject(nested, node, path);
+                definition.NestedSchema.Validate(reader.OptionalObject(name)!);
             }
         }
     }
 
     private static void ValidateValueKind(
+        NodeFieldReader reader,
         SourceFieldValueKind kind,
         object? value,
         string path)
@@ -198,12 +211,9 @@ internal sealed class SourceFieldSchema
                 SourceFieldValueKind.Sequence => "列表",
                 _ => "标量值"
             };
-            throw FieldError($"字段 '{path}' 必须是{expected}", path);
+            throw reader.Error(path, $"字段 '{reader.PresentField(path) ?? path}' 必须是{expected}");
         }
     }
-
-    private static NodeParseException FieldError(string message, string path) =>
-        NodeParseException.ForField(path, message);
 
     private void Add(SourceFieldDefinition definition)
     {
@@ -211,6 +221,12 @@ internal sealed class SourceFieldSchema
         {
             throw new InvalidOperationException(
                 $"重复的源字段声明: {definition.Name}");
+        }
+        if (definition.CanonicalName is { } canonical)
+        {
+            if (!aliasesByCanonical.TryGetValue(canonical, out var aliases))
+                aliasesByCanonical[canonical] = aliases = [];
+            aliases.Add(definition.Name);
         }
     }
 }

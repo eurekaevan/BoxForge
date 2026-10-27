@@ -1,7 +1,5 @@
 using BoxForge.Configuration;
 using BoxForge.Helpers;
-using BoxForge.Models;
-using System.Collections.Immutable;
 using BoxForge.Models.Intermediate;
 
 namespace BoxForge.Builders.Components;
@@ -19,175 +17,12 @@ internal static class RouteProfileBuilder
                 ? source.Url.Replace("{tag}", source.Tags[0], StringComparison.Ordinal) : source.Url;
             return new RuleSetPlan(source.Tags, url, interval);
         }).ToArray();
-        var rules = ImmutableArray.CreateBuilder<RouteRulePlan>();
-        foreach (RoutePhase phase in Enum.GetValues<RoutePhase>())
-        {
-            DirectForwardingMode? forwarding = phase switch
-            {
-                RoutePhase.PreSniffDirect => DirectForwardingMode.PreSniff,
-                RoutePhase.DomesticUdp443 or RoutePhase.DomesticDirect => DirectForwardingMode.PostUdpSniff,
-                _ => null
-            };
-            foreach (RouteRulePlan rule in CreateRules(phase, settingsProfile, settings))
-            {
-                if (settings.UseDirectForwarding && forwarding is { } mode
-                    && rule.Action == RouteOperation.Route && rule.Outbound == SingboxTags.DirectOutbound)
-                {
-                    rules.Add(CreateForwardingRule(rule, mode, useBridge: false));
-                    rules.Add(CreateForwardingRule(rule, mode, useBridge: true));
-                }
-                rules.Add(rule);
-            }
-        }
         return new RoutePlan(settings.AddressFamily, settingsProfile.Features.Tailscale.Enabled,
             settings.UseDirectForwarding, SingboxTags.MainProxyGroup, HttpClientTags.RuleSetProxy,
             new DomainResolverPlan(SingboxTags.DirectAliDns, settings.AddressFamily.ForControlPlane(), true), ruleSets,
-            rules.ToImmutable());
+            settingsProfile.GetResolver("alidns").Server, settingsProfile.Route.SniffTimeout,
+            settingsProfile.Route.SniffExcludedPorts,
+            [.. settingsProfile.Services.OrderByDescending(service => service.PrecedesDomesticRoutes)
+                .Select(service => new ServiceRoutePlan(service.Id, service.RuleSets, service.Name, service.PrecedesDomesticRoutes))]);
     }
-    private static RouteRulePlan[] CreateRules(RoutePhase phase, ResolvedProfile profile, PlatformProfile settings) => phase switch
-    {
-        RoutePhase.DnsHijack =>
-        [
-            new RouteRulePlan(phase)
-            {
-                // TUN handles DNS natively; retain an explicit port 53 fallback.
-                Inbound = [SingboxTags.TunInbound],
-                Port = [53],
-                Action = RouteOperation.HijackDns
-            }
-        ],
-        RoutePhase.EarlyIpv6Guard => settings.AddressFamily != AddressFamilyPolicy.DualStack ? [CreateIpv6RejectRule(settings.AddressFamily, phase)] : [],
-        RoutePhase.Tailscale => profile.Features.Tailscale.Enabled ?
-            [
-                new RouteRulePlan(phase)
-                {
-                    Inbound = [SingboxTags.TunInbound],
-                    PreferredBy = [SingboxTags.TailscaleEndpoint],
-                    Action = RouteOperation.Route,
-                    Outbound = SingboxTags.TailscaleEndpoint
-                }
-            ] : [],
-        RoutePhase.PreSniffDirect =>
-        [
-            new RouteRulePlan(phase) { IpIsPrivate = true, Action = RouteOperation.Route, Outbound = SingboxTags.DirectOutbound },
-            new RouteRulePlan(phase) { IpCidr = [$"{profile.GetResolver("alidns").Server}/32"], Action = RouteOperation.Route, Outbound = SingboxTags.DirectOutbound }
-        ],
-        RoutePhase.Sniff =>
-        [
-            new RouteRulePlan(phase)
-            {
-                Mode = LogicalMatchMode.And,
-                Rules =
-                [
-                    new RouteRulePlan(phase) { Inbound = [SingboxTags.TunInbound], Network = ["tcp"] },
-                    .. profile.Route.SniffExcludedPorts.IsEmpty
-                        ? Array.Empty<RouteRulePlan>()
-                        : [new RouteRulePlan(phase) { Port = profile.Route.SniffExcludedPorts, Invert = true }]
-                ],
-                Action = RouteOperation.Sniff,
-                Sniffer = ["http", "tls"],
-                Timeout = profile.Route.SniffTimeout
-            },
-            new RouteRulePlan(phase)
-            {
-                Inbound = [SingboxTags.TunInbound],
-                Network = ["udp"],
-                Action = RouteOperation.Sniff,
-                Sniffer = ["quic", "stun"],
-                Timeout = profile.Route.SniffTimeout
-            }
-        ],
-        RoutePhase.BlockStunAndAds =>
-        [
-            new RouteRulePlan(phase)
-            {
-                Inbound = [SingboxTags.TunInbound],
-                Protocol = ["stun"],
-                Network = ["udp"],
-                Action = RouteOperation.Reject
-            },
-            new RouteRulePlan(phase) { RuleSet = [RuleSetTags.Ads], Action = RouteOperation.Reject }
-        ],
-        RoutePhase.LateIpv6Guard => settings.AddressFamily != AddressFamilyPolicy.DualStack ? [CreateIpv6RejectRule(settings.AddressFamily, phase)] : [],
-        RoutePhase.ServiceIpv6Guard => CreateServiceIpv6Guard(profile, settings, phase, priority: true),
-        RoutePhase.PriorityServices => profile.Services.Where(service => service.PrecedesDomesticRoutes).Select(service => CreateServiceRouteRule(service, phase)).ToArray(),
-        RoutePhase.DomesticUdp443 =>
-        [
-            CreateDomesticUdp443DirectRule(RuleSetTags.Cn, phase),
-            CreateDomesticUdp443DirectRule(RuleSetTags.CnIp, phase)
-        ],
-        RoutePhase.OtherServiceIpv6Guard => CreateServiceIpv6Guard(profile, settings, phase, priority: false),
-        RoutePhase.OtherServices => profile.Services.Where(service => !service.PrecedesDomesticRoutes).Select(service => CreateServiceRouteRule(service, phase)).ToArray(),
-        RoutePhase.DomesticDirect =>
-        [
-            new RouteRulePlan(phase) { RuleSet = [RuleSetTags.Cn], Action = RouteOperation.Route, Outbound = SingboxTags.DirectOutbound },
-            new RouteRulePlan(phase) { RuleSet = [RuleSetTags.CnIp], Action = RouteOperation.Route, Outbound = SingboxTags.DirectOutbound }
-        ],
-        RoutePhase.FinalIpv6Guard => settings.AddressFamily == AddressFamilyPolicy.DirectDualStack ? [RoutePlan.FinalIpv6Guard()] : [],
-        RoutePhase.FinalOutbound => [],
-        _ => throw new InvalidOperationException("Unknown route phase.")
-    };
-
-    private enum DirectForwardingMode
-    {
-        PreSniff,
-        PostUdpSniff
-    }
-
-    private static RouteRulePlan CreateForwardingRule(
-        RouteRulePlan directRule,
-        DirectForwardingMode forwardingMode,
-        bool useBridge) => directRule with
-        {
-            Inbound = [SingboxTags.TunInbound],
-            Network = forwardingMode == DirectForwardingMode.PostUdpSniff ? ["udp"] : directRule.Network,
-            PreferredBy = useBridge ? [SingboxTags.BridgeOutbound] : default,
-            Action = useBridge ? RouteOperation.Route : RouteOperation.Bypass,
-            Outbound = useBridge ? SingboxTags.BridgeOutbound : null
-        };
-
-    private static RouteRulePlan[] CreateServiceIpv6Guard(ResolvedProfile profile, PlatformProfile settings, RoutePhase phase, bool priority)
-    {
-        if (settings.AddressFamily != AddressFamilyPolicy.DirectDualStack)
-            return [];
-        ImmutableArray<string> ruleSets = [.. profile.Services.Where(service => service.PrecedesDomesticRoutes == priority)
-            .SelectMany(service => service.RuleSets).Distinct(StringComparer.Ordinal)];
-        return ruleSets.IsEmpty ? [] : [RoutePlan.ServiceIpv6Guard(phase, ruleSets)];
-    }
-
-    private static RouteRulePlan CreateIpv6RejectRule(AddressFamilyPolicy addressFamily, RoutePhase phase) =>
-        addressFamily.UsesInterfaceGuard() ? new RouteRulePlan(phase)
-        {
-            Mode = LogicalMatchMode.And,
-            Rules =
-            [
-                new RouteRulePlan(phase) { IpVersion = 6 },
-                new RouteRulePlan(phase) { DefaultInterfaceAddress = [AddressFamilyPolicies.GlobalIpv6Prefix], Invert = true }
-            ],
-            Action = RouteOperation.Reject
-        } : new RouteRulePlan(phase)
-        {
-            IpVersion = 6,
-            Action = RouteOperation.Reject
-        };
-
-    private static RouteRulePlan CreateDomesticUdp443DirectRule(string ruleSet, RoutePhase phase) =>
-        new(phase)
-        {
-            Inbound = [SingboxTags.TunInbound],
-            Port = [443],
-            Network = ["udp"],
-            RuleSet = [ruleSet],
-            Action = RouteOperation.Route,
-            Outbound = SingboxTags.DirectOutbound
-        };
-
-    private static RouteRulePlan CreateServiceRouteRule(ServiceDefinition service, RoutePhase phase) =>
-        new(phase)
-        {
-            ServiceId = service.Id,
-            RuleSet = [.. service.RuleSets],
-            Action = RouteOperation.Route,
-            Outbound = service.Name
-        };
 }

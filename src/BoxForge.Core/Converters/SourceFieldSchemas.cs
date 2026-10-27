@@ -1,6 +1,5 @@
 using BoxForge.Models.Clash;
 using BoxForge.Helpers;
-using BoxForge.Exceptions;
 
 namespace BoxForge.Converters;
 
@@ -11,7 +10,7 @@ internal static class SourceFieldSchemas
         // Display and subscription annotations do not affect proxy connections.
         .Ignored("metadata", "provider-name", "icon", "description")
         .Conditional("udp", SourceFieldDisposition.IgnoredByDesign,
-            (node, _) => node.GetBool("udp")
+            (node, _) => node.Bool("udp")
                 ? null
                 : "为 false 时会禁用 UDP，而当前出站没有对应限制")
         .Conditional("ip-version", SourceFieldDisposition.Mapped,
@@ -19,26 +18,16 @@ internal static class SourceFieldSchemas
                 ? null
                 : "当前仅支持 ipv4 节点地址族约束")
         .Conditional("tfo", SourceFieldDisposition.IgnoredByDesign,
-            (node, _) => node.GetBool("tfo")
+            (node, _) => node.Bool("tfo")
                 ? "启用 TCP Fast Open 尚未映射"
                 : null)
         .Conditional("mptcp", SourceFieldDisposition.IgnoredByDesign,
-            (node, _) => node.GetBool("mptcp")
+            (node, _) => node.Bool("mptcp")
                 ? "启用 MPTCP 尚未映射"
                 : null)
-        .Conditional("smux", SourceFieldDisposition.IgnoredByDesign,
-            (_, value) =>
-            {
-                try
-                {
-                    return value is ClashObject options && options.GetNullableBool("enabled") == false
-                        ? null : "多路复用配置尚未映射";
-                }
-                catch (NodeParseException ex)
-                {
-                    throw ex.AtPath("source.smux");
-                }
-            }, SourceFieldValueKind.Mapping)
+        .Nested("smux", new SourceFieldSchema().Mapped("enabled"),
+            (node, value) => value is ClashObject && node.OptionalObject("smux")!.OptionalBool("enabled") == false
+                ? null : "多路复用配置尚未映射", SourceFieldDisposition.IgnoredByDesign)
         .Unsupported("指定出站连接方式尚未映射", "interface-name", "routing-mark", "dialer-proxy");
 
     public static SourceFieldSchema Tls(
@@ -48,7 +37,7 @@ internal static class SourceFieldSchemas
     {
         var schema = new SourceFieldSchema()
             .Conditional("tls", SourceFieldDisposition.Mapped,
-                (node, _) => forceTls && !node.GetBool("tls")
+                (node, _) => forceTls && !node.Bool("tls")
                     ? "为 false 与此协议要求的 TLS 连接冲突"
                     : null)
             .Conditional("sni", SourceFieldDisposition.Mapped,
@@ -99,11 +88,10 @@ internal static class SourceFieldSchemas
     }
 
     private static string? RequireTlsActivation(
-        ClashProxyNode node,
+        NodeFieldReader node,
         bool forceTls) =>
-        forceTls || node.GetBool("tls")
-            || node.GetObject("reality-opts") is not null
-            || node.GetObject("reality_opts") is not null
+        forceTls || node.Bool("tls")
+            || node.OptionalObject("reality-opts") is not null
                 ? null
                 : "需要启用 TLS 或 Reality，否则该值不会参与连接";
 

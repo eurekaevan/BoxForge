@@ -36,9 +36,11 @@ internal static class ProfileConfiguration
         return profile.ApplyOverrides(patch, "profile.host");
     }
 
-    private static JsonNode? Parse(string value, Type type)
+    private static JsonNode? Parse(string value, JsonPropertyInfo property)
     {
-        if (type == typeof(string)) return JsonValue.Create(value);
+        Type type = property.PropertyType;
+        if (type == typeof(string))
+            return property.IsSetNullable && value.Trim() == "null" ? null : JsonValue.Create(value);
         if ((type == typeof(bool) || type == typeof(bool?)) && bool.TryParse(value, out bool boolean))
             return JsonValue.Create(boolean);
         try { return JsonNode.Parse(value); }
@@ -53,6 +55,8 @@ internal static class ProfileConfiguration
         string key = property.Name;
         if (key == "platforms")
         {
+            if (path.Length > 2 && path[2].Equals("platforms", StringComparison.OrdinalIgnoreCase))
+                throw new ProfileValidationException("profile.host", "平台层不能包含嵌套 platforms。");
             if (path.Length < 3 || !Enum.TryParse<BoxForge.Models.TargetPlatform>(path[1], true, out var platform) || !Enum.IsDefined(platform)
                 || !path[1].Equals(platform.ToString(), StringComparison.OrdinalIgnoreCase))
                 throw new ProfileValidationException("profile.host", "platforms 宿主配置必须指定目标平台及其字段。");
@@ -66,7 +70,7 @@ internal static class ProfileConfiguration
         if (path.Length == 1)
         {
             if (target.ContainsKey(key)) throw new ProfileValidationException("profile.host", "配置不能同时设置对象与其子字段。");
-            target[key] = Parse(value, property.PropertyType);
+            target[key] = Parse(value, property);
             return;
         }
         JsonTypeInfo childSchema = BuiltInProfile.JsonOptions.GetTypeInfo(property.PropertyType);

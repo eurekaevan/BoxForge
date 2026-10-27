@@ -103,7 +103,7 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
   NXDOMAIN。两家都失败时明确返回 `SERVFAIL`；详见
   [DNS 分类与回退](routing-and-dns.md)。
 - DNS 默认使用 `Ipv4Only`，设置 `dns.strategy = ipv4_only` 并让全部客户端 AAAA 查询在规则链首部返回空 `NOERROR`；
-  覆盖为 `DirectDualStack` 或 `Auto` 时不强制解析地址族，出口缺少公网 IPv6 地址时对客户端 AAAA 返回空答，
+  覆盖为 `DirectDualStack` 或 `Auto` 时不强制解析地址族，出口缺少公网 IPv6 地址或接口信息未知时对客户端 AAAA 返回空答，
   有公网 IPv6 出口时，各解析池均保留 AAAA，真实目标的 IPv6 转发限制由路由负责。
   缓存容量为 `4096`，并启用超时为 `6h` 的 optimistic 缓存和 reverse mapping。
 - 代理节点和 Tailscale endpoint 继承
@@ -113,7 +113,6 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
   `Ipv4Only` 与 `DirectDualStack` 均在生成时拒绝 IPv6 字面量代理节点；DIRECT 显式绑定同一 DNS tag，`Auto`、`DualStack`、`DirectDualStack` 使用 `prefer_ipv4`，`Ipv4Only` 保持 `ipv4_only`。
 - rule-set HTTP client 显式使用代理控制面解析设置；Dashboard HTTP client 直连，按平台地址族解析（`DirectDualStack` 下不强制 IPv4），两者均禁用 optimistic 缓存；
   Tailscale split DNS 也禁用 optimistic 过期缓存。
-- 默认 `Ipv4Only` 下客户端 AAAA 查询在规则链首部无条件返回空 `NOERROR`；`Auto` 与 `DirectDualStack` 仅在出口缺少公网 IPv6 地址或接口信息未知时返回空 `NOERROR`。
 - `experimental.cache_file` 使用 `cache.db`，并通过 `store_dns` 持久化 DNS 缓存。
 - `cache_id` 是 `SHA256(配置名 + 平台小写标识)`，使用 UTF-8 编码，输出 64 位小写十六进制。
   配置名保留原样：CLI 使用输入文件名去掉扩展名，API 使用请求中的 `name`；
@@ -309,6 +308,6 @@ origin 被限制为同端口的 `127.0.0.1` 与 `localhost`，
   Service selector 不直接引用地区 AUTO，而由地区 selector 默认到 AUTO。
   单个 US 与多个 JP 并存时，主组和偏好 US 的服务均默认选择 US 节点。
 - 真实代理节点保留订阅名称，但不得与 BoxForge 固定分组、内部基础设施、DNS
-  响应或 rule-set tag 冲突；冲突会在节点转换阶段直接报错，不自动改名。
+  响应或 rule-set tag 冲突；冲突会在平台规划阶段以 `IR009` 报错，不自动改名。
 
 [返回 README](../README.md)

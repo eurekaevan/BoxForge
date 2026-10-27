@@ -120,7 +120,7 @@ public sealed partial class LocalGenerationWorkflow(
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        output.Commit();
+        await output.CommitAsync(cancellationToken);
         foreach (var item in changedItems)
         {
             LogGenerated(logger, item.ConfigName, item.Platform);

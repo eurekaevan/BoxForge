@@ -24,8 +24,12 @@ HTTP/Web 提供无状态的内存转换；不包含订阅抓取、账户、持�
 | CLI | `generate` 与 `profile show --resolved`；既有参数、退出码、三平台目录结构与整批事务替换语义保持稳定 | [CLI 契约](../README.md#输出与事务语义) |
 | Behavior | 默认 Ipv4Only 地址族及显式 DirectDualStack/DualStack/Auto、DNS/route 顺序、地区 selector/URLTest、平台 TUN/bridge、默认 Tailscale 与缺失字段 tuning 均是 BoxForge 策略 | [生成配置](generated-config.md)、[DNS 与路由](routing-and-dns.md)、[开关与默认值](configuration.md) |
 
-Core 调用方需使用 `ClashObject.GetRequiredPort` 读取必填端口；原公开方法
-`GetRequiredInt` 已更名，取值范围仍为 1～65535。平台保留名称冲突统一抛出
+`ClashObject` 公开的类型化 Getter（`GetRequired*`、`GetString`、`GetRawString`、`GetInt`、
+`GetBool`、`GetNullableBool`、`GetObject`）已移除；原始容器仅提供字段存在性、原始值和只读枚举。
+`ClashProxyNode.Name`／`Type` 对缺失或容器值返回 null。转换调用方应使用 `IBoxForgeEngine`，
+内部协议解释统一使用 `NodeFieldReader`，必填端口范围仍为 1～65535。
+未知来源字段的公开诊断路径改为实际键名，profile 未知字段继续使用 `[unknown]`。
+平台保留名称冲突统一抛出
 `BoxForgePlatformConversionException`（内部为 `ConfigValidationException`、诊断 `IR009`），
 不再因请求的平台集合不同而改为来源解析异常。
 

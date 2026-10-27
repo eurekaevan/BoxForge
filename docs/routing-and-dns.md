@@ -6,7 +6,7 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
 
 ## 路由规则顺序
 
-以下按 `RoutePlan` 的阶段列出实际执行顺序，由 `SingboxRouteEmitter` 展开为目标规则。修改路由规则时，
+以下按 `SingboxRouteEmitter` 固定展开的阶段列出实际执行顺序。修改路由规则时，
 需同步维护本节说明。IPv6 守卫在 `Ipv4Only` 下无条件生效，在 `Auto` 与 `DirectDualStack` 下按出口接口状态生效，
 `DirectDualStack` 另在代理服务和最终出口之前拒绝 IPv6；Tailscale 阶段仅在
 对应平台启用 Tailscale 时生成规则；最终出口由 `route.final` 指定。

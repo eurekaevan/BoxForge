@@ -54,6 +54,18 @@ public sealed class ProfileHostConfigurationTests
     }
 
     [Test]
+    public void HostPathsRejectNestedPlatformsBeforeBuildingTheOverlay()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["platforms:Linux:platforms:Windows:tuning:connect_timeout"] = "9s"
+        }).Build();
+        var error = Assert.Throws<ProfileValidationException>(() => ProfileConfiguration.ResolveProfile(configuration))!;
+        Assert.That(error.Diagnostics.Single().Path, Is.EqualTo("profile.host"));
+        Assert.That(error.Message, Does.Contain("嵌套 platforms"));
+    }
+
+    [Test]
     public void HostStringsPreserveLiteralValues(
         [Values("123", "true", "false", "null", "[]", "{}", "\"quoted\"", " TRUE ", " ordinary path ")] string value,
         [Values(false, true)] bool platformLayer)
@@ -66,6 +78,27 @@ public sealed class ProfileHostConfigurationTests
         if (platformLayer)
             Assert.That(profile.Resolve(TargetPlatform.Windows).Features.Tailscale.TaildropDirectory,
                 Is.EqualTo(BoxForgeProfile.Default.Resolve(TargetPlatform.Windows).Features.Tailscale.TaildropDirectory));
+    }
+
+    [Test]
+    public void HostNullableStringsAcceptNull(
+        [Values("tcp_keep_alive", "tcp_keep_alive_interval")] string field,
+        [Values(false, true)] bool platformLayer,
+        [Values("null", " null ")] string value)
+    {
+        string prefix = platformLayer ? "platforms:Linux:" : "";
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        { [prefix + "tuning:" + field] = value }).Build();
+        var profile = ProfileConfiguration.ResolveProfile(configuration);
+        using var snapshot = JsonDocument.Parse(profile.Resolve(TargetPlatform.Linux).ToResolvedJson());
+        Assert.That(snapshot.RootElement.GetProperty("tuning").GetProperty(field).ValueKind,
+            Is.EqualTo(JsonValueKind.Null));
+        if (platformLayer)
+        {
+            using var other = JsonDocument.Parse(profile.Resolve(TargetPlatform.Windows).ToResolvedJson());
+            Assert.That(other.RootElement.GetProperty("tuning").GetProperty(field).ValueKind,
+                Is.EqualTo(JsonValueKind.String));
+        }
     }
 
     [Test]

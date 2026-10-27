@@ -748,86 +748,22 @@ public sealed class SingboxConfigValidatorTests
     }
 
     [Test]
-    public void ExplicitFalsePrivateFlagDoesNotNarrowIpv6GuardInOfficialCore()
+    public void TargetValidationChecksReferencesWithoutReconstructingRoutePolicy()
     {
         SingboxConfig valid = CreateValidIpv4Config();
-        var config = valid with
+        var emptyRoutes = valid with { Route = valid.Route with { Rules = [] } };
+        Assert.DoesNotThrow(() => validator.Validate(emptyRoutes, AddressFamilyPolicy.Ipv4Only));
+        var missingReference = valid with
         {
             Route = valid.Route with
             {
-                Rules = [valid.Route.Rules[0] with { IpIsPrivate = false }, .. valid.Route.Rules.Skip(1)]
+                Rules = [new RouteRule { Action = RouteRuleAction.Route, Outbound = "missing" }]
             }
         };
-        Assert.DoesNotThrow(() => validator.Validate(config, AddressFamilyPolicy.Ipv4Only));
-    }
-
-    [TestCase(0, "SB080")]
-    [TestCase(2, "SB081")]
-    public void Ipv4OnlyRequiresEarlyAndPostResolveGuards(int removeIndex, string code)
-    {
-        SingboxConfig valid = CreateValidIpv4Config();
-        var config = valid with
-        {
-            Route = valid.Route with
-            {
-                Rules = valid.Route.Rules.Where((_, index) => index != removeIndex).ToList()
-            }
-        };
-        var error = Assert.Throws<ConfigValidationException>(() => validator.Validate(config, AddressFamilyPolicy.Ipv4Only));
-        Assert.That(error!.Diagnostics.Select(diagnostic => diagnostic.Code), Is.EqualTo(new[] { code }));
-    }
-
-    [TestCase("GSG", "")]
-    [TestCase("GSSG", "")]
-    [TestCase("GG", "")]
-    [TestCase("GGU", "")]
-    [TestCase("G", "SB081")]
-    [TestCase("GGS", "SB081")]
-    [TestCase("GSGS", "SB081")]
-    [TestCase("SGG", "SB080")]
-    [TestCase("SG", "SB080")]
-    [TestCase("S", "SB080,SB081")]
-    [TestCase("", "SB080,SB081")]
-    public void Ipv4OnlyGuardsRespectActualOrderAndLastScopedResolve(string order, string expectedCodes)
-    {
-        SingboxConfig valid = CreateValidIpv4Config();
-        List<RouteRule> rules = order.Select(marker => marker switch
-        {
-            'G' => valid.Route.Rules[0],
-            'S' => valid.Route.Rules[1],
-            'U' => valid.Route.Rules[1] with { RuleSet = null },
-            _ => throw new ArgumentOutOfRangeException(nameof(order))
-        }).ToList();
-        var config = valid with { Route = valid.Route with { Rules = rules } };
-
-        if (expectedCodes.Length == 0)
-        {
-            Assert.DoesNotThrow(() => validator.Validate(config, AddressFamilyPolicy.Ipv4Only));
-        }
-        else
-        {
-            var error = Assert.Throws<ConfigValidationException>(
-                () => validator.Validate(config, AddressFamilyPolicy.Ipv4Only));
-            Assert.That(error!.Diagnostics.Select(diagnostic => diagnostic.Code), Is.EqualTo(expectedCodes.Split(',')));
-        }
-    }
-
-    [Test]
-    public void Ipv4OnlyRejectGuardCannotBeNarrowedToPrivateOrSingleNetwork()
-    {
-        SingboxConfig valid = CreateValidIpv4Config();
-        foreach (RouteRule restricted in new[]
-        {
-            valid.Route.Rules[0] with { IpIsPrivate = true },
-            valid.Route.Rules[0] with { Network = ["tcp"] },
-            valid.Route.Rules[0] with { Inbound = ["other"] },
-            valid.Route.Rules[0] with { Invert = true }
-        })
-        {
-            var config = valid with { Route = valid.Route with { Rules = [restricted, .. valid.Route.Rules.Skip(1)] } };
-            var error = Assert.Throws<ConfigValidationException>(() => validator.Validate(config, AddressFamilyPolicy.Ipv4Only));
-            Assert.That(error!.Diagnostics.Select(diagnostic => diagnostic.Code), Does.Contain("SB080"));
-        }
+        var error = Assert.Throws<ConfigValidationException>(
+            () => validator.Validate(missingReference, AddressFamilyPolicy.Ipv4Only))!;
+        Assert.That(error.Diagnostics.Select(diagnostic => (diagnostic.Code, diagnostic.Path)),
+            Is.EqualTo(new[] { ("SB010", "route.rules[0].outbound") }));
     }
 
     [Test]
@@ -875,26 +811,10 @@ public sealed class SingboxConfigValidatorTests
     }
 
     [Test]
-    public void AutoRequiresConditionalGuardsWithoutAnUnconditionalDnsFamilyRestriction()
+    public void AutoRequiresConditionalDnsGuardWithoutAnUnconditionalFamilyRestriction()
     {
         SingboxConfig valid = CreateValidAutoConfig();
         Assert.DoesNotThrow(() => validator.Validate(valid, AddressFamilyPolicy.Auto));
-        foreach (RouteRule restricted in new[]
-        {
-            new RouteRule { IpVersion = 6, Action = RouteRuleAction.Reject },
-            valid.Route.Rules[0] with { Mode = RouteLogicalMode.Or },
-            valid.Route.Rules[0] with { Network = ["tcp"] },
-            valid.Route.Rules[0] with { Rules = [valid.Route.Rules[0].Rules![0]] },
-            valid.Route.Rules[0] with
-            {
-                Rules = [valid.Route.Rules[0].Rules![0], valid.Route.Rules[0].Rules![1] with { Invert = false }]
-            }
-        })
-        {
-            var config = valid with { Route = valid.Route with { Rules = [restricted, .. valid.Route.Rules.Skip(1)] } };
-            var error = Assert.Throws<ConfigValidationException>(() => validator.Validate(config, AddressFamilyPolicy.Auto));
-            Assert.That(error!.Diagnostics.Select(diagnostic => diagnostic.Code), Does.Contain("SB080"));
-        }
         foreach (DnsRule restricted in new[]
         {
             new DnsRule { QueryType = ["AAAA"], Action = DnsRuleAction.Predefined, Rcode = DnsResponseCode.NoError },
@@ -946,27 +866,10 @@ public sealed class SingboxConfigValidatorTests
     }
 
     [Test]
-    public void DirectDualStackRequiresInterfaceGuardsAndShieldsEveryProxyRoute()
+    public void DirectDualStackKeepsIpv4ControlPlaneAndAllowsDirectIpv4Preference()
     {
         SingboxConfig valid = CreateValidDirectDualStackConfig();
         Assert.DoesNotThrow(() => validator.Validate(valid, AddressFamilyPolicy.DirectDualStack));
-
-        List<RouteRule> rules = valid.Route.Rules;
-        foreach (var (name, mutated, code) in new (string, List<RouteRule>, string)[]
-        {
-            ("final guard removed", [.. rules.Take(rules.Count - 1)], "SB093"),
-            ("final guard narrowed", [.. rules.Take(rules.Count - 1), rules[^1] with { Network = ["tcp"] }], "SB093"),
-            ("scoped guard removed", [.. rules.Where(rule => rule.RuleSet is null || rule.IpVersion != 6)], "SB094"),
-            ("scoped guard too narrow", [.. rules.Select(rule => rule.IpVersion == 6 && rule.RuleSet is not null
-                ? rule with { RuleSet = ["other"] } : rule)], "SB094"),
-            ("scoped guard after route", [.. rules.Take(3), rules[4], rules[3], .. rules.Skip(5)], "SB094")
-        })
-        {
-            var config = valid with { Route = valid.Route with { Rules = mutated } };
-            var error = Assert.Throws<ConfigValidationException>(
-                () => validator.Validate(config, AddressFamilyPolicy.DirectDualStack), name)!;
-            Assert.That(error.Diagnostics.Select(diagnostic => diagnostic.Code), Does.Contain(code), name);
-        }
 
         var dualStackControlPlane = valid with
         {

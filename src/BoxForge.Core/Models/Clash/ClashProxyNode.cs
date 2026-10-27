@@ -1,4 +1,4 @@
-using System.Globalization;
+using System.Collections.ObjectModel;
 using System.Collections;
 using System.Text;
 using BoxForge.Exceptions;
@@ -10,14 +10,14 @@ public class ClashObject
     internal const int MaximumNormalizedValues = 100_000;
     internal const int MaximumDepth = 64;
     internal const int MaximumExpandedTextBytes = 16 * 1024 * 1024;
-    private readonly Dictionary<string, object?> values;
+    private readonly ReadOnlyDictionary<string, object?> values;
 
     protected ClashObject(IDictionary source) : this(source, new NormalizationBudget()) { }
 
     private protected ClashObject(IDictionary source, NormalizationBudget budget)
         : this(NormalizeDictionary(source, new HashSet<object>(ReferenceEqualityComparer.Instance), budget, 0)) { }
 
-    private ClashObject(Dictionary<string, object?> normalized) => values = normalized;
+    private ClashObject(Dictionary<string, object?> normalized) => values = new(normalized);
 
     internal sealed class NormalizationBudget
     {
@@ -67,59 +67,9 @@ public class ClashObject
     public object? GetValue(string key) =>
         values.TryGetValue(key, out var value) ? value : null;
 
-    internal string? GetPresentField(string name, string? alias = null) =>
-        values.ContainsKey(name) ? name
-        : alias is not null && values.ContainsKey(alias) ? alias
-        : null;
+    public bool ContainsKey(string key) => values.ContainsKey(key);
 
-    public string? GetString(string key)
-    {
-        var value = GetRawString(key);
-        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
-    }
-
-    public string? GetRawString(string key) =>
-        GetValue(key)?.ToString();
-
-    public string GetRequiredString(string key) =>
-        GetString(key)
-        ?? throw NodeParseException.ForField(key, $"缺失必填字段或为空: {key}");
-
-    public string GetRequiredRawString(string key) =>
-        GetRawString(key) is { Length: > 0 } value
-            ? value
-            : throw NodeParseException.ForField(key, $"缺失必填字段或为空: {key}");
-
-    public int? GetInt(string key) =>
-        int.TryParse(GetRawString(key), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) ? value : null;
-
-    public int GetRequiredPort(string key)
-    {
-        var value = GetInt(key);
-        if (value is > 0 and <= 65535)
-        {
-            return value.Value;
-        }
-
-        throw NodeParseException.ForField(key, $"缺失必填字段或端口格式无效: {key}");
-    }
-
-    public bool GetBool(string key) => GetNullableBool(key) ?? false;
-
-    public bool? GetNullableBool(string key)
-    {
-        string? rawValue = GetRawString(key);
-        if (rawValue == null)
-        {
-            return null;
-        }
-
-        return bool.TryParse(rawValue, out var value)
-            ? value
-            : throw NodeParseException.ForField(key, $"字段 '{key}' 必须是 true 或 false");
-    }
-
-    public ClashObject? GetObject(string key) => GetValue(key) as ClashObject;
+    internal string? GetPresentField(string name) => ContainsKey(name) ? name : null;
 
     public IEnumerable<KeyValuePair<string, object?>> Properties => values;
 
@@ -139,7 +89,7 @@ public class ClashObject
                 var normalized = new List<object?>();
                 foreach (object? item in sequence)
                     normalized.Add(Normalize(item, ancestors, budget, depth + 1));
-                return normalized;
+                return normalized.AsReadOnly();
             }
             finally
             {
@@ -165,6 +115,14 @@ public sealed class ClashProxyNode : ClashObject
 
     internal ClashProxyNode(IDictionary source, NormalizationBudget budget) : base(source, budget) { }
 
-    public string? Type => GetString("type");
-    public string Name => GetString("name") ?? "<未命名>";
+    public string? Type => ScalarIdentity("type");
+    public string? Name => ScalarIdentity("name");
+
+    private string? ScalarIdentity(string field)
+    {
+        object? value = GetValue(field);
+        if (value is ClashObject or IEnumerable and not string) return null;
+        string? text = value?.ToString();
+        return string.IsNullOrWhiteSpace(text) ? null : text.Trim();
+    }
 }

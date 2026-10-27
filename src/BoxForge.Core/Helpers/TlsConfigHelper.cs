@@ -1,5 +1,4 @@
-using BoxForge.Models.Clash;
-using BoxForge.Exceptions;
+using BoxForge.Converters;
 using BoxForge.Models.Intermediate;
 
 namespace BoxForge.Helpers;
@@ -7,41 +6,36 @@ namespace BoxForge.Helpers;
 internal static class TlsConfigHelper
 {
     internal static TlsSettings? ExtractSettings(
-        ClashProxyNode node,
+        NodeFieldReader node,
         string server,
         bool forceTls = false,
         bool supportsUtls = true)
     {
-        bool isTls = node.GetBool("tls");
-        var realityOptions = node.GetObject("reality-opts")
-            ?? node.GetObject("reality_opts");
+        bool isTls = node.Bool("tls");
+        var realityOptions = node.OptionalObject("reality-opts");
         bool isReality = realityOptions != null;
 
-        string realityField = node.GetPresentField("reality-opts", "reality_opts") ?? "reality-opts";
+        string realityField = node.PresentField("reality-opts") ?? "reality-opts";
         if (!forceTls && !isTls && !isReality) return null;
         if (isReality && !forceTls && !isTls)
-            throw NodeParseException.ForField(realityField, "字段 'reality-opts' 要求显式启用 tls，不能隐式改变来源 TLS 设置");
+            throw node.Error(realityField, "字段 'reality-opts' 要求显式启用 tls，不能隐式改变来源 TLS 设置");
 
         RealitySettings? realityConfig = null;
         if (realityOptions != null)
         {
-            string publicKeyField = realityField + "." + (realityOptions.GetPresentField("public-key", "public_key") ?? "public-key");
-            string shortIdField = realityField + "." + (realityOptions.GetPresentField("short-id", "short_id") ?? "short-id");
-            string publicKey = realityOptions.GetString("public-key")
-                ?? realityOptions.GetString("public_key")
-                ?? throw NodeParseException.ForField(publicKeyField,
+            string publicKey = realityOptions.String("public-key")
+                ?? throw realityOptions.Error("public-key",
                     "Reality 缺失必填字段或为空: public-key");
             if (!IsValidRealityPublicKey(publicKey))
             {
-                throw NodeParseException.ForField(publicKeyField,
+                throw realityOptions.Error("public-key",
                     "Reality public-key 必须是 32 字节的 Base64URL 公钥");
             }
 
-            string? rawShortId = realityOptions.GetRawString("short-id")
-                ?? realityOptions.GetRawString("short_id");
+            string? rawShortId = realityOptions.RawString("short-id");
             if (rawShortId == null)
             {
-                throw NodeParseException.ForField(shortIdField,
+                throw realityOptions.Error("short-id",
                     "Reality 缺失必填字段: short-id");
             }
 
@@ -50,7 +44,7 @@ internal static class TlsConfigHelper
                 || shortId.Length % 2 != 0
                 || shortId.Any(character => !Uri.IsHexDigit(character)))
             {
-                throw NodeParseException.ForField(shortIdField,
+                throw realityOptions.Error("short-id",
                     "Reality short-id 必须是 0 到 8 字节的偶数位十六进制字符串");
             }
 
@@ -58,23 +52,22 @@ internal static class TlsConfigHelper
         }
 
         string? fingerprint = supportsUtls
-            ? node.GetRawString("client-fingerprint")
-                ?? node.GetRawString("client_fingerprint")
+            ? node.RawString("client-fingerprint")
             : null;
         string? effectiveFingerprint = null;
         if (fingerprint is not (null or "" or "none"))
         {
             if (!IsSupportedFingerprint(fingerprint))
-                throw NodeParseException.ForField(node.GetPresentField("client-fingerprint", "client_fingerprint") ?? "client-fingerprint", "字段 'client-fingerprint' 无法精确映射到目标核心；不支持旧版本、历史别名、random 或未知指纹");
+                throw node.Error(node.PresentField("client-fingerprint") ?? "client-fingerprint", "字段 'client-fingerprint' 无法精确映射到目标核心；不支持旧版本、历史别名、random 或未知指纹");
             effectiveFingerprint = fingerprint;
         }
         if (isReality && effectiveFingerprint == null)
-            throw NodeParseException.ForField(realityField, "字段 'reality-opts' 要求有效的 client-fingerprint；空值或 none 不支持 Reality");
+            throw node.Error(realityField, "字段 'reality-opts' 要求有效的 client-fingerprint；空值或 none 不支持 Reality");
 
         return new TlsSettings(
-            node.GetString("sni") ?? node.GetString("servername") ?? server,
-            node.GetNullableBool("skip-cert-verify"),
-            node.GetValue("alpn") is IEnumerable<object?> alpn
+            node.String("sni") ?? server,
+            node.OptionalBool("skip-cert-verify"),
+            node.Value("alpn") is IEnumerable<object?> alpn
                 ? Array.AsReadOnly(alpn.Cast<string>().ToArray()) : null,
             effectiveFingerprint,
             realityConfig);

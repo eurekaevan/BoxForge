@@ -1,6 +1,8 @@
 using BoxForge.Exceptions;
 using BoxForge.Configuration;
+using BoxForge.Helpers;
 using System.Collections.Immutable;
+using System.Net;
 
 namespace BoxForge.Models.Intermediate;
 
@@ -12,7 +14,10 @@ internal sealed record RoutePlan(
     string DefaultHttpClient,
     DomainResolverPlan DefaultDomainResolver,
     IReadOnlyList<RuleSetPlan> RuleSets,
-    ImmutableArray<RouteRulePlan> Rules)
+    string BootstrapAddress,
+    string SniffTimeout,
+    ImmutableArray<int> SniffExcludedPorts,
+    ImmutableArray<ServiceRoutePlan> Services)
 {
     internal void Validate()
     {
@@ -23,9 +28,19 @@ internal sealed record RoutePlan(
 
     internal void CollectDiagnostics(List<ConfigDiagnostic> diagnostics)
     {
-        int initialDiagnostics = diagnostics.Count;
         if (!Enum.IsDefined(AddressFamily))
             diagnostics.Add(new("IR008", "plan.route.address_family", "路由地址族无效。"));
+        if (!IPAddress.TryParse(BootstrapAddress, out var address)
+            || address.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork || address.ToString() != BootstrapAddress)
+            diagnostics.Add(new("IR008", "plan.route.bootstrap_address", "直连 bootstrap 必须使用 IPv4 地址。"));
+        if (SniffTimeout is null || !GoDurationHelper.IsPositiveDuration(SniffTimeout))
+            diagnostics.Add(new("IR008", "plan.route.sniff_timeout", "Sniff 超时必须是有效的正 Go duration。"));
+        if (SniffExcludedPorts.IsDefault)
+            diagnostics.Add(new("IR008", "plan.route.sniff_excluded_ports", "Sniff 排除端口必须初始化。"));
+        else if (SniffExcludedPorts.Any(port => port is < 1 or > 65535)
+            || SniffExcludedPorts.Distinct().Count() != SniffExcludedPorts.Length)
+            diagnostics.Add(new("IR008", "plan.route.sniff_excluded_ports", "Sniff 排除端口必须有效且唯一。"));
+
         var tags = new HashSet<string>(StringComparer.Ordinal);
         for (int sourceIndex = 0; sourceIndex < RuleSets.Count; sourceIndex++)
         {
@@ -40,188 +55,40 @@ internal sealed record RoutePlan(
         }
         if (!tags.IsSupersetOf([RuleSetTags.Ads, RuleSetTags.Cn, RuleSetTags.CnIp]))
             diagnostics.Add(new("IR009", "plan.route.rule_sets", "路由计划缺少广告或国内规则集。"));
-        var services = new HashSet<string>(StringComparer.Ordinal);
-        var serviceIds = new HashSet<string>(StringComparer.Ordinal);
-        RoutePhase previous = RoutePhase.DnsHijack;
-        if (Rules.IsDefault)
-            diagnostics.Add(new("IR008", "plan.route.rules", "路由规则数组必须初始化。"));
-        else
+        if (Services.IsDefault)
         {
-            for (int index = 0; index < Rules.Length; index++)
+            diagnostics.Add(new("IR008", "plan.route.services", "路由服务数组必须初始化。"));
+            return;
+        }
+        var outbounds = new HashSet<string>(StringComparer.Ordinal);
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        bool ordinarySeen = false;
+        for (int index = 0; index < Services.Length; index++)
+        {
+            string path = $"plan.route.services[{index}]";
+            if (Services[index] is not { } service)
             {
-                RouteRulePlan rule = Rules[index];
-                string path = $"plan.route.rules[{index}]";
-                if (!Enum.IsDefined(rule.Phase) || rule.Phase < previous || rule.Phase == RoutePhase.FinalOutbound)
-                    diagnostics.Add(new("IR010", path + ".phase", "路由规则必须遵循声明的阶段顺序。"));
-                previous = rule.Phase;
-                ValidateRule(rule, path);
-                if (rule.Phase is RoutePhase.PriorityServices or RoutePhase.OtherServices)
-                {
-                    if (string.IsNullOrWhiteSpace(rule.ServiceId) || !serviceIds.Add(rule.ServiceId))
-                        diagnostics.Add(new("IR009", path + ".service_id", "路由服务标识必须非空且唯一。"));
-                    if (rule.Action != RouteOperation.Route)
-                        diagnostics.Add(new("IR008", path + ".action", "路由服务必须使用路由动作。"));
-                    if (string.IsNullOrWhiteSpace(rule.Outbound) || !services.Add(rule.Outbound))
-                        diagnostics.Add(new("IR009", path + ".outbound", "路由服务出口必须非空且唯一。"));
-                    if (rule.RuleSet.IsDefaultOrEmpty)
-                        diagnostics.Add(new("IR008", path + ".rule_set", "路由服务必须限定规则集。"));
-                }
+                diagnostics.Add(new("IR008", path, "路由服务不能为 null。"));
+                continue;
             }
-        }
-
-        if (diagnostics.Count == initialDiagnostics)
-            ValidatePolicy(diagnostics);
-
-        void ValidateRule(RouteRulePlan rule, string path)
-        {
-            if (rule.Action is { } action && !Enum.IsDefined(action))
-                diagnostics.Add(new("IR008", path + ".action", "路由规则动作无效。"));
-            if (rule.Mode is { } mode && !Enum.IsDefined(mode))
-                diagnostics.Add(new("IR008", path + ".mode", "路由逻辑匹配模式无效。"));
-            if (rule.Mode is not null && rule.Rules.IsDefaultOrEmpty)
-                diagnostics.Add(new("IR008", path + ".rules", "路由逻辑规则必须包含子条件。"));
-            if (rule.Mode is null && !rule.Rules.IsDefault)
-                diagnostics.Add(new("IR008", path + ".mode", "路由子条件必须指定逻辑匹配模式。"));
-            if (!rule.RuleSet.IsDefault)
-                for (int index = 0; index < rule.RuleSet.Length; index++)
-                    if (!tags.Contains(rule.RuleSet[index]))
-                        diagnostics.Add(new("IR005", $"{path}.rule_set[{index}]", "路由规则引用了未声明的规则集。"));
-            if (!rule.Rules.IsDefault)
-                for (int index = 0; index < rule.Rules.Length; index++)
-                    ValidateRule(rule.Rules[index], $"{path}.rules[{index}]");
+            if (string.IsNullOrWhiteSpace(service.ServiceId) || !ids.Add(service.ServiceId))
+                diagnostics.Add(new("IR009", path + ".service_id", "路由服务标识必须非空且唯一。"));
+            if (string.IsNullOrWhiteSpace(service.Outbound) || !outbounds.Add(service.Outbound))
+                diagnostics.Add(new("IR009", path + ".outbound", "路由服务出口必须非空且唯一。"));
+            if (service.PrecedesDomesticRoutes && ordinarySeen)
+                diagnostics.Add(new("IR010", path + ".priority", "优先服务必须位于普通服务之前。"));
+            ordinarySeen |= !service.PrecedesDomesticRoutes;
+            if (service.RuleSets.IsDefaultOrEmpty)
+                diagnostics.Add(new("IR008", path + ".rule_sets", "路由服务必须限定规则集。"));
+            else
+                for (int scope = 0; scope < service.RuleSets.Length; scope++)
+                    if (!tags.Contains(service.RuleSets[scope]))
+                        diagnostics.Add(new("IR005", $"{path}.rule_sets[{scope}]", "路由服务引用了未声明的规则集。"));
         }
     }
-
-    internal static RouteRulePlan ServiceIpv6Guard(RoutePhase phase, ImmutableArray<string> serviceRuleSets) =>
-        new(phase) { IpVersion = 6, RuleSet = serviceRuleSets, Action = RouteOperation.Reject };
-
-    internal static RouteRulePlan FinalIpv6Guard() =>
-        new(RoutePhase.FinalIpv6Guard) { IpVersion = 6, Action = RouteOperation.Reject };
-
-    private void ValidatePolicy(List<ConfigDiagnostic> diagnostics)
-    {
-        var hijack = new RouteRulePlan(RoutePhase.DnsHijack)
-        {
-            Inbound = [SingboxTags.TunInbound],
-            Port = [53],
-            Action = RouteOperation.HijackDns
-        };
-        if (Rules.IsEmpty || !Rules[0].HasSamePolicy(hijack))
-            diagnostics.Add(new("IR011", "plan.route.rules", "路由必须首先以端口 53 劫持规则兜底 TUN 的 TCP 和 UDP DNS 流量。"));
-        foreach (RoutePhase phase in new[] { RoutePhase.EarlyIpv6Guard, RoutePhase.LateIpv6Guard })
-        {
-            var rules = Rules.Where(rule => rule.Phase == phase).ToArray();
-            var expected = new RouteRulePlan(phase) { IpVersion = 6, Action = RouteOperation.Reject };
-            if (AddressFamily.UsesInterfaceGuard())
-                expected = expected with
-                {
-                    IpVersion = null,
-                    Mode = LogicalMatchMode.And,
-                    Rules = [new(phase) { IpVersion = 6 }, new(phase) { DefaultInterfaceAddress = [AddressFamilyPolicies.GlobalIpv6Prefix], Invert = true }]
-                };
-            bool valid = AddressFamily == AddressFamilyPolicy.DualStack
-                ? rules.Length == 0 : rules.Length == 1 && rules[0].HasSamePolicy(expected);
-            if (!valid)
-                diagnostics.Add(new("IR011", "plan.route.rules", "实际路由必须包含符合地址族策略的早晚守卫。"));
-        }
-        bool blocksProxyIpv6 = AddressFamily == AddressFamilyPolicy.DirectDualStack;
-        foreach (var (guardPhase, servicePhase) in new[]
-        {
-            (RoutePhase.ServiceIpv6Guard, RoutePhase.PriorityServices),
-            (RoutePhase.OtherServiceIpv6Guard, RoutePhase.OtherServices)
-        })
-        {
-            ImmutableArray<string> serviceSets = [.. Rules.Where(rule => rule.Phase == servicePhase)
-                .SelectMany(rule => rule.RuleSet).Distinct(StringComparer.Ordinal)];
-            RouteRulePlan[] serviceGuards = [.. Rules.Where(rule => rule.Phase == guardPhase)];
-            if ((blocksProxyIpv6 && !serviceSets.IsEmpty)
-                ? serviceGuards.Length != 1 || !serviceGuards[0].HasSamePolicy(ServiceIpv6Guard(guardPhase, serviceSets))
-                : serviceGuards.Length != 0)
-                diagnostics.Add(new("IR011", "plan.route.rules", "代理服务路由之前必须按原阶段拦截其规则集的 IPv6。"));
-        }
-        RouteRulePlan[] finalGuards = [.. Rules.Where(rule => rule.Phase == RoutePhase.FinalIpv6Guard)];
-        if (blocksProxyIpv6
-            ? finalGuards.Length != 1 || !finalGuards[0].HasSamePolicy(FinalIpv6Guard())
-            : finalGuards.Length != 0)
-            diagnostics.Add(new("IR011", "plan.route.rules", "最终代理出口之前必须拦截全部 IPv6。"));
-        foreach (RoutePhase phase in new[] { RoutePhase.PreSniffDirect, RoutePhase.Sniff, RoutePhase.BlockStunAndAds, RoutePhase.DomesticUdp443, RoutePhase.DomesticDirect })
-            if (!Rules.Any(rule => rule.Phase == phase))
-                diagnostics.Add(new("IR011", "plan.route.rules", "必要路由阶段必须包含实际规则。"));
-        if (TailscaleEnabled && !Rules.Any(rule => rule.Phase == RoutePhase.Tailscale && rule.HasSamePolicy(
-            new(RoutePhase.Tailscale)
-            {
-                Inbound = [SingboxTags.TunInbound],
-                PreferredBy = [SingboxTags.TailscaleEndpoint],
-                Action = RouteOperation.Route,
-                Outbound = SingboxTags.TailscaleEndpoint
-            })))
-            diagnostics.Add(new("IR011", "plan.route.rules", "Tailscale 控制面路由缺失或不符合策略。"));
-    }
-}
-
-internal enum RoutePhase
-{
-    DnsHijack,
-    EarlyIpv6Guard,
-    Tailscale,
-    PreSniffDirect,
-    Sniff,
-    BlockStunAndAds,
-    LateIpv6Guard,
-    ServiceIpv6Guard,
-    PriorityServices,
-    DomesticUdp443,
-    OtherServiceIpv6Guard,
-    OtherServices,
-    DomesticDirect,
-    FinalIpv6Guard,
-    FinalOutbound
 }
 
 internal sealed record RuleSetPlan(ImmutableArray<string> Tags, string Url, string UpdateInterval);
 
-/// <summary>An ordered policy decision; the emitter only maps its fields to the target model.</summary>
-internal sealed record RouteRulePlan(RoutePhase Phase)
-{
-    internal string? ServiceId { get; init; }
-    public LogicalMatchMode? Mode { get; init; }
-    public ImmutableArray<RouteRulePlan> Rules { get; init; }
-    public ImmutableArray<string> Inbound { get; init; }
-    public int? IpVersion { get; init; }
-    public ImmutableArray<string> Protocol { get; init; }
-    public ImmutableArray<int> Port { get; init; }
-    public ImmutableArray<string> Network { get; init; }
-    public RouteOperation? Action { get; init; }
-    public ImmutableArray<string> RuleSet { get; init; }
-    public ImmutableArray<string> IpCidr { get; init; }
-    public bool? IpIsPrivate { get; init; }
-    public ImmutableArray<string> PreferredBy { get; init; }
-    public ImmutableArray<string> DefaultInterfaceAddress { get; init; }
-    public bool? Invert { get; init; }
-    public string? Outbound { get; init; }
-    public ImmutableArray<string> Sniffer { get; init; }
-    public string? Timeout { get; init; }
-
-    internal bool HasSamePolicy(RouteRulePlan other)
-    {
-        if (Phase != other.Phase || ServiceId != other.ServiceId || Mode != other.Mode
-            || IpVersion != other.IpVersion || Action != other.Action || IpIsPrivate != other.IpIsPrivate
-            || Invert != other.Invert || Outbound != other.Outbound || Timeout != other.Timeout
-            || !Same(Inbound, other.Inbound) || !Same(Protocol, other.Protocol) || !Same(Port, other.Port)
-            || !Same(Network, other.Network) || !Same(RuleSet, other.RuleSet) || !Same(IpCidr, other.IpCidr)
-            || !Same(PreferredBy, other.PreferredBy) || !Same(DefaultInterfaceAddress, other.DefaultInterfaceAddress)
-            || !Same(Sniffer, other.Sniffer) || Rules.IsDefault != other.Rules.IsDefault)
-            return false;
-        if (Rules.IsDefault) return true;
-        if (Rules.Length != other.Rules.Length) return false;
-        for (int index = 0; index < Rules.Length; index++)
-            if (!Rules[index].HasSamePolicy(other.Rules[index])) return false;
-        return true;
-    }
-
-    private static bool Same<T>(ImmutableArray<T> left, ImmutableArray<T> right) =>
-        left.IsDefault == right.IsDefault && (left.IsDefault || left.SequenceEqual(right));
-}
-
-internal enum LogicalMatchMode { And, Or }
-internal enum RouteOperation { HijackDns, Route, Reject, Sniff, Bypass }
+internal sealed record ServiceRoutePlan(
+    string ServiceId, ImmutableArray<string> RuleSets, string Outbound, bool PrecedesDomesticRoutes);

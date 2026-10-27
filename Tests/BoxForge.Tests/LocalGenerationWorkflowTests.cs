@@ -319,12 +319,11 @@ public sealed class LocalGenerationWorkflowTests
     {
         string outputDirectory = CreateDirectory("output");
         using var transaction = new OutputTransaction(outputDirectory, NullLogger<LocalGenerationWorkflow>.Instance);
-        string staging = Directory.GetDirectories(temporaryDirectory, ".output.boxforge-*").Single();
         string outsideDirectory = configName switch
         {
             ".." => temporaryDirectory,
             "absolute" => CreateDirectory("absolute"),
-            _ => staging + "-other"
+            _ => System.IO.Path.Combine(temporaryDirectory, "output-other")
         };
         string unsafeName = configName switch
         {
@@ -342,9 +341,43 @@ public sealed class LocalGenerationWorkflowTests
         Assert.Multiple(() =>
         {
             Assert.That(File.ReadAllText(externalFile), Is.EqualTo("preserve-external"));
-            Assert.That(Directory.GetFileSystemEntries(staging), Is.Empty);
+            Assert.That(Directory.GetDirectories(temporaryDirectory, ".output.boxforge-*"), Is.Empty);
             Assert.That(Directory.GetFileSystemEntries(outputDirectory), Is.Empty);
         });
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public async Task UncommittedArtifactsDoNotCreateOutputParents(bool cancelCommit)
+    {
+        string parent = System.IO.Path.Combine(temporaryDirectory, "new-parent");
+        string output = System.IO.Path.Combine(parent, "output");
+        using (var transaction = new OutputTransaction(output, NullLogger.Instance))
+        {
+            Assert.That(await transaction.StageAsync("sample",
+                new ConversionArtifact(TargetPlatform.Android, "new", "unused"), CancellationToken.None), Is.True);
+            Assert.That(Directory.Exists(parent), Is.False);
+            if (cancelCommit)
+                Assert.ThrowsAsync<OperationCanceledException>(() => transaction.CommitAsync(new CancellationToken(true)));
+        }
+        Assert.That(Directory.Exists(parent), Is.False);
+    }
+
+    [Test]
+    public async Task UnchangedCommitDoesNotCreateAStagingDirectory()
+    {
+        string output = CreateDirectory("output");
+        string existing = GetOutputPath(output, "sample", TargetPlatform.Android);
+        Directory.CreateDirectory(System.IO.Path.GetDirectoryName(existing)!);
+        File.WriteAllText(existing, "same");
+        DateTime written = File.GetLastWriteTimeUtc(existing);
+        using var transaction = new OutputTransaction(output, NullLogger.Instance);
+        Assert.That(await transaction.StageAsync("sample",
+            new ConversionArtifact(TargetPlatform.Android, "same", "unused"), CancellationToken.None), Is.False);
+        Assert.That(Directory.GetDirectories(temporaryDirectory, ".output.boxforge-*"), Is.Empty);
+        await transaction.CommitAsync();
+        Assert.That(Directory.GetDirectories(temporaryDirectory, ".output.boxforge-*"), Is.Empty);
+        Assert.That(File.GetLastWriteTimeUtc(existing), Is.EqualTo(written));
     }
 
     [TestCase(false, false)]
@@ -727,7 +760,7 @@ public sealed class LocalGenerationWorkflowTests
 
         if (restorationFails)
         {
-            var error = Assert.Throws<AggregateException>(transaction.Commit);
+            var error = Assert.ThrowsAsync<AggregateException>(() => transaction.CommitAsync());
             Assert.Multiple(() =>
             {
                 Assert.That(error!.InnerExceptions, Is.EqualTo(new Exception[] { publishError, restoreError }));
@@ -738,7 +771,7 @@ public sealed class LocalGenerationWorkflowTests
         }
         else
         {
-            Assert.That(Assert.Throws<IOException>(transaction.Commit),
+            Assert.That(Assert.ThrowsAsync<IOException>(() => transaction.CommitAsync()),
                 Is.SameAs(publishError));
             Assert.That(File.ReadAllText(System.IO.Path.Combine(output, "old.txt")), Is.EqualTo("old"));
             Assert.That(Directory.Exists(backup), Is.False);
@@ -754,6 +787,8 @@ public sealed class LocalGenerationWorkflowTests
 
     [TestCase("cycle")]
     [TestCase("parent-cycle")]
+    [TestCase("dot-self-cycle")]
+    [TestCase("parent-self-cycle")]
     [TestCase("deep-chain")]
     [TestCase("repeated-expansion")]
     [TestCase("repeated-safe-link")]
@@ -771,6 +806,12 @@ public sealed class LocalGenerationWorkflowTests
         string path = alias;
         switch (kind)
         {
+            case "dot-self-cycle":
+                Directory.CreateSymbolicLink(alias, "./alias");
+                break;
+            case "parent-self-cycle":
+                Directory.CreateSymbolicLink(alias, $"../{System.IO.Path.GetFileName(temporaryDirectory)}/alias");
+                break;
             case "cycle":
                 Directory.CreateSymbolicLink(alias, "other");
                 Directory.CreateSymbolicLink(System.IO.Path.Combine(temporaryDirectory, "other"), "alias");
@@ -807,7 +848,7 @@ public sealed class LocalGenerationWorkflowTests
         else
         {
             Assert.That(Assert.Throws<IOException>(() => InputDiscovery.Find(path, output, NullLogger.Instance))!.Message,
-                Does.Contain("软链接"));
+                Does.Contain(kind is "deep-chain" or "repeated-expansion" ? "64 次展开上限" : "存在循环"));
             Assert.That(Directory.Exists(output), Is.False);
         }
         Assert.That(File.ReadAllText(System.IO.Path.Combine(input, "sample.yaml")), Is.EqualTo("source"));
@@ -849,8 +890,8 @@ public sealed class LocalGenerationWorkflowTests
             using (var transaction = new OutputTransaction(output, logger, Move))
             {
                 await transaction.StageAsync("sample", new ConversionArtifact(TargetPlatform.Android, "new", "unused"), CancellationToken.None);
-                if (publicationFails) Assert.Throws<IOException>(transaction.Commit);
-                else transaction.Commit();
+                if (publicationFails) Assert.ThrowsAsync<IOException>(() => transaction.CommitAsync());
+                else await transaction.CommitAsync();
             }
 
             Assert.Multiple(() =>
@@ -891,7 +932,7 @@ public sealed class LocalGenerationWorkflowTests
         {
             using var transaction = new OutputTransaction(output, logger);
             await transaction.StageAsync("sample", new ConversionArtifact(TargetPlatform.Android, "new", "unused"), CancellationToken.None);
-            transaction.Commit();
+            await transaction.CommitAsync();
             Assert.That(File.ReadAllText(GetOutputPath(output, "sample", TargetPlatform.Android)), Is.EqualTo("new"));
             Assert.That(logger.Entries.Select(entry => entry.EventId.Id), Does.Contain(21));
         }
@@ -915,7 +956,7 @@ public sealed class LocalGenerationWorkflowTests
         using (var transaction = new OutputTransaction(output, logger))
         {
             await transaction.StageAsync("sample", new ConversionArtifact(TargetPlatform.Android, "new", "unused"), CancellationToken.None);
-            transaction.Commit();
+            await transaction.CommitAsync();
         }
 
         Assert.Multiple(() =>
@@ -935,11 +976,15 @@ public sealed class LocalGenerationWorkflowTests
     {
         string output = CreateDirectory("output");
         File.WriteAllText(System.IO.Path.Combine(output, "old.txt"), "old");
-        using var transaction = new OutputTransaction(output, NullLogger<LocalGenerationWorkflow>.Instance);
+        void Move(string source, string destination)
+        {
+            if (destination == output && System.IO.Path.GetFileName(source).Contains(".boxforge-", StringComparison.Ordinal))
+                Directory.Delete(source, recursive: true);
+            Directory.Move(source, destination);
+        }
+        using var transaction = new OutputTransaction(output, NullLogger<LocalGenerationWorkflow>.Instance, Move);
         await transaction.StageAsync("sample", new ConversionArtifact(TargetPlatform.Android, "new", "unused"), CancellationToken.None);
-        string staging = Directory.GetDirectories(temporaryDirectory, ".output.boxforge-*").Single();
-        Directory.Delete(staging, recursive: true);
-        Assert.Throws<DirectoryNotFoundException>(transaction.Commit);
+        Assert.ThrowsAsync<DirectoryNotFoundException>(() => transaction.CommitAsync());
         Assert.That(File.ReadAllText(System.IO.Path.Combine(output, "old.txt")), Is.EqualTo("old"));
         Assert.That(Directory.GetDirectories(temporaryDirectory), Is.EqualTo(new[] { output }));
     }

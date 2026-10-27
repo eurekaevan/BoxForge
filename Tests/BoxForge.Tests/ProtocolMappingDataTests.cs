@@ -9,6 +9,53 @@ namespace BoxForge.Tests;
 [TestFixture]
 public sealed class ProtocolMappingDataTests
 {
+    [Test]
+    public void ConditionalNestedReadersKeepParentAndChildAliases()
+    {
+        int guardCalls = 0;
+        var schema = new SourceFieldSchema().Mapped("name")
+            .Nested("options", new SourceFieldSchema().Mapped("count").Alias("count", "count_alias"),
+                (_, _) => { guardCalls++; return null; })
+            .Alias("options", "options_alias");
+        var node = new ClashProxyNode(new Hashtable
+        {
+            ["name"] = "safe",
+            ["options_alias"] = new Hashtable { ["count_alias"] = "invalid-value" }
+        });
+        NodeFieldReader reader = schema.Bind(node, out _);
+        var error = Assert.Throws<NodeParseException>(() => reader.OptionalObject("options")!.OptionalInt("count"))!;
+        Assert.Multiple(() =>
+        {
+            Assert.That(guardCalls, Is.EqualTo(1));
+            Assert.That(error.Diagnostics.Single().Path, Is.EqualTo("source.options_alias.count_alias"));
+            Assert.That(error.Message, Does.Contain("字段 'count_alias'").And.Not.Contain("invalid-value"));
+        });
+    }
+
+    [Test]
+    public void AliasLookupDoesNotAllocateForPresentOrMissingFields()
+    {
+        SourceFieldSchema schema = VlessProtocol.Schema;
+        var node = new ClashProxyNode(new Hashtable { ["packet_encoding"] = "xudp" });
+        for (int index = 0; index < 100; index++)
+        {
+            _ = schema.FindAlias(node, "flow");
+            _ = schema.FindAlias(node, "packet-encoding");
+            _ = schema.FindAlias(node, "client-fingerprint");
+        }
+        long start = GC.GetAllocatedBytesForCurrentThread();
+        int matches = 0;
+        for (int index = 0; index < 10_000; index++)
+        {
+            if (schema.FindAlias(node, "flow") is not null) matches++;
+            if (schema.FindAlias(node, "packet-encoding") is not null) matches++;
+            if (schema.FindAlias(node, "client-fingerprint") is not null) matches++;
+        }
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - start;
+        Assert.That(matches, Is.EqualTo(10_000));
+        Assert.That(allocated, Is.Zero);
+    }
+
     private static string DataPath => Path.Combine(TestContext.CurrentContext.TestDirectory, "protocol-mappings.json");
 
     [Test]
@@ -66,15 +113,15 @@ public sealed class ProtocolMappingDataTests
         };
         if (id is "shadowsocks.obfs-mode" or "shadowsocks.obfs-host")
         {
-            // These fields are validated by the conditional plugin-opts hook.
+            // These fields belong to the guarded plugin-opts nested schema.
             var options = new Hashtable { ["mode"] = "http", ["host"] = "mapped.example.com" };
             options[sourceField] = id == "shadowsocks.obfs-mode" ? "http" : "mapped.example.com";
             var node = new ClashProxyNode(new Hashtable { ["plugin"] = "obfs", ["plugin-opts"] = options });
             Assert.That(status, Is.EqualTo(nameof(SourceFieldDisposition.Mapped)));
-            Assert.DoesNotThrow(() => schema.Validate(node));
+            Assert.DoesNotThrow(() => schema.Validate(new NodeFieldReader(node)));
             options["unknown-evidence-field"] = "unsupported";
-            Assert.Throws<NodeParseException>(() => schema.Validate(new ClashProxyNode(
-                new Hashtable { ["plugin"] = "obfs", ["plugin-opts"] = options })));
+            Assert.Throws<NodeParseException>(() => schema.Validate(new NodeFieldReader(new ClashProxyNode(
+                new Hashtable { ["plugin"] = "obfs", ["plugin-opts"] = options }))));
             return;
         }
         SourceFieldDefinition? field = FindField(schema, sourceField);

@@ -88,9 +88,9 @@ public sealed class RouteProfileBuilderTests
             Assert.That(plan.TailscaleEnabled, Is.True);
             Assert.That(RouteProfileBuilder.Plan(profile.Resolve(platform)).TailscaleEnabled, Is.True);
             Assert.That(RouteProfileBuilder.Plan(changedProfile.Resolve(platform)).TailscaleEnabled, Is.False);
-            Assert.That(plan.Rules.Where(rule => rule.Phase == RoutePhase.PriorityServices).Select(rule => rule.Outbound),
+            Assert.That(plan.Services.Where(service => service.PrecedesDomesticRoutes).Select(service => service.Outbound),
                 Is.EqualTo(profile.Services.Where(service => service.PrecedesDomesticRoutes).Select(service => service.Name)));
-            Assert.That(plan.Rules.Where(rule => rule.Phase == RoutePhase.OtherServices).Select(rule => rule.Outbound),
+            Assert.That(plan.Services.Where(service => !service.PrecedesDomesticRoutes).Select(service => service.Outbound),
                 Is.EqualTo(profile.Services.Where(service => !service.PrecedesDomesticRoutes).Select(service => service.Name)));
             Assert.That(plan.RuleSets.SelectMany(source => source.Tags), Is.EqualTo(profile.Resolve(platform).RuleSets.SelectMany(source => source.Tags)));
         });
@@ -115,92 +115,91 @@ public sealed class RouteProfileBuilderTests
         }
     }
 
-    [TestCase("service_reference")]
-    [TestCase("service_phase_order")]
-    [TestCase("duplicate_service")]
-    [TestCase("duplicate_rule_set")]
-    [TestCase("missing_base_rule_set")]
-    public void InvalidRouteReferencesDuplicatesAndOrderingFailBeforeEmission(string fault)
+    [TestCase("service_reference", "IR005")]
+    [TestCase("service_priority_order", "IR010")]
+    [TestCase("duplicate_service_id", "IR009")]
+    [TestCase("duplicate_service_outbound", "IR009")]
+    [TestCase("missing_service_id", "IR009")]
+    [TestCase("missing_service_outbound", "IR009")]
+    [TestCase("empty_service_scope", "IR008")]
+    [TestCase("default_service_scope", "IR008")]
+    [TestCase("null_service", "IR008")]
+    [TestCase("duplicate_rule_set", "IR009")]
+    [TestCase("missing_base_rule_set", "IR009")]
+    public void InvalidRouteDeclarationsFailBeforeEmission(string fault, string code)
     {
         var plan = CreatePlan(TargetPlatform.Linux);
+        ServiceRoutePlan first = plan.Services[0];
         plan = fault switch
         {
-            "service_reference" => plan with
+            "service_reference" => plan with { Services = plan.Services.SetItem(0, first with { RuleSets = ["missing"] }) },
+            "service_priority_order" => plan with
             {
-                Rules = [.. plan.Rules.Select(rule => rule.Phase == RoutePhase.PriorityServices
-                    ? rule with { RuleSet = ["missing"] } : rule)]
+                Services = [.. plan.Services.Where(service => !service.PrecedesDomesticRoutes),
+                    .. plan.Services.Where(service => service.PrecedesDomesticRoutes)]
             },
-            "service_phase_order" => plan with
-            {
-                Rules = [.. plan.Rules.Where(rule => rule.Phase != RoutePhase.PriorityServices),
-                    .. plan.Rules.Where(rule => rule.Phase == RoutePhase.PriorityServices)]
-            },
-            "duplicate_service" => plan with
-            {
-                Rules = [.. plan.Rules.SelectMany(rule => rule.Phase == RoutePhase.PriorityServices
-                    ? new[] { rule, rule } : [rule])]
-            },
+            "duplicate_service_id" => plan with { Services = plan.Services.SetItem(1, plan.Services[1] with { ServiceId = first.ServiceId }) },
+            "duplicate_service_outbound" => plan with { Services = plan.Services.SetItem(1, plan.Services[1] with { Outbound = first.Outbound }) },
+            "missing_service_id" => plan with { Services = plan.Services.SetItem(0, first with { ServiceId = "" }) },
+            "missing_service_outbound" => plan with { Services = plan.Services.SetItem(0, first with { Outbound = "" }) },
+            "empty_service_scope" => plan with { Services = plan.Services.SetItem(0, first with { RuleSets = [] }) },
+            "default_service_scope" => plan with { Services = plan.Services.SetItem(0, first with { RuleSets = default }) },
+            "null_service" => plan with { Services = plan.Services.SetItem(0, null!) },
             "duplicate_rule_set" => plan with { RuleSets = [.. plan.RuleSets, plan.RuleSets[0]] },
             _ => plan with
             {
                 RuleSets = plan.RuleSets.Select(source => source with { Tags = [.. source.Tags.Where(tag => tag != RuleSetTags.Ads)] })
-                .Where(source => !source.Tags.IsEmpty).ToArray()
+                    .Where(source => !source.Tags.IsEmpty).ToArray()
             }
         };
-        var exception = Assert.Throws<ConfigValidationException>(() => plan.Validate())!;
-        string code = fault switch
-        {
-            "service_reference" => "IR005",
-            "service_phase_order" => "IR010",
-            _ => "IR009"
-        };
+        var exception = Assert.Throws<ConfigValidationException>(plan.Validate)!;
         Assert.That(exception.Diagnostics.Any(item => item.Code == code && item.Path.StartsWith("plan.route.", StringComparison.Ordinal)), Is.True);
     }
 
     [Test]
-    public void PlanningDeterminesMatchersPriorityAndPlatformForwardingBeforeEmission()
+    public void EmissionExpandsSniffPriorityAndPlatformForwardingIntent()
     {
         RoutePlan plan = CreatePlan(TargetPlatform.Linux);
-        RouteRulePlan earlyGuard = plan.Rules.Single(rule => rule.Phase == RoutePhase.EarlyIpv6Guard);
-        RouteRulePlan lateGuard = plan.Rules.Single(rule => rule.Phase == RoutePhase.LateIpv6Guard);
-        RouteRulePlan[] sniff = plan.Rules.Where(rule => rule.Phase == RoutePhase.Sniff).ToArray();
-        RouteRulePlan[] direct = plan.Rules.Where(rule => rule.Phase == RoutePhase.PreSniffDirect).ToArray();
+        RouteConfig route = SingboxRouteEmitter.Emit(plan);
+        RouteRule[] guards = route.Rules.Where(rule => rule.Action == RouteRuleAction.Reject
+            && rule.Rules?.Any(child => child.IpVersion == 6) == true).ToArray();
+        RouteRule[] sniff = route.Rules.Where(rule => rule.Action == RouteRuleAction.Sniff).ToArray();
+        RouteRule[] direct = route.Rules.Where(rule => rule.IpIsPrivate == true
+            || rule.IpCidr?.SequenceEqual([plan.BootstrapAddress + "/32"]) == true).ToArray();
         var settings = BoxForgeProfile.Default.Resolve(TargetPlatform.Linux);
-
         Assert.Multiple(() =>
         {
-            Assert.That(plan.Rules.Select(rule => rule.Phase), Is.Ordered);
-            Assert.That(earlyGuard.Action, Is.EqualTo(RouteOperation.Reject));
-            Assert.That(earlyGuard.Mode, Is.EqualTo(LogicalMatchMode.And));
-            Assert.That(earlyGuard.Rules[0].IpVersion, Is.EqualTo(6));
-            Assert.That(earlyGuard.Rules[1].DefaultInterfaceAddress, Is.EqualTo(new[] { "2000::/3" }));
-            Assert.That(earlyGuard.Rules[1].Invert, Is.True);
-            Assert.That(lateGuard.Action, Is.EqualTo(RouteOperation.Reject));
-            Assert.That(lateGuard.Mode, Is.EqualTo(LogicalMatchMode.And));
-            Assert.That(lateGuard.Rules[0].IpVersion, Is.EqualTo(6));
-            Assert.That(lateGuard.Rules[1].DefaultInterfaceAddress, Is.EqualTo(new[] { "2000::/3" }));
-            Assert.That(lateGuard.Rules[1].Invert, Is.True);
-            Assert.That(sniff, Has.Length.EqualTo(2));
-            Assert.That(sniff[0].Action, Is.EqualTo(RouteOperation.Sniff));
-            Assert.That(sniff[0].Rules[0].Inbound, Is.EqualTo(new[] { SingboxTags.TunInbound }));
-            Assert.That(sniff[0].Rules[0].Network, Is.EqualTo(new[] { "tcp" }));
-            Assert.That(sniff[0].Rules[1].Port, Is.EqualTo(new[] { 21, 22, 3306, 5900 }));
-            Assert.That(sniff[0].Rules[1].Invert, Is.True);
-            Assert.That(sniff[0].Timeout, Is.EqualTo("300ms"));
-            Assert.That(sniff[1].Network, Is.EqualTo(new[] { "udp" }));
-            Assert.That(direct.Select(rule => rule.Action), Is.EqualTo(new RouteOperation?[]
+            Assert.That(plan.BootstrapAddress, Is.EqualTo(settings.GetResolver("alidns").Server));
+            Assert.That(plan.SniffTimeout, Is.EqualTo("300ms"));
+            Assert.That(plan.SniffExcludedPorts, Is.EqualTo(new[] { 21, 22, 3306, 5900 }));
+            Assert.That(guards, Has.Length.EqualTo(2));
+            foreach (RouteRule guard in guards)
             {
-                RouteOperation.Bypass, RouteOperation.Route, RouteOperation.Route,
-                RouteOperation.Bypass, RouteOperation.Route, RouteOperation.Route
+                Assert.That(guard.Mode, Is.EqualTo(RouteLogicalMode.And));
+                Assert.That(guard.Rules![0].IpVersion, Is.EqualTo(6));
+                Assert.That(guard.Rules[1].DefaultInterfaceAddress, Is.EqualTo(new[] { "2000::/3" }));
+                Assert.That(guard.Rules[1].Invert, Is.True);
+            }
+            Assert.That(sniff, Has.Length.EqualTo(2));
+            Assert.That(sniff[0].Rules![0].Inbound, Is.EqualTo(new[] { SingboxTags.TunInbound }));
+            Assert.That(sniff[0].Rules![0].Network, Is.EqualTo(new[] { "tcp" }));
+            Assert.That(sniff[0].Rules![1].Port, Is.EqualTo(plan.SniffExcludedPorts));
+            Assert.That(sniff[0].Rules![1].Invert, Is.True);
+            Assert.That(sniff[0].Timeout, Is.EqualTo(plan.SniffTimeout));
+            Assert.That(sniff[1].Network, Is.EqualTo(new[] { "udp" }));
+            Assert.That(direct.Select(rule => rule.Action), Is.EqualTo(new RouteRuleAction?[]
+            {
+                RouteRuleAction.Bypass, RouteRuleAction.Route, RouteRuleAction.Route,
+                RouteRuleAction.Bypass, RouteRuleAction.Route, RouteRuleAction.Route
             }));
             Assert.That(direct.Select(rule => rule.Outbound), Is.EqualTo(new string?[]
             {
                 null, SingboxTags.BridgeOutbound, SingboxTags.DirectOutbound,
                 null, SingboxTags.BridgeOutbound, SingboxTags.DirectOutbound
             }));
-            Assert.That(plan.Rules.Where(rule => rule.Phase == RoutePhase.PriorityServices).Select(rule => rule.Outbound),
+            Assert.That(plan.Services.Where(service => service.PrecedesDomesticRoutes).Select(service => service.Outbound),
                 Is.EqualTo(settings.Services.Where(service => service.PrecedesDomesticRoutes).Select(service => service.Name)));
-            Assert.That(plan.Rules.Where(rule => rule.Phase == RoutePhase.OtherServices).Select(rule => rule.Outbound),
+            Assert.That(plan.Services.Where(service => !service.PrecedesDomesticRoutes).Select(service => service.Outbound),
                 Is.EqualTo(settings.Services.Where(service => !service.PrecedesDomesticRoutes).Select(service => service.Name)));
         });
     }
@@ -287,48 +286,52 @@ public sealed class RouteProfileBuilderTests
         })!.AsObject());
         RoutePlan plan = RouteProfileBuilder.Plan(profile.Resolve(platform));
         Assert.DoesNotThrow(plan.Validate);
-        int direct = plan.Rules.ToList().FindIndex(rule => rule.Phase == RoutePhase.DomesticUdp443 && rule.RuleSet.Contains("cn"));
-        int guard = plan.Rules.ToList().FindIndex(rule => rule.Phase == RoutePhase.OtherServiceIpv6Guard && rule.RuleSet.Contains("cn"));
-        int service = plan.Rules.ToList().FindIndex(rule => rule.Phase == RoutePhase.OtherServices && rule.RuleSet.Contains("cn"));
+        List<RouteRule> rules = SingboxRouteEmitter.Emit(plan).Rules;
+        string games = plan.Services.Single(service => service.ServiceId == "games").Outbound;
+        int direct = rules.FindIndex(rule => rule.Outbound == SingboxTags.DirectOutbound
+            && rule.Port?.Contains(443) == true && rule.RuleSet?.Contains("cn") == true);
+        int guard = rules.FindIndex(rule => rule.Action == RouteRuleAction.Reject
+            && rule.IpVersion == 6 && rule.RuleSet?.Contains("cn") == true);
+        int service = rules.FindIndex(rule => rule.Outbound == games && rule.RuleSet?.Contains("cn") == true);
         Assert.That(direct, Is.GreaterThanOrEqualTo(0));
         Assert.That(guard, Is.GreaterThan(direct));
         Assert.That(service, Is.GreaterThan(guard));
-        Assert.That(plan.Rules.Where(rule => rule.Phase == RoutePhase.ServiceIpv6Guard).All(rule => !rule.RuleSet.Contains("cn")), Is.True);
+        RouteRule priorityGuard = rules.First(rule => rule.Action == RouteRuleAction.Reject
+            && rule.IpVersion == 6 && rule.RuleSet is not null);
+        Assert.That(priorityGuard.RuleSet, Does.Not.Contain("cn"));
     }
 
-    [TestCase("service_guard_removed")]
-    [TestCase("service_guard_narrowed")]
-    [TestCase("other_service_guard_removed")]
-    [TestCase("other_service_guard_narrowed")]
-    [TestCase("final_guard_removed")]
-    [TestCase("final_guard_narrowed")]
-    public void DirectDualStackPlanRequiresProxyIpv6Guards(string fault)
+    [Test]
+    public void DirectDualStackEmissionShieldsBothServiceClassesAndFinalOutbound()
     {
         RoutePlan plan = CreatePlan(TargetPlatform.Linux, AddressFamilyPolicy.DirectDualStack);
         Assert.DoesNotThrow(plan.Validate);
-        plan = fault switch
+        List<RouteRule> rules = SingboxRouteEmitter.Emit(plan).Rules;
+        RouteRule[] guards = rules.Where(rule => rule.Action == RouteRuleAction.Reject
+            && rule.IpVersion == 6 && rule.RuleSet is not null).ToArray();
+        Assert.That(guards, Has.Length.EqualTo(2));
+        foreach (bool priority in new[] { true, false })
         {
-            "service_guard_removed" => plan with { Rules = [.. plan.Rules.Where(rule => rule.Phase != RoutePhase.ServiceIpv6Guard)] },
-            "service_guard_narrowed" => plan with
-            {
-                Rules = [.. plan.Rules.Select(rule => rule.Phase == RoutePhase.ServiceIpv6Guard
-                    ? rule with { RuleSet = [rule.RuleSet[0]] } : rule)]
-            },
-            "other_service_guard_removed" => plan with { Rules = [.. plan.Rules.Where(rule => rule.Phase != RoutePhase.OtherServiceIpv6Guard)] },
-            "other_service_guard_narrowed" => plan with
-            {
-                Rules = [.. plan.Rules.Select(rule => rule.Phase == RoutePhase.OtherServiceIpv6Guard
-                    ? rule with { RuleSet = [rule.RuleSet[0]] } : rule)]
-            },
-            "final_guard_removed" => plan with { Rules = [.. plan.Rules.Where(rule => rule.Phase != RoutePhase.FinalIpv6Guard)] },
-            _ => plan with
-            {
-                Rules = [.. plan.Rules.Select(rule => rule.Phase == RoutePhase.FinalIpv6Guard
-                    ? rule with { Network = ["tcp"] } : rule)]
-            }
-        };
-        var exception = Assert.Throws<ConfigValidationException>(plan.Validate)!;
-        Assert.That(exception.Diagnostics.Select(item => (item.Code, item.Path)), Does.Contain(("IR011", "plan.route.rules")));
+            ServiceRoutePlan[] services = [.. plan.Services.Where(service => service.PrecedesDomesticRoutes == priority)];
+            string[] scope = [.. services.SelectMany(service => service.RuleSets).Distinct(StringComparer.Ordinal)];
+            RouteRule guard = guards[priority ? 0 : 1];
+            Assert.That(guard.RuleSet, Is.EqualTo(scope));
+            Assert.That(guard.Network, Is.Null);
+            Assert.That(guard.Port, Is.Null);
+            Assert.That(guard.Inbound, Is.Null);
+            foreach (ServiceRoutePlan service in services)
+                Assert.That(rules.FindIndex(rule => rule.Outbound == service.Outbound), Is.GreaterThan(rules.IndexOf(guard)));
+        }
+        RouteRule final = rules[^1];
+        Assert.Multiple(() =>
+        {
+            Assert.That(final.Action, Is.EqualTo(RouteRuleAction.Reject));
+            Assert.That(final.IpVersion, Is.EqualTo(6));
+            Assert.That(final.RuleSet, Is.Null);
+            Assert.That(final.Network, Is.Null);
+            Assert.That(final.Port, Is.Null);
+            Assert.That(final.Inbound, Is.Null);
+        });
     }
 
     [TestCase(AddressFamilyPolicy.Auto)]
@@ -337,9 +340,12 @@ public sealed class RouteProfileBuilderTests
     public void OtherPoliciesDoNotAddProxyOnlyIpv6Guards(AddressFamilyPolicy addressFamily)
     {
         RoutePlan plan = CreatePlan(TargetPlatform.Linux, addressFamily);
-        Assert.That(plan.Rules.Any(rule => rule.Phase is RoutePhase.ServiceIpv6Guard or RoutePhase.OtherServiceIpv6Guard or RoutePhase.FinalIpv6Guard), Is.False);
-        RoutePlan injected = plan with { Rules = [.. plan.Rules, RoutePlan.FinalIpv6Guard()] };
-        Assert.Throws<ConfigValidationException>(injected.Validate);
+        List<RouteRule> rules = SingboxRouteEmitter.Emit(plan).Rules;
+        Assert.That(rules.Any(rule => rule.Action == RouteRuleAction.Reject && rule.IpVersion == 6
+            && rule.RuleSet is not null), Is.False);
+        Assert.That(rules.Count(rule => rule.Action == RouteRuleAction.Reject && rule.IpVersion == 6),
+            Is.EqualTo(addressFamily == AddressFamilyPolicy.Ipv4Only ? 2 : 0));
+        Assert.That(rules[^1].IpVersion, Is.Null);
     }
 
     [Test]
@@ -745,7 +751,8 @@ public sealed class RouteProfileBuilderTests
         var plan = CreatePlan(TargetPlatform.Linux) with
         {
             AddressFamily = (AddressFamilyPolicy)999,
-            Rules = [new(RoutePhase.DnsHijack) { Action = (RouteOperation)999, RuleSet = [hostile] }]
+            SniffTimeout = hostile,
+            Services = [CreatePlan(TargetPlatform.Linux).Services[0] with { RuleSets = [hostile] }]
         };
         var exception = Assert.Throws<ConfigValidationException>(() => plan.Validate())!;
         Assert.Multiple(() =>
@@ -753,8 +760,8 @@ public sealed class RouteProfileBuilderTests
             Assert.That(exception.Diagnostics.Select(item => (item.Code, item.Path)), Is.EqualTo(new[]
             {
                 ("IR008", "plan.route.address_family"),
-                ("IR008", "plan.route.rules[0].action"),
-                ("IR005", "plan.route.rules[0].rule_set[0]")
+                ("IR008", "plan.route.sniff_timeout"),
+                ("IR005", "plan.route.services[0].rule_sets[0]")
             }));
             Assert.That(exception.Message, Does.Not.Contain(hostile));
         });
@@ -766,41 +773,41 @@ public sealed class RouteProfileBuilderTests
         var plan = CreatePlan(TargetPlatform.Linux) with
         {
             RuleSets = [new(default, "unused", "1d")],
-            Rules = default
+            Services = default
         };
         var exception = Assert.Throws<ConfigValidationException>(() => plan.Validate())!;
         Assert.That(exception.Diagnostics.Select(item => (item.Code, item.Path)), Is.EqualTo(new[]
         {
             ("IR009", "plan.route.rule_sets[0].tags"),
             ("IR009", "plan.route.rule_sets"),
-            ("IR008", "plan.route.rules")
+            ("IR008", "plan.route.services")
         }));
     }
 
-    [TestCase("reordered")]
-    [TestCase("unknown")]
-    [TestCase("final")]
-    public void RulePlanRejectsInvalidActualStageOrder(string mutation)
+    [TestCase("bootstrap", "plan.route.bootstrap_address")]
+    [TestCase("bootstrap_ipv6", "plan.route.bootstrap_address")]
+    [TestCase("bootstrap_shorthand", "plan.route.bootstrap_address")]
+    [TestCase("sniff_timeout", "plan.route.sniff_timeout")]
+    [TestCase("sniff_ports_default", "plan.route.sniff_excluded_ports")]
+    [TestCase("sniff_port_range", "plan.route.sniff_excluded_ports")]
+    [TestCase("sniff_ports_duplicate", "plan.route.sniff_excluded_ports")]
+    [TestCase("unknown_family", "plan.route.address_family")]
+    public void RouteIntentRejectsInvalidScalarPolicies(string fault, string path)
     {
         var plan = CreatePlan(TargetPlatform.Linux);
-        var rules = plan.Rules;
-        int index = rules.Length - 1;
-        if (mutation == "reordered")
+        plan = fault switch
         {
-            int early = rules.ToList().FindIndex(rule => rule.Phase == RoutePhase.EarlyIpv6Guard);
-            int direct = rules.ToList().FindIndex(rule => rule.Phase == RoutePhase.PreSniffDirect);
-            rules = rules.SetItem(early, rules[direct]).SetItem(direct, rules[early]);
-            index = early + 1;
-        }
-        else
-            rules = rules.SetItem(index, rules[index] with
-            {
-                Phase = mutation == "unknown" ? (RoutePhase)(-1) : RoutePhase.FinalOutbound
-            });
-
-        var exception = Assert.Throws<ConfigValidationException>(() => (plan with { Rules = rules }).Validate())!;
-        Assert.That(exception.Diagnostics.Select(item => (item.Code, item.Path)),
-            Does.Contain(("IR010", $"plan.route.rules[{index}].phase")));
+            "bootstrap" => plan with { BootstrapAddress = "invalid" },
+            "bootstrap_ipv6" => plan with { BootstrapAddress = "2001:db8::1" },
+            "bootstrap_shorthand" => plan with { BootstrapAddress = "127.1" },
+            "sniff_timeout" => plan with { SniffTimeout = "0s" },
+            "sniff_ports_default" => plan with { SniffExcludedPorts = default },
+            "sniff_port_range" => plan with { SniffExcludedPorts = [0, 65536] },
+            "sniff_ports_duplicate" => plan with { SniffExcludedPorts = [443, 443] },
+            _ => plan with { AddressFamily = (AddressFamilyPolicy)(-1) }
+        };
+        var error = Assert.Throws<ConfigValidationException>(plan.Validate)!;
+        Assert.That(error.Diagnostics.Select(item => (item.Code, item.Path)), Is.EqualTo(new[] { ("IR008", path) }));
     }
 
     private static void AssertSniffRule(

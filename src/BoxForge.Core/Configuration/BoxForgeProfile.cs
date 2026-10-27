@@ -43,8 +43,9 @@ public sealed class BoxForgeProfile
         IEnumerable<TargetPlatform> platforms, JsonObject? request)
     {
         JsonObject? patch = request is null ? null : SnapshotRequest(request);
+        ImmutableDictionary<TargetPlatform, JsonObject>? requestLayers = null;
         return platforms.ToDictionary(platform => platform,
-            platform => patch is null ? Resolve(platform) : ResolveCore(platform, patch));
+            platform => patch is null ? Resolve(platform) : ResolveCore(platform, patch, ref requestLayers));
     }
 
     private static JsonObject SnapshotRequest(JsonObject request)
@@ -56,6 +57,13 @@ public sealed class BoxForgeProfile
 
     private ResolvedProfile ResolveCore(TargetPlatform platform, JsonObject? request)
     {
+        ImmutableDictionary<TargetPlatform, JsonObject>? requestLayers = null;
+        return ResolveCore(platform, request, ref requestLayers);
+    }
+
+    private ResolvedProfile ResolveCore(TargetPlatform platform, JsonObject? request,
+        ref ImmutableDictionary<TargetPlatform, JsonObject>? requestLayers)
+    {
         try
         {
             BuiltInProfile selected = data with { Platforms = ImmutableDictionary<TargetPlatform, JsonElement>.Empty };
@@ -63,16 +71,17 @@ public sealed class BoxForgeProfile
                 if (platformLayers[index].TryGetValue(platform, out var patch))
                 {
                     string path = $"profile.platform_layers[{index}].{platform}";
-                    selected = ProfileOverlay.Apply(selected, ReadLayer(patch, path), path);
+                    selected = ProfileOverlay.Apply(selected, ReadLayer(patch, path), path, structureValidated: true);
                 }
             if (request is not null)
             {
                 selected = ProfileOverlay.Apply(selected, request, "profile.request");
-                var layers = ReadPlatforms(request, "profile.request");
-                if (layers.TryGetValue(platform, out var platformPatch))
+                // Preserve root-error precedence while validating all request layers only once.
+                requestLayers ??= ReadPlatformObjects(request, "profile.request");
+                if (requestLayers.TryGetValue(platform, out var platformPatch))
                 {
                     string path = $"profile.request.platforms.{platform}";
-                    selected = ProfileOverlay.Apply(selected, ReadLayer(platformPatch, path), path);
+                    selected = ProfileOverlay.Apply(selected, platformPatch, path, structureValidated: true);
                 }
             }
             try { return new ResolvedProfile(selected, platform); }
@@ -84,25 +93,34 @@ public sealed class BoxForgeProfile
     private static JsonObject ReadLayer(JsonElement value, string path)
     {
         if (value.ValueKind != JsonValueKind.Object) throw new ProfileValidationException(path, "profile.platforms: 平台层必须为对象。");
-        var layer = value.Deserialize<JsonObject>()!;
+        return ReadLayer(value.Deserialize<JsonObject>()!, path);
+    }
+
+    private static JsonObject ReadLayer(JsonObject layer, string path)
+    {
         if (layer.ContainsKey("platforms"))
             throw new ProfileValidationException(path, "profile.platforms: 平台层不能包含嵌套 platforms。");
         ProfileOverlay.ValidateStructure(layer, typeof(BuiltInProfile), path);
         return layer;
     }
 
-    private static ImmutableDictionary<TargetPlatform, JsonElement> ReadPlatforms(JsonObject patch, string path)
+    private static ImmutableDictionary<TargetPlatform, JsonElement> ReadPlatforms(JsonObject patch, string path) =>
+        ReadPlatformObjects(patch, path).ToImmutableDictionary(item => item.Key,
+            item => JsonSerializer.SerializeToElement(item.Value));
+
+    private static ImmutableDictionary<TargetPlatform, JsonObject> ReadPlatformObjects(JsonObject patch, string path)
     {
-        if (!patch.TryGetPropertyValue("platforms", out var value)) return ImmutableDictionary<TargetPlatform, JsonElement>.Empty;
+        if (!patch.TryGetPropertyValue("platforms", out var value)) return ImmutableDictionary<TargetPlatform, JsonObject>.Empty;
         if (value is not JsonObject platforms) throw new ProfileValidationException(path + ".platforms", "profile.platforms: 必须为对象。");
-        var result = ImmutableDictionary.CreateBuilder<TargetPlatform, JsonElement>();
+        var result = ImmutableDictionary.CreateBuilder<TargetPlatform, JsonObject>();
         foreach (var (name, layer) in platforms)
         {
             if (!Enum.TryParse<TargetPlatform>(name, out var platform) || !Enum.IsDefined(platform) || platform.ToString() != name)
                 throw new ProfileValidationException(path + ".platforms[unknown]", "profile.platforms: 必须引用目标平台且平台层必须为对象。");
-            JsonElement element = JsonSerializer.SerializeToElement(layer);
-            _ = ReadLayer(element, path + ".platforms." + name);
-            result.Add(platform, element);
+            string layerPath = path + ".platforms." + name;
+            if (layer is not JsonObject body)
+                throw new ProfileValidationException(layerPath, "profile.platforms: 平台层必须为对象。");
+            result.Add(platform, ReadLayer(body, layerPath));
         }
         return result.ToImmutable();
     }

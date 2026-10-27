@@ -777,12 +777,12 @@ public sealed class BoxForgeEngineTests
 
                 var config = parser.Parse(yaml)!;
                 var node = config.Proxies.Single();
-                var metadata = node.GetObject("metadata")!;
+                var metadata = (ClashObject)node.GetValue("metadata")!;
                 Assert.Multiple(() =>
                 {
                     Assert.That(node.Name, Is.EqualTo(marker));
-                    Assert.That(metadata.GetObject("first")!.GetString("marker"), Is.EqualTo(marker));
-                    Assert.That(metadata.GetObject("second")!.GetString("marker"), Is.EqualTo(marker));
+                    Assert.That(((ClashObject)metadata.GetValue("first")!).GetValue("marker"), Is.EqualTo(marker));
+                    Assert.That(((ClashObject)metadata.GetValue("second")!).GetValue("marker"), Is.EqualTo(marker));
                 });
             }
         })).ToArray();

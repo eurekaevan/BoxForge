@@ -169,19 +169,22 @@ internal static class ProfileOverlay
         return matches[0];
     }
 
-    internal static BuiltInProfile Apply(BuiltInProfile original, JsonObject overlay, string path)
+    // Only skip static checks for the same untouched snapshot already checked by ValidateStructure.
+    internal static BuiltInProfile Apply(BuiltInProfile original, JsonObject overlay, string path,
+        bool structureValidated = false)
     {
         var target = JsonSerializer.SerializeToNode(original, BuiltInProfile.JsonOptions)!.AsObject();
         foreach (var (name, value) in overlay)
         {
             if (name == "platforms") continue;
-            Merge(target, name, value, path, typeof(BuiltInProfile));
+            Merge(target, name, value, path, typeof(BuiltInProfile), structureValidated);
         }
         return (BuiltInProfile?)Deserialize(target, typeof(BuiltInProfile), path)
             ?? throw new ProfileValidationException("profile", "profile: 必须为对象。");
     }
 
-    private static void Merge(JsonObject target, string name, JsonNode? value, string path, Type type)
+    private static void Merge(JsonObject target, string name, JsonNode? value, string path, Type type,
+        bool structureValidated)
     {
         if (!target.TryGetPropertyValue(name, out var current))
             throw new ProfileValidationException(path + "[unknown]", $"{path}.{name}: 未知字段。");
@@ -190,7 +193,7 @@ internal static class ProfileOverlay
         {
             Type arrayType = BuiltInProfile.JsonOptions.GetTypeInfo(type).Properties.Single(property => property.Name == name).PropertyType;
             Type elementType = arrayType.GenericTypeArguments.Single();
-            JsonObject operations = ArrayOperations(value, arrayType, path);
+            JsonObject operations = structureValidated ? value!.AsObject() : ArrayOperations(value, arrayType, path);
             var result = (JsonArray)(operations["replace"] as JsonArray ?? array).DeepClone();
             if (operations["append"] is JsonArray additions)
                 foreach (var item in additions) result.Add(item?.DeepClone());
@@ -224,7 +227,7 @@ internal static class ProfileOverlay
                             // Appended entities may omit optional fields; restore their declared defaults before patching.
                             JsonObject entity = JsonSerializer.SerializeToNode(
                                 result[index]!.Deserialize(elementType, BuiltInProfile.JsonOptions), elementType, BuiltInProfile.JsonOptions)!.AsObject();
-                            foreach (var (key, item) in body) Merge(entity, key, item, entryPath, elementType);
+                            foreach (var (key, item) in body) Merge(entity, key, item, entryPath, elementType, structureValidated: true);
                             result[index] = entity;
                         }
                         if (!Matches(result[index], IdentityKey(elementType, path), Identity(selector, elementType, entryPath)))
@@ -238,14 +241,14 @@ internal static class ProfileOverlay
         {
             if (value is not JsonObject patch) throw new ProfileValidationException($"{path}", $"{path}: 必须为对象。");
             Type childType = BuiltInProfile.JsonOptions.GetTypeInfo(type).Properties.Single(property => property.Name == name).PropertyType;
-            foreach (var (key, item) in patch) Merge(child, key, item, path, childType);
+            foreach (var (key, item) in patch) Merge(child, key, item, path, childType, structureValidated);
         }
         else
         {
             var property = BuiltInProfile.JsonOptions.GetTypeInfo(type).Properties.Single(property => property.Name == name);
             if (value is null && !property.IsSetNullable)
                 throw new ProfileValidationException(path, $"{path}: 字段不能为 null。");
-            _ = Deserialize(value, property.PropertyType, path);
+            if (!structureValidated) _ = Deserialize(value, property.PropertyType, path);
             target[name] = value?.DeepClone();
         }
     }

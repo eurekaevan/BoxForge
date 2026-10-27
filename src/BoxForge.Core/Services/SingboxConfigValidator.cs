@@ -33,7 +33,7 @@ internal sealed class SingboxConfigValidator : ISingboxConfigValidator
         ValidateRuleSetHttpClients(config.Route.RuleSet, context);
         ValidateCacheFile(config.Experimental?.CacheFile, context.Diagnostics);
         ValidateRouteRules(config.Route.Rules, context);
-        ValidateAddressFamilyGuards(config, context);
+        ValidateDnsAddressFamilyGuard(config, context);
         if (context.Diagnostics.Count > 0)
             throw new ConfigValidationException(context.Diagnostics);
     }
@@ -546,44 +546,16 @@ internal sealed class SingboxConfigValidator : ISingboxConfigValidator
         }
     }
 
-    private static void ValidateAddressFamilyGuards(SingboxConfig config, ValidationContext context)
+    private static void ValidateDnsAddressFamilyGuard(SingboxConfig config, ValidationContext context)
     {
         if (context.AddressFamily == AddressFamilyPolicy.DualStack) return;
         bool automatic = context.AddressFamily.UsesInterfaceGuard();
-        bool forwardingSeen = false;
-        bool hasEarlyGuard = false;
-        int guardCount = 0;
-        bool guardAfterLastScopedResolve = false;
-        foreach (RouteRule rule in config.Route.Rules)
-        {
-            if (automatic ? IsAutoIpv6RejectGuard(rule, context.InboundTags) : IsIpv6RejectGuard(rule, context.InboundTags))
-            {
-                if (guardCount == 0) hasEarlyGuard = !forwardingSeen;
-                guardCount++;
-                guardAfterLastScopedResolve = true;
-            }
-
-            if (rule.Action == RouteRuleAction.Resolve && rule.RuleSet is { Count: > 0 })
-                guardAfterLastScopedResolve = false;
-            if (rule.Action is RouteRuleAction.Route or RouteRuleAction.Bypass or RouteRuleAction.Sniff or RouteRuleAction.Resolve)
-                forwardingSeen = true;
-        }
-
-        if (!hasEarlyGuard)
-            context.Diagnostics.Add(new ConfigDiagnostic("SB080", "route.rules",
-                $"{context.AddressFamily} 必须在 sniff、resolve 或转发之前包含相应的 IPv6 reject guard。"));
-        if (!guardAfterLastScopedResolve || (hasEarlyGuard && guardCount < 2))
-            context.Diagnostics.Add(new ConfigDiagnostic("SB081", "route.rules",
-                $"{context.AddressFamily} 必须在规则集 resolve 之后保留独立的 IPv6 reject guard。"));
-
         DnsRule? first = config.Dns.Rules.FirstOrDefault();
         if (automatic)
         {
             if (config.Dns.Strategy is not null || first is null || !IsAutoAaaaGuard(first))
                 context.Diagnostics.Add(new ConfigDiagnostic("SB092", "dns.rules[0]",
                     $"{context.AddressFamily} 必须允许双栈解析，并首先在默认出口无公网 IPv6 地址时以空 NOERROR 响应 AAAA。"));
-            if (context.AddressFamily == AddressFamilyPolicy.DirectDualStack)
-                ValidateProxyIpv6Guards(config.Route.Rules, context);
             return;
         }
         if (first is null || first.Action != DnsRuleAction.Predefined || first.Rcode != DnsResponseCode.NoError
@@ -596,61 +568,6 @@ internal sealed class SingboxConfigValidator : ISingboxConfigValidator
             context.Diagnostics.Add(new ConfigDiagnostic("SB082", "dns.rules[0]",
                 "Ipv4Only 必须首先无条件以空 NOERROR 响应拦截 AAAA 查询。"));
     }
-
-    private static bool IsIpv6RejectGuard(RouteRule rule, HashSet<string> inboundTags) =>
-        rule.Action == RouteRuleAction.Reject && IsIpv6Condition(rule, inboundTags);
-
-    // DirectDualStack: IPv6 may only leave through direct-like targets; every proxy-bound route must be shielded first.
-    private static void ValidateProxyIpv6Guards(List<RouteRule> rules, ValidationContext context)
-    {
-        if (rules.Count == 0 || !IsIpv6RejectGuard(rules[^1], context.InboundTags))
-            context.Diagnostics.Add(new ConfigDiagnostic("SB093", "route.rules",
-                "DirectDualStack 必须以无条件 IPv6 reject guard 结束路由规则，禁止 IPv6 进入最终代理出口。"));
-        for (int index = 0; index < rules.Count; index++)
-        {
-            RouteRule rule = rules[index];
-            if (rule.Action != RouteRuleAction.Route || rule.Outbound is null
-                || rule.Outbound is SingboxTags.DirectOutbound or SingboxTags.BridgeOutbound or SingboxTags.TailscaleEndpoint)
-                continue;
-            if (!rules.Take(index).Any(guard => ShieldsProxyRoute(guard, rule, context.InboundTags)))
-                context.Diagnostics.Add(new ConfigDiagnostic("SB094", $"route.rules[{index}]",
-                    "DirectDualStack 的代理路由必须先被覆盖其范围的 IPv6 reject guard 拦截。"));
-        }
-    }
-
-    private static bool ShieldsProxyRoute(RouteRule guard, RouteRule route, HashSet<string> inboundTags) =>
-        IsIpv6RejectGuard(guard, inboundTags)
-        || (guard.Action == RouteRuleAction.Reject && guard.IpVersion == 6 && guard.Invert != true
-            && guard.Type is null && guard.Mode is null && guard.Rules is not { Count: > 0 }
-            && guard.DefaultInterfaceAddress is not { Count: > 0 } && HasOnlyRuleSetScope(guard, inboundTags)
-            && guard.RuleSet is { Count: > 0 } covered && route.RuleSet is { Count: > 0 } scope
-            && scope.All(covered.Contains));
-
-    private static bool IsIpv6Condition(RouteRule rule, HashSet<string> inboundTags) =>
-        rule.IpVersion == 6 && rule.Invert != true && rule.DefaultInterfaceAddress is not { Count: > 0 }
-        && rule.Type is null && rule.Mode is null && rule.Rules is not { Count: > 0 }
-        && HasUnrestrictedRouteScope(rule, inboundTags);
-
-    private static bool HasUnrestrictedRouteScope(RouteRule rule, HashSet<string> inboundTags) =>
-        rule.RuleSet is not { Count: > 0 } && HasOnlyRuleSetScope(rule, inboundTags);
-
-    private static bool HasOnlyRuleSetScope(RouteRule rule, HashSet<string> inboundTags) =>
-        rule.Protocol is not { Count: > 0 }
-        && rule.Port is not { Count: > 0 } && rule.Network is not { Count: > 0 }
-        && rule.IpCidr is not { Count: > 0 } && rule.IpIsPrivate != true
-        && rule.PreferredBy is not { Count: > 0 }
-        && (rule.Inbound is not { Count: > 0 } || inboundTags.IsSubsetOf(rule.Inbound));
-
-    private static bool IsAutoIpv6RejectGuard(RouteRule rule, HashSet<string> inboundTags) =>
-        rule.Action == RouteRuleAction.Reject && rule.Type == RouteRuleType.Logical
-        && rule.Mode == RouteLogicalMode.And && rule.Invert != true && rule.IpVersion is null
-        && rule.DefaultInterfaceAddress is not { Count: > 0 } && HasUnrestrictedRouteScope(rule, inboundTags)
-        && rule.Rules is { Count: 2 } children
-        && children.Any(child => child.Action is null && IsIpv6Condition(child, inboundTags))
-        && children.Any(child => child.Action is null && child.Type is null && child.Mode is null
-            && child.Rules is not { Count: > 0 } && child.IpVersion is null && child.Invert == true
-            && child.DefaultInterfaceAddress?.SequenceEqual([AddressFamilyPolicies.GlobalIpv6Prefix]) == true
-            && HasUnrestrictedRouteScope(child, inboundTags));
 
     private static bool HasUnrestrictedDnsScope(DnsRule rule) =>
         rule.RuleSet is not { Count: > 0 } && rule.Domain is not { Count: > 0 }

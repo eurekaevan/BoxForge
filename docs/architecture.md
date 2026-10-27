@@ -39,8 +39,11 @@ BoxForge.Tests  ──→ BoxForge.Cli, BoxForge.Server, BoxForge.Core
 6. `SingboxConfigValidator` 检查 BoxForge 自身约束，`ConfigSerializer` 生成
    JSON 并计算小写十六进制 SHA-256。只有全部平台成功才返回
    `ConversionBundle`。
-7. `OutputTransaction` 暂存本地产物并比较完整文本和文件集；所有输入和平台
-   成功后，工作流才提交事务。提交失败时恢复旧输出；未提交的暂存在退出时清理。
+7. `OutputTransaction` 在内存中保存本地产物并比较完整文本和文件集；所有输入和平台
+   成功且输出有变化后，才在异步提交中创建暂存目录、写入文件并替换输出。
+   无变更或转换失败未提交时，不创建事务目录、不写产物文件；整批 JSON 保留到提交，
+   内存占用随产物总大小增长。写入错误延后到提交阶段，旧输出在写完并完成权限设置后才移动。
+   发布失败时恢复旧输出，提交中断留下的本次暂存在退出时清理。
 
 ## 内置策略数据
 
@@ -57,6 +60,9 @@ profile 根分区为 `features`、`dns`、`route`、`tuning`、`privacy`；`plat
 每个 `BoxForgeProfile` 在构造时验证并缓存三个平台的 `ResolvedProfile`，包含地区正则与保留名称；
 无请求覆盖时直接复用缓存。一次转换中的请求覆盖只创建一次快照，再分别合并和校验所选平台，
 不会写入宿主缓存；未选中平台的请求层仍执行结构校验。
+请求平台层在首个目标的根覆盖成功后统一解析、校验一次，后续目标复用该请求内的解析结果，
+保持根错误先于平台结构错误。已完成结构校验的平台层及数组 patch payload 在合并时不重复
+解析叶值类型；数组匹配、删除、身份约束及最终对象构造仍执行。
 `BoxForgeProfile.Resolve(platform, request)` 在构建前一次性应用覆盖层，返回绑定单个平台的
 `ResolvedProfile`。文档上的分区属性表示根值；已解析配置保存最终分区、平台参数、
 地区匹配表达式与保留名称，不支持继续叠加或切换平台。节点名称检查和策略规划只接收已解析配置；来源解析不接收平台配置。
@@ -126,7 +132,7 @@ Server 不访问订阅 URL、不保存输入或结果；上传缓冲和 ZIP 构�
 ### 内部编译流水线：协议解释、catalog 与配置计划
 
 VLESS、Trojan、AnyTLS、Hysteria2 与 Shadowsocks 共用 `ProxyNodeParser` 入口，
-按协议 Schema 校验后调用解释钩子，构建中立节点。协议、catalog 和各层
+由协议 Schema 绑定 `NodeFieldReader` 后调用解释钩子，构建中立节点。协议、catalog 和各层
 计划均属于内部实现；对外转换使用 `IBoxForgeEngine`：
 
 ```text
@@ -147,7 +153,11 @@ ClashProxyNode → ProxyNodeParser → Schema + 协议解释 → NodeCatalog（�
 flow 与 UDP 编码使用语义枚举，其他字段直接保存解释后的值。
 只有强制 TLS 协议的激活开关及 Gecko 包大小校验需要区分缺失和显式 null，
 这些字段使用包含值与 `IsSpecified` 的只读 `SourceValue<T>`；不保存字段名、字段路径或证据 ID。
-字段声明和别名由协议 Schema 校验，含固定 revision 的语义证据由数据表维护。
+字段声明和别名由协议 Schema 校验，读取器按声明自动解析别名；端口、布尔值、整数范围与
+枚举通过类型化方法读取和校验。嵌套读取器保留实际来源字段路径，统一生成 `SRC002`，
+catalog 再附加 `source.proxies[index]` 节点位置。YAML 结构及资源限制错误继续使用 `SRC001`。
+Schema 在构建时维护主字段到别名组的索引；缺省字段查找不遍历全部声明，也不创建查询闭包。
+含固定 revision 的语义证据由数据表维护。
 SNI 缺失、null 或空白时仍回退到 server；ALPN 缺失与显式空列表在 IR 中不同，
 目标序列化仍维持原有空列表省略行为。
 
@@ -197,7 +207,8 @@ UoT 省略、null 和版本 0 均解释为 v1，禁用时仍省略整个目标�
 共用 TLS 解析先产生中立设置；后端为每次输出复制 ALPN 和 Hysteria2 端口列表，
 避免输出修改污染共享 IR。
 
-内置五个协议在 catalog 中保留中立节点；规划仅使用节点名称，不提前发射目标模型。
+内置五个协议在 catalog 中保留中立节点；分组规划使用节点名称，完整规划还保留来源地址族约束，
+不提前发射目标模型。
 连接超时、平台 keep-alive 和 Hysteria2 hop/BBR 默认值在 IR 副本上施加，
 然后统一校验并发射；同一个 catalog 可以供多个平台并行构建，来源节点不变。
 `ProxyNode` 和 `ConnectionSettings` 只承载当前五种节点共有的数据与调优值。
@@ -226,7 +237,7 @@ DNS 规划产生中立的 `DnsPlan`：`DnsHttpsResolverPlan` 记录解析器地�
 OR 语义改变匹配范围。展开结果不回写计划，每次发射独立拥有所有可变集合。
 
 `DnsPlan` 直接检查解析池类型、顺序、服务标识、匹配范围及主备引用。
-服务 `RouteRulePlan` 保留显式 `ServiceId`；`ConfigurationPlan` 按实际路由顺序检查
+服务 `ServiceRoutePlan` 保留显式 `ServiceId`；`ConfigurationPlan` 按服务声明顺序检查
 服务 ID、规则集范围、主备角色及解析器出口，再检查 domestic/global 的固定绑定，
 不扫描扁平 DNS 规则，也不从 DNS 标签字符串反推服务身份。
 服务的规则集范围允许相同或重叠，匹配范围不充当服务身份。
@@ -236,20 +247,21 @@ OR 语义改变匹配范围。展开结果不回写计划，每次发射独立�
 内部 DNS 计划诊断使用 `plan.dns.pools[index]` 定位解析池；外部配置格式保持不变。
 结构与一致性校验不替代本地 DNS 行为测试，官方核心检查也仅证明目标配置的格式兼容性。
 
-`RouteProfileBuilder.Plan` 产生带阶段标记的有序 `RouteRulePlan`，在规划时确定
-逻辑 AND/OR 条件、sniff 范围和超时、早晚 IPv6 守卫、服务与国内分流优先级，
-并在对应阶段展开 Linux bypass/bridge 伴随规则。`RoutePlan` 还保存规则源、最终出口
-及控制面绑定。计划只使用 IR 类型；不引用 profile DTO 或 sing-box 模型。
-发射前检查阶段与规则顺序、必需规则源、实际规则引用和服务唯一性。
-完整阶段列表不能代替实际规则：校验要求 DNS 劫持位于首条，精确保留 TUN 范围及协议/端口条件，
-早晚地址族守卫符合 Ipv4Only／ Auto／ DirectDualStack／ DualStack 策略（DirectDualStack 还要求服务规则集和最终出口之前的 IPv6 拒绝），必要固定阶段存在规则，启用 Tailscale 时保留其控制面路径。
+`RouteProfileBuilder.Plan` 产生声明式 `RoutePlan`，保存地址族、Tailscale 和直连转发开关、
+bootstrap 地址、sniff 超时及排除端口、规则源、最终出口和控制面绑定。
+`ServiceRoutePlan` 明确保存服务 ID、规则集范围、出口及是否优先于国内路由；
+服务声明按优先服务和普通服务分组并保持各组原有顺序，不保存展开后的路由规则。
+计划只使用 IR 类型，不引用 profile DTO 或 sing-box 模型；校验声明值、规则源引用、
+服务身份和出口唯一性及服务分组顺序。DNS 池直接与服务声明比对身份、范围、顺序和出口。
 
-`SingboxRouteEmitter` 将规则逐项映射到目标字段，不按阶段重新推导策略。
-`RouteRulePlan.HasSamePolicy` 显式比较全部标量、集合顺序及嵌套规则，区分未初始化与空集合，
-不依赖 record 对集合的默认相等性，也不创建临时规则副本。
-测试自动发现所有可初始化的策略属性，新增属性必须具有相等性样例并参与比较。
+`SingboxRouteEmitter` 是唯一路由展开入口，固定生成 DNS 劫持、早晚地址族守卫、
+Tailscale、私网/bootstrap 直连、sniff、STUN/广告阻断、优先服务、国内 UDP/443、
+普通服务、国内直连及最终代理侧 IPv6 守卫；按平台设置展开 bypass/bridge 伴随规则。
+必要阶段没有可关闭的独立布尔值，守卫顺序也不能通过计划字段重排。
+不再使用 `RouteRulePlan`、`HasSamePolicy` 或反射相等性测试；顺序和匹配范围直接由产物测试验证。
 DNS 与路由发射均为每次输出创建独立的规则、嵌套条件与列表；修改输出不会污染计划。
-同一计划可重复或并发发射。跨模块引用在汇总计划与完整目标配置中分别检查。
+同一计划可重复或并发发射。汇总计划检查跨模块绑定，目标 validator 检查产物引用及平台字段，
+不从扁平路由 AST 逆向重建路由策略；DNS 的地址族守卫检查继续独立保留。
 
 `ConfigurationPlan` 汇总地址族、DNS 选择模式、探测间隔等策略值、`TunPlan` 地址与开关、
 完成平台调优的节点 IR、组/DNS/路由计划、外围开关与 `HttpClientPlan` 控制面绑定。
@@ -260,7 +272,7 @@ bootstrap resolver、HTTP client 的出口和解析器，以及 dashboard 的 HT
 
 `ConfigurationPlanner.Plan` 汇总完整策略，`SingboxConfigBuilder.Build(plan, cacheId)`
 在唯一的完整计划校验入口检查局部约束与跨模块引用，通过后才生成目标配置。
-组件 planner 构造语义计划，组件 emitter 转换为目标模型（DNS 解析池在此展开规则）；
+组件 planner 构造语义计划，组件 emitter 将 DNS 解析池及路由意图展开为目标规则；
 独立的局部 `Validate` 入口用于按模块检查计划。
 `DomainResolverPlan` 明确保存路由、HTTP client 和受来源 IPv4 约束的
 节点解析器：服务器、地址族及 optimistic 缓存开关均已确定，发射只转换模型。
@@ -273,8 +285,8 @@ DNS server 与 outbound、endpoint、service 使用相同的 `JsonPolymorphic` /
 `ServerAddress`、`DetourTag`、`TlsConfig`、`EndpointTag`、`AcceptDefaultResolversValue`。
 直接使用这些 public 模型的 C# 调用者需迁移到对应的新属性，并通过 `DnsServer` 基类契约序列化。
 生成 JSON 的 DNS server 将 `type` 写在 `tag` 之前；字段值与 DNS 行为不变，内容哈希随字段顺序变化。
-完整目标 validator 继续检查标签重复、目标模型内部字段及地址族守卫，
-汇总校验检查以下不同层次，不能将“通过校验”理解为所有产品行为已获证明：
+完整目标 validator 继续检查标签重复、目标模型内部字段及 DNS／控制面地址族约束，
+计划校验、固定展开和产物校验分别覆盖以下层次，不能将“通过校验”理解为所有产品行为已获证明：
 
 - **结构**：枚举、字段、逻辑树和规则数组合法。
 - **引用**：出口、解析器、规则集、HTTP client 和响应标签已声明且顺序有效。
@@ -295,8 +307,11 @@ DNS server 与 outbound、endpoint、service 使用相同的 `JsonPolymorphic` /
 `ProfileValidationException.Diagnostics` 提供，计划与目标校验使用
 `ConfigValidationException.Diagnostics`。引擎的转换异常保留原有分类，并转交已知错误的诊断。
 诊断集合是不可变快照，调用方修改原始列表不会改变异常中保存的结果。
-字段诊断保留节点索引、实际使用的字段别名及已知嵌套路径；未知键使用 `[unknown]`
-占位，不将原始字段名或字段值放入公共诊断。YAML 结构及资源预算错误仍使用 `SRC001`。
+来源字段诊断保留节点索引、实际使用的字段别名及嵌套路径；未知来源键也使用实际字段路径，
+由 `ErrorAtActualField` 直接附加父路径，不再查询别名或使用 `[unknown]` 占位。
+来源字段值不进入公共诊断。profile 的未知键仍使用 `[unknown]`，YAML 结构及资源预算错误仍使用 `SRC001`。
+读取器的类型错误消息同样使用实际字段拼写；容器类型的 `type`、`name` 不转换为 CLR 类型名。
+关闭的 `smux` 仍按子 Schema 拒绝未知字段；`plugin-opts` 的子 Schema 随别名绑定到嵌套读取器。
 引擎按 Android → Linux → Windows 的固定顺序处理请求平台，来源只解析一次。
 来源解析失败包装为 `BoxForgeConversionException`；平台规划或目标校验失败统一包装为
 `BoxForgePlatformConversionException`，并标明失败平台，不受该平台是否为请求中的首个平台影响。
@@ -317,12 +332,12 @@ DNS server 与 outbound、endpoint、service 使用相同的 `JsonPolymorphic` /
 | `IR007` | 规则集下载或 dashboard 引用了未声明的 HTTP client |
 | `IR008` | 局部计划的字段值、结构或资源边界无效 |
 | `IR009` | 声明缺失、重复或名称冲突 |
-| `IR010` | 阶段顺序、首选目标或求值依赖无效 |
-| `IR011` | 必要策略缺失，或策略说明与实际规则、解析器绑定不一致 |
+| `IR010` | 服务优先次序、首选目标或求值依赖无效 |
+| `IR011` | 解析池、服务声明或控制面解析器绑定不一致 |
 | `SB*` | 发射后的引用、字段与安全不变量复核，沿用既有目标错误码 |
 
 来源路径使用 `source.proxies[索引]`，已声明字段可继续定位到嵌套字段；
-未知键或无法可靠定位的错误停在已知节点/文档层，不从异常文本推测字段。
+未知来源键保留实际路径；无法可靠定位的结构错误停在已知节点/文档层，不从异常文本推测字段。
 profile 的文件、宿主、直接覆盖与请求分别使用 `profile.file`、`profile.host`、
 `profile.overlay`、`profile.request`；请求平台层位于其 `platforms.<平台>` 下。
 保存的平台层按应用顺序定位为 `profile.platform_layers[索引].<平台>`，第 0 层是内置平台层。
@@ -339,13 +354,14 @@ profile 的文件、宿主、直接覆盖与请求分别使用 `profile.file`、
 profile 无效仍按原有无效配置路径处理。HTTP 的 JSON 和 ZIP 接口继续使用通用
 `400`/`422` 响应，不公开诊断、节点名称、凭据或部分产物。
 真正的未预期错误不通过捕获任意异常伪装成输入错误。
-完整目标 validator 独立复核标签重复、字段合法性与地址族守卫，不能以计划校验替代。
+完整目标 validator 独立复核标签重复、引用、字段合法性与 DNS／控制面地址族约束，不能以计划校验替代。
 节点 `SourceValue` 只保存值及显式标记，语义数据表继续保存来源字段及固定源码证据。
 
 ### 现有协议扩展入口
 
 五个协议共用 `ProxyNodeParser` 的单一解析入口；各 `*Protocol` 声明 `Schema` 并提供
-解释已校验字段的钩子。路径固定为名称与来源字段校验 → 协议解释 → 节点 IR →
+接收 `NodeFieldReader` 的解释钩子；TLS 与嵌套选项也共用读取器，不直接读取原始对象。
+路径固定为名称与来源字段绑定 → 协议解释及类型化读取 → 节点 IR →
 调优与发射。
 
 扩展协议时，在协议 `Schema` 声明已映射字段、别名、明确忽略的元数据及尚不能映射的
@@ -360,6 +376,9 @@ sing-box 模型。同步添加节点不变量、后端发射和独立的行为�
 sing-box 运行时默认值。BoxForge 不保证逐字段原样复制；它保证已声明的显式
 来源语义不会被 tuning 静默覆盖。来源未指定时，BoxForge 可以施加自己的调优。
 
+`ClashObject` 仅保存规范化后的只读键值和序列，提供原始值、字段存在性及枚举访问，
+不再提供字符串、整数、端口和布尔 Getter。`ClashProxyNode.Name`／`Type` 仅对标量返回字符串，
+容器或缺失值返回 null；标准来源类型错误由 `NodeFieldReader` 报告。
 `ProxyNodeParser` 在协议解释前按 `Schema` 逐项检查 `ClashObject.Properties`。
 五个协议的字段声明与解释钩子集中在各自的 `*Protocol` 中；`NodeCatalogBuilder` 仅编排
 严格转换，不重复协议选择和字段解释。已知但未支持的连接字段、尚未分类的字段、冲突的别名和无效的
@@ -412,9 +431,9 @@ HY2 hop/BBR 值优先于调优。显式固定间隔不会补入调优的随机�
 
 地址族取自有效目标配置的 `dns.address_family`，完整计划统一保存该策略。
 默认三个平台均使用 `Ipv4Only`（全局 IPv4）。DNS、route、控制面 resolver 与 `BoxForgeEngine` 的
-`Validate(config, addressFamily)` 均使用同一实例中的策略，validator 不再次推导平台。IPv4-only 除解析
-策略和 IPv6 节点字面量外，还验证 early/post-resolve IPv6 reject guards 和首条
-无条件 AAAA 空 NOERROR；不能用缩窄到特定网络/域名的规则伪装全局 guard。
+`Validate(config, addressFamily)` 均使用同一实例中的策略，validator 不再次推导平台。
+IPv4-only 的解析策略、IPv6 节点字面量限制及首条无条件 AAAA 空 NOERROR 由目标校验器检查；
+早晚路由 IPv6 reject guards 的位置和范围由发射器固定生成，并由产物测试验证。
 `DualStack` 不要求上述 IPv4-only 限制。`Auto` 保留双栈 TUN 捕获，
 将 AAAA 空答与两道 IPv6 拒绝改为缺少公网 IPv6 出口地址时才生效的条件规则；
 各平台统一使用反转的 `default_interface_address: ["2000::/3"]` 条件，
@@ -426,15 +445,14 @@ Android 依赖客户端通过 libbox 提供默认物理接口和地址，缺少�
 `DirectDualStack` 在 `Auto` 的条件守卫之上按固定路由类别限制代理侧：不按解析池类别过滤 AAAA；
 路由在优先服务、其他服务各自阶段之前拒绝对应规则集的 IPv6，保留国内 UDP/443 的先行直连优先级，
 在 `route.final` 前对全部其余流量拒绝 `ip_version: 6`，控制面 resolver 与 rule-set HTTP client 使用 `ipv4_only`。
-直连出站仍使用 `prefer_ipv4`。validator 额外要求最后一条路由规则是无条件 IPv6 拒绝，
-且每条代理路由之前都有覆盖其规则集的 IPv6 拒绝。
+直连出站仍使用 `prefer_ipv4`。路由发射器固定生成最终无条件 IPv6 拒绝，
+以及每类服务之前覆盖该类完整规则集的 IPv6 拒绝，产物测试检查其位置和范围。
 `DualStack` 可显式启用，不按出口地址拒绝 IPv6。Android 不输出未实现的 strict_route；
 本地静态验证不等于真机防逃逸抓包或网络切换证明。
 
-- 路由规划器按 `RoutePhase` 枚举顺序展开规则及 Linux 的 bypass/bridge 伴随规则，
-  `RoutePlan` 直接检查实际规则的阶段顺序和必要策略，不再另存一份完整阶段列表。
-  后端映射有序结果，[路由顺序](routing-and-dns.md#路由规则顺序)由行为测试检查；
-  规则上的阶段标记不进入目标 JSON。目标 validator 独立检查实际规则。
+- 路由规划器只保存高层声明，发射器按固定顺序展开规则及 Linux 的 bypass/bridge 伴随规则，
+  [路由顺序](routing-and-dns.md#路由规则顺序)由产物行为测试检查。
+  目标 validator 独立检查规则引用及平台字段，不重复推导计划策略。
 - 输入文件按文件名排序，平台顺序固定为 Android、Linux、Windows。
 - 引擎不依赖 `File`、`Directory`、`Path` 或环境输入输出目录；文件边界
   由 CLI 的 `InputDiscovery`、`OutputTransaction` 和 `LocalGenerationWorkflow`
@@ -454,7 +472,7 @@ Android 依赖客户端通过 libbox 提供默认物理接口和地址，缺少�
 
 ## 校验边界
 
-`SingboxConfigValidator` 只检查生成器特有约束：IPv6/AAAA 守卫、控制面策略、
+`SingboxConfigValidator` 只检查生成器特有约束：DNS AAAA 守卫、控制面地址族策略、
 显式 SNI 映射保真、等价指纹范围、缓存身份，以及标签和引用完整性。
 来源字段、端口和认证材料在协议 Schema 与解释钩子中校验；目标语法与核心默认语义由
 自动化的官方 `check` 覆盖，校验器不再维护一份目标核心格式规则。

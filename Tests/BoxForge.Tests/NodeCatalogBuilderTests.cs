@@ -13,10 +13,83 @@ namespace BoxForge.Tests;
 [TestFixture]
 public sealed class NodeCatalogBuilderTests
 {
+    [Test]
+    public void SourceContainersAreReadOnlySnapshots()
+    {
+        var items = new ArrayList { "first" };
+        var nested = new Hashtable { ["items"] = items };
+        var input = new Hashtable { ["name"] = "safe", ["metadata"] = nested };
+        var source = new ClashProxyNode(input);
+        input["name"] = "changed";
+        nested["items"] = "changed";
+        items.Add("changed");
+
+        var metadata = (ClashObject)source.GetValue("metadata")!;
+        var values = (IList<object?>)metadata.GetValue("items")!;
+        Assert.Multiple(() =>
+        {
+            Assert.That(source.Name, Is.EqualTo("safe"));
+            Assert.That(values, Is.EqualTo(new[] { "first" }));
+            Assert.Throws<NotSupportedException>(() =>
+                ((IDictionary<string, object?>)source.Properties)["name"] = "mutated");
+            Assert.Throws<NotSupportedException>(() =>
+                ((IDictionary<string, object?>)metadata.Properties)["items"] = "mutated");
+            Assert.Throws<NotSupportedException>(() => values.Add("mutated"));
+        });
+    }
+
+    [TestCase("type", false)]
+    [TestCase("type", true)]
+    [TestCase("name", false)]
+    [TestCase("name", true)]
+    public void ContainerIdentityFieldsHaveSafeFieldDiagnostics(string field, bool mapping)
+    {
+        var properties = new Hashtable
+        {
+            ["name"] = "safe",
+            ["type"] = "vless",
+            ["uuid"] = "test-only",
+            ["server"] = "node.example.com",
+            ["port"] = 443
+        };
+        properties[field] = mapping ? new Hashtable { ["private-key"] = "private-value" }
+            : new[] { "private-value" };
+        var source = new ClashProxyNode(properties);
+        var error = Assert.Throws<NodeParseException>(() => NodeCatalogBuilder.Build(
+            new ClashConfig { Proxies = [source] }))!;
+        Assert.Multiple(() =>
+        {
+            Assert.That(error.Diagnostics.Single().Code, Is.EqualTo("SRC002"));
+            Assert.That(error.Diagnostics.Single().Path, Is.EqualTo($"source.proxies[0].{field}"));
+            Assert.That(field == "type" ? source.Type : source.Name, Is.Null);
+            Assert.That(error.Message, Does.Contain($"字段 '{field}' 必须是标量值"));
+            Assert.That(error.Message, Does.Not.Contain("System.").And.Not.Contain("BoxForge.Models")
+                .And.Not.Contain("private-value"));
+        });
+    }
+
+    [Test]
+    public void DisabledSmuxStillRejectsUnknownNestedFields()
+    {
+        var source = new Hashtable
+        {
+            ["name"] = "safe",
+            ["type"] = "vless",
+            ["uuid"] = "test-only",
+            ["server"] = "node.example.com",
+            ["port"] = 443,
+            ["smux"] = new Hashtable { ["enabled"] = false, ["private-unknown"] = "private-value" }
+        };
+        var error = Assert.Throws<NodeParseException>(() => NodeCatalogBuilder.Build(
+            new ClashConfig { Proxies = [new(source)] }))!;
+        Assert.That(error.Diagnostics.Single().Path, Is.EqualTo("source.proxies[0].smux.private-unknown"));
+        Assert.That(JsonSerializer.Serialize(error.Diagnostics), Does.Not.Contain("private-value"));
+    }
+
     [TestCase("network", "source.proxies[1].network")]
-    [TestCase("unknown-secret-key", "source.proxies[1].[unknown]")]
+    [TestCase("unknown-secret-key", "source.proxies[1].unknown-secret-key")]
     [TestCase("type", "source.proxies[1].type")]
-    public void SourceDiagnosticsLocateNodesWithoutExposingInput(string field, string expectedPath)
+    public void SourceDiagnosticsLocateNodesWithoutExposingValues(string field, string expectedPath)
     {
         var valid = new Hashtable
         {
@@ -38,7 +111,7 @@ public sealed class NodeCatalogBuilderTests
         {
             Assert.That(diagnostic.Path, Is.EqualTo(expectedPath));
             Assert.That(diagnostic.Code, Is.EqualTo("SRC002"));
-            Assert.That(serialized, Does.Not.Contain("secret"));
+            Assert.That(serialized, Does.Not.Contain("node-secret").And.Not.Contain("password-secret").And.Not.Contain("value-secret"));
             Assert.That(error.Message, Does.Contain("node-secret"));
             Assert.That(error.InnerException, Is.TypeOf<NodeParseException>());
         });
@@ -72,8 +145,9 @@ public sealed class NodeCatalogBuilderTests
     [TestCase("ss", "udp-over-tcp-version", 3, "udp-over-tcp-version")]
     [TestCase("ss", "plugin-opts.mode", "sensitive-mode", "plugin-opts.mode")]
     [TestCase("ss", "plugin_opts.host", "sensitive\nhost", "plugin_opts.host")]
-    [TestCase("ss", "plugin_opts.sensitive-key", "sensitive-value", "plugin_opts.[unknown]")]
+    [TestCase("ss", "plugin_opts.sensitive-key", "sensitive-value", "plugin_opts.sensitive-key")]
     [TestCase("ss", "smux.enabled", "sensitive-bool", "smux.enabled")]
+    [TestCase("ss", "smux.enabled", new[] { "sensitive-bool" }, "smux.enabled")]
     [TestCase("vless", "uuid", null, "uuid")]
     [TestCase("vless", "flow", "sensitive-unsupported-flow", "flow")]
     [TestCase("vless", "tls", "sensitive-bool", "tls")]
@@ -84,6 +158,8 @@ public sealed class NodeCatalogBuilderTests
     [TestCase("trojan", "reality_opts.short_id", "sensitive-id", "reality_opts.short_id")]
     [TestCase("anytls", "min-idle-session", -1, "min-idle-session")]
     [TestCase("anytls", "min_idle_session", "sensitive-count", "min_idle_session")]
+    [TestCase("anytls", "min_idle_session", "2147483648", "min_idle_session")]
+    [TestCase("anytls", "min_idle_session", new[] { "1" }, "min_idle_session")]
     [TestCase("anytls", "client-metadata", 123, "client-metadata")]
     [TestCase("anytls", "client_metadata", "sensitive\nmetadata", "client_metadata")]
     [TestCase("anytls", "idle_timeout", "sensitive-duration", "idle_timeout")]
@@ -143,7 +219,10 @@ public sealed class NodeCatalogBuilderTests
         {
             Assert.That(error.Diagnostics.Single(), Is.EqualTo(new ConfigDiagnostic("SRC002",
                 $"source.proxies[1].{expectedField}", "来源字段不受支持、存在冲突或值无效。")));
-            Assert.That(JsonSerializer.Serialize(error.Diagnostics), Does.Not.Contain("sensitive"));
+            Assert.That(JsonSerializer.Serialize(error.Diagnostics), Does.Not.Contain("sensitive-node")
+                .And.Not.Contain("sensitive-password").And.Not.Contain("sensitive-value"));
+            if (field is "min_idle_session" or "bbr_profile" or "udp_over_tcp")
+                Assert.That(error.Message, Does.Contain($"字段 '{expectedField}'"));
         });
     }
 

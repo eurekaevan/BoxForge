@@ -24,14 +24,10 @@ public sealed class SingboxConfigBuilderTests
     [TestCase("selection_mode")]
     [TestCase("pool_kind")]
     [TestCase("pool_service_id")]
-    [TestCase("route_empty")]
-    [TestCase("hijack_removed")]
-    [TestCase("hijack_narrowed")]
-    [TestCase("hijack_unscoped")]
-    [TestCase("hijack_wrong_port")]
-    [TestCase("hijack_requires_protocol")]
-    [TestCase("early_guard_removed")]
-    [TestCase("late_guard_narrowed")]
+    [TestCase("route_services_missing")]
+    [TestCase("route_sniff_timeout")]
+    [TestCase("route_sniff_ports")]
+    [TestCase("route_bootstrap")]
     [TestCase("service_dns_detour")]
     [TestCase("service_primary_secondary_swapped")]
     [TestCase("node_binding_removed")]
@@ -43,9 +39,6 @@ public sealed class SingboxConfigBuilderTests
         var source = CreateProxy("US01", "us.example.com") with { AddressFamily = AddressFamilyPolicy.Ipv4Only };
         var plan = ConfigurationPlanner.Plan(new NodeCatalog([source], [source.Name]), CreateDirectDualStackProfile(TargetPlatform.Linux));
         Assert.DoesNotThrow(plan.Validate);
-        int hijack = plan.Route.Rules.ToList().FindIndex(rule => rule.Phase == RoutePhase.DnsHijack);
-        int early = plan.Route.Rules.ToList().FindIndex(rule => rule.Phase == RoutePhase.EarlyIpv6Guard);
-        int late = plan.Route.Rules.ToList().FindIndex(rule => rule.Phase == RoutePhase.LateIpv6Guard);
         var binding = plan.NodeResolvers[source.Name];
         var first = plan.Dns.Pools[0];
         string firstPrimary = first.PrimaryServer;
@@ -61,14 +54,10 @@ public sealed class SingboxConfigBuilderTests
             "selection_mode" => plan with { Dns = plan.Dns with { SelectionMode = DnsResolverSelectionMode.SequentialFallback } },
             "pool_kind" => plan with { Dns = plan.Dns with { Pools = plan.Dns.Pools.SetItem(0, first with { Kind = DnsPoolKind.Global }) } },
             "pool_service_id" => plan with { Dns = plan.Dns with { Pools = plan.Dns.Pools.SetItem(0, first with { ServiceId = "other-service" }) } },
-            "route_empty" => plan with { Route = plan.Route with { Rules = [] } },
-            "hijack_removed" => plan with { Route = plan.Route with { Rules = plan.Route.Rules.RemoveAt(hijack) } },
-            "hijack_narrowed" => plan with { Route = plan.Route with { Rules = plan.Route.Rules.SetItem(hijack, plan.Route.Rules[hijack] with { Network = ["udp"] }) } },
-            "hijack_unscoped" => plan with { Route = plan.Route with { Rules = plan.Route.Rules.SetItem(hijack, plan.Route.Rules[hijack] with { Inbound = default }) } },
-            "hijack_wrong_port" => plan with { Route = plan.Route with { Rules = plan.Route.Rules.SetItem(hijack, plan.Route.Rules[hijack] with { Port = [5353] }) } },
-            "hijack_requires_protocol" => plan with { Route = plan.Route with { Rules = plan.Route.Rules.SetItem(hijack, plan.Route.Rules[hijack] with { Protocol = ["dns"] }) } },
-            "early_guard_removed" => plan with { Route = plan.Route with { Rules = plan.Route.Rules.RemoveAt(early) } },
-            "late_guard_narrowed" => plan with { Route = plan.Route with { Rules = plan.Route.Rules.SetItem(late, plan.Route.Rules[late] with { Port = [443] }) } },
+            "route_services_missing" => plan with { Route = plan.Route with { Services = default } },
+            "route_sniff_timeout" => plan with { Route = plan.Route with { SniffTimeout = "invalid" } },
+            "route_sniff_ports" => plan with { Route = plan.Route with { SniffExcludedPorts = default } },
+            "route_bootstrap" => plan with { Route = plan.Route with { BootstrapAddress = "invalid" } },
             "service_dns_detour" => plan with { Dns = plan.Dns with { Resolvers = [.. plan.Dns.Resolvers.Select(resolver => resolver.Name == firstPrimary ? resolver with { Detour = SingboxTags.MainProxyGroup } : resolver)] } },
             "service_primary_secondary_swapped" => plan with
             {
@@ -84,7 +73,7 @@ public sealed class SingboxConfigBuilderTests
         };
         var error = Assert.Throws<ConfigValidationException>(() => new SingboxConfigBuilder().Build(plan, "cache"))!;
         // The mode is lowered at emission; changing it only contradicts the enclosing platform policy.
-        string expectedCode = fault == "selection_mode" ? "IR001" : "IR011";
+        string expectedCode = fault == "selection_mode" ? "IR001" : fault.StartsWith("route_", StringComparison.Ordinal) ? "IR008" : "IR011";
         Assert.That(error.Diagnostics.Any(item => item.Code == expectedCode), Is.True);
         Assert.That(JsonSerializer.Serialize(error.Diagnostics), Does.Not.Contain("us.example.com"));
     }
@@ -136,7 +125,7 @@ public sealed class SingboxConfigBuilderTests
         var nodes = new NodeCatalog([CreateProxy("US01", "us-1.example.com"), CreateProxy("US02", "us-2.example.com")], ["US01", "US02"]);
         var plan = ConfigurationPlanner.Plan(nodes, CreateProfile(TargetPlatform.Linux, apiEnabled: true));
         if (fault == "service_selector")
-            path = $"plan.route.rules[{plan.Route.Rules.Select((rule, index) => (rule, index)).First(item => item.rule.Phase == RoutePhase.PriorityServices).index}].outbound";
+            path = "plan.route.services[0].outbound";
 
         plan = fault switch
         {
@@ -204,14 +193,14 @@ public sealed class SingboxConfigBuilderTests
         {
             Groups = plan.Groups with { Main = plan.Groups.Main with { Preferred = "sensitive-group" } },
             Dns = plan.Dns with { Pools = default },
-            Route = plan.Route with { Rules = default, FinalOutbound = "sensitive-outbound" }
+            Route = plan.Route with { Services = default, FinalOutbound = "sensitive-outbound" }
         };
         var error = Assert.Throws<ConfigValidationException>(plan.Validate)!;
         Assert.That(error.Diagnostics.Select(item => (item.Code, item.Path)), Is.EqualTo(new[]
         {
             ("IR010", "plan.groups.main.preferred"),
             ("IR008", "plan.dns.pools"),
-            ("IR008", "plan.route.rules"),
+            ("IR008", "plan.route.services"),
             ("IR003", "plan.route.final_outbound")
         }));
         Assert.That(JsonSerializer.Serialize(error.Diagnostics), Does.Not.Contain("sensitive"));
@@ -257,7 +246,7 @@ public sealed class SingboxConfigBuilderTests
     [TestCase("groups", "IR010", "plan.groups.main.preferred")]
     [TestCase("dns", "IR008", "plan.dns.pools")]
     [TestCase("dns_null", "IR008", "plan.dns.pools[0]")]
-    [TestCase("route", "IR010", "plan.route.rules[0].phase")]
+    [TestCase("route", "IR008", "plan.route.sniff_excluded_ports")]
     public void BuildRejectsInvalidComponentPlansBeforeMappingTargets(string component, string code, string path)
     {
         var plan = ConfigurationPlanner.Plan(new NodeCatalog([], []), CreateProfile(TargetPlatform.Linux));
@@ -266,7 +255,7 @@ public sealed class SingboxConfigBuilderTests
             "groups" => plan with { Groups = plan.Groups with { Main = plan.Groups.Main with { Preferred = "missing" } } },
             "dns" => plan with { Dns = plan.Dns with { Pools = default } },
             "dns_null" => plan with { Dns = plan.Dns with { Pools = plan.Dns.Pools.SetItem(0, null!) } },
-            _ => plan with { Route = plan.Route with { Rules = plan.Route.Rules.SetItem(0, plan.Route.Rules[0] with { Phase = (RoutePhase)(-1) }) } }
+            _ => plan with { Route = plan.Route with { SniffExcludedPorts = default } }
         };
         var error = Assert.Throws<ConfigValidationException>(() => new SingboxConfigBuilder().Build(plan, null))!;
         Assert.That(error.Diagnostics.Select(item => (item.Code, item.Path)), Is.EqualTo(new[] { (code, path) }));
@@ -922,38 +911,18 @@ public sealed class SingboxConfigBuilderTests
         });
     }
 
-    [TestCase("final_guard_removed")]
-    [TestCase("service_guard_removed")]
-    [TestCase("control_plane_dual_stack")]
-    public void DirectDualStackValidatorRejectsConfigsThatCanSendIpv6ToProxy(string fault)
+    [Test]
+    public void DirectDualStackValidatorStillGuardsControlPlaneResolution()
     {
         SingboxConfig config = PlanAndBuild(
             new NodeCatalog([], []), CreateDirectDualStackProfile(TargetPlatform.Linux), new string('a', 64));
-        List<RouteRule> rules = config.Route.Rules;
-        config = fault switch
+        config = config with
         {
-            "final_guard_removed" => config with { Route = config.Route with { Rules = [.. rules.Take(rules.Count - 1)] } },
-            "service_guard_removed" => config with
-            {
-                Route = config.Route with
-                {
-                    Rules = [.. rules.Where(rule => !(rule.IpVersion == 6 && rule.RuleSet is not null))]
-                }
-            },
-            _ => config with
-            {
-                Route = config.Route with { DefaultDomainResolver = config.Route.DefaultDomainResolver! with { Strategy = null } }
-            }
+            Route = config.Route with { DefaultDomainResolver = config.Route.DefaultDomainResolver! with { Strategy = null } }
         };
-        var error = Assert.Throws<Exceptions.ConfigValidationException>(
+        var error = Assert.Throws<ConfigValidationException>(
             () => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.DirectDualStack))!;
-        string expected = fault switch
-        {
-            "final_guard_removed" => "SB093",
-            "service_guard_removed" => "SB094",
-            _ => "SB061"
-        };
-        Assert.That(error.Diagnostics.Select(diagnostic => diagnostic.Code), Does.Contain(expected));
+        Assert.That(error.Diagnostics.Select(diagnostic => diagnostic.Code), Does.Contain("SB061"));
     }
 
     [TestCase(TargetPlatform.Android)]

@@ -1,5 +1,4 @@
 using BoxForge.Helpers;
-using BoxForge.Models.Clash;
 using BoxForge.Models.Intermediate;
 
 namespace BoxForge.Converters;
@@ -12,15 +11,14 @@ internal static class TrojanProtocol
         .Mapped("password")
         .Unsupported("Trojan Shadowsocks 加密选项尚未映射", "ss-opts", "ss_opts");
 
-    // The parser validates the name and schema before this call.
-    internal static TrojanNode ParseValidated(ClashProxyNode node, string name)
+    internal static TrojanNode Parse(NodeFieldReader node, string name)
     {
-        string server = node.GetRequiredString("server");
+        string server = node.RequiredString("server");
         var tls = TlsConfigHelper.ExtractSettings(node, server, forceTls: true)
             ?? throw new InvalidOperationException("Trojan TLS interpretation unexpectedly returned no settings.");
-        return new TrojanNode(name, server, node.GetRequiredPort("port"),
-            node.GetRequiredRawString("password"),
-            new(node.GetNullableBool("tls"), node.GetPresentField("tls") is not null),
+        return new TrojanNode(name, server, node.RequiredPort("port"),
+            node.RequiredRawString("password"),
+            new(node.OptionalBool("tls"), node.PresentField("tls") is not null),
             tls);
     }
 }

@@ -148,6 +148,8 @@ Windows。每个 `config.json` 与引擎产物的 UTF-8 字节完全一致。
 
 Server 支持通过 `--profile profile.json` 或 `BOXFORGE_Profile` 在启动时加载
 [地区覆盖](configuration.md#地区-profile)和[服务覆盖](configuration.md#服务-profile)。
+`--profile` 必须提供非空文件路径，不接受 `Profile` 子键参数。
+profile 或 `BOXFORGE_` 配置无效时，Server 在监听前输出配置错误并以状态码 `1` 退出，不打印异常调用栈。
 同一文件还支持[rule-set 来源覆盖](configuration.md#rule-set-来源-profile)和
 [resolver 地址和 TLS 名称覆盖](configuration.md#resolver-profile)，不改变既有 tag、主备关系或 detour。
 HTTP 请求可通过内联 `profile` 覆盖运行时开关、策略、平台参数及上述数据，

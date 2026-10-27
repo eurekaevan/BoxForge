@@ -324,6 +324,11 @@ public sealed class ServerApiTests
     [TestCase(true, "singbox_api")]
     [TestCase(true, "unknown_environment")]
     [TestCase(true, "structured_profile_environment")]
+    [TestCase(true, "structured_profile_argument")]
+    [TestCase(true, "structured_profile_argument_without_value")]
+    [TestCase(true, "missing_profile_argument")]
+    [TestCase(true, "empty_profile_argument")]
+    [TestCase(true, "profile_followed_by_option")]
     [TestCase(true, null, "environment")]
     [TestCase(true, null, "appsettings")]
     [TestCase(true, null, "arguments")]
@@ -384,6 +389,20 @@ public sealed class ServerApiTests
             startInfo.Environment["BOXFORGE_regions__host_only"] = "private-environment-value";
         if (invalidConfiguration == "structured_profile_environment")
             startInfo.Environment["BOXFORGE_Profile__child"] = "private-environment-value";
+        if (invalidConfiguration == "structured_profile_argument")
+            startInfo.ArgumentList.Add("--Profile:child=private-environment-value");
+        if (invalidConfiguration == "structured_profile_argument_without_value")
+            startInfo.ArgumentList.Add("--Profile:child");
+        if (invalidConfiguration == "missing_profile_argument")
+            startInfo.ArgumentList.Add("--profile");
+        if (invalidConfiguration == "empty_profile_argument")
+            startInfo.ArgumentList.Add("--profile=");
+        if (invalidConfiguration == "profile_followed_by_option")
+        {
+            startInfo.ArgumentList.Add("--profile");
+            startInfo.ArgumentList.Add("--urls");
+            startInfo.ArgumentList.Add("http://127.0.0.1:0");
+        }
         if (hostSource != null)
         {
             // With no prefixed feature overrides, host values must not enable the API or disable Tailscale.
@@ -405,7 +424,6 @@ public sealed class ServerApiTests
             }
             else
             {
-                startInfo.ArgumentList.Add("--Profile:child=missing.json");
                 startInfo.ArgumentList.Add("--features:api:enabled=true");
                 startInfo.ArgumentList.Add("--features:tailscale:enabled=false");
                 startInfo.ArgumentList.Add("--dns:timeout=invalid");
@@ -433,14 +451,17 @@ public sealed class ServerApiTests
                     "tailscale" => "profile.host.features.tailscale.enabled",
                     "unknown_environment" => "BOXFORGE_ 环境变量必须映射到 profile 键",
                     "structured_profile_environment" => "BOXFORGE_Profile 只接受文件路径",
+                    "structured_profile_argument" or "structured_profile_argument_without_value" => "Profile 只接受文件路径",
+                    "missing_profile_argument" or "empty_profile_argument" or "profile_followed_by_option" => "--profile 必须指定非空文件路径",
                     _ => "profile.host.features.api.enabled"
                 };
                 Assert.Multiple(() =>
                 {
-                    Assert.That(process.ExitCode, Is.Not.EqualTo(0));
+                    Assert.That(process.ExitCode, Is.EqualTo(1));
                     Assert.That(output, Does.Not.Contain(listeningPrefix));
                     Assert.That(output + errors, Does.Contain(expectedDiagnostic));
                     Assert.That(output + errors, Does.Not.Contain("private-environment-value"));
+                    Assert.That(output + errors, Does.Not.Contain("Unhandled exception").And.Not.Contain("   at "));
                 });
                 return;
             }

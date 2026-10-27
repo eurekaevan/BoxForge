@@ -351,11 +351,11 @@ public sealed class ProxyNodeParserTests
         (string Field, object Value, string Error)[] fixes =
         [
             ("ports", "4000-4001", "ports 包含无效端口"),
-            ("obfs_min_packet_size", 0, "字段 'obfs-min-packet-size'"),
-            ("obfs_max_packet_size", 1200, "字段 'obfs-max-packet-size'"),
+            ("obfs_min_packet_size", 0, "字段 'obfs_min_packet_size'"),
+            ("obfs_max_packet_size", 1200, "字段 'obfs_max_packet_size'"),
             ("obfs-password", "test-only", "字段 'obfs-password'"),
             ("hop_interval", "20", "字段 'hop-interval'"),
-            ("bbr_profile", "aggressive", "字段 'bbr-profile'"),
+            ("bbr_profile", "aggressive", "字段 'bbr_profile'"),
             ("up", 100, "字段 'up'"),
             ("down", 80, "字段 'down'"),
             ("password", "test-only", "缺失必填字段或为空: password"),
@@ -516,7 +516,7 @@ public sealed class ProxyNodeParserTests
             ("password", "test-only", "缺失必填字段或为空: password"),
             ("idle_timeout", "30", "字段 'idle_timeout'"),
             ("idle_session_check_interval", "30", "字段 'idle_session_check_interval'"),
-            ("min_idle_session", 0, "字段 'min-idle-session'"),
+            ("min_idle_session", 0, "字段 'min_idle_session'"),
             ("client_metadata", "", "字段 'client-metadata'"),
             ("client-fingerprint", "none", "字段 'client-fingerprint'")
         ];

@@ -185,6 +185,40 @@ public sealed class ProfileConfigurationTests
     }
 
     [Test]
+    public void RootRequestErrorsPrecedeUnselectedPlatformStructureErrors()
+    {
+        var request = JsonNode.Parse("""
+            {"features":{"api":{"enabled":"invalid"}},"platforms":{"Windows":{"typo":true}}}
+            """)!.AsObject();
+        foreach (bool batch in new[] { false, true })
+        {
+            var error = Assert.Throws<ProfileValidationException>(() =>
+            {
+                if (batch) _ = BoxForgeProfile.Default.ResolvePlatforms([TargetPlatform.Linux, TargetPlatform.Android], request);
+                else _ = BoxForgeProfile.Default.Resolve(TargetPlatform.Linux, request);
+            })!;
+            Assert.That(error.Diagnostics.Single().Path, Is.EqualTo("profile.request.features.api.enabled"));
+        }
+    }
+
+    [Test]
+    public void BatchRequestsMatchIndependentResolutionAndKeepTheirInput()
+    {
+        var request = JsonNode.Parse("""
+            {"tuning":{"connect_timeout":"9s"},"platforms":{
+              "Linux":{"tuning":{"connect_timeout":"11s"}},
+              "Windows":{"route":{"services":{"patch":[{"id":"ai","default_region":"jp"}]}}}}}
+            """)!.AsObject();
+        string snapshot = request.ToJsonString();
+        TargetPlatform[] platforms = Enum.GetValues<TargetPlatform>();
+        var batch = BoxForgeProfile.Default.ResolvePlatforms(platforms, request);
+        foreach (TargetPlatform platform in platforms)
+            Assert.That(batch[platform].ToResolvedJson(),
+                Is.EqualTo(BoxForgeProfile.Default.Resolve(platform, request).ToResolvedJson()));
+        Assert.That(request.ToJsonString(), Is.EqualTo(snapshot));
+    }
+
+    [Test]
     public void RequestsRejectNullElementsInsideUnselectedPlatformEntities()
     {
         var request = JsonNode.Parse("""

@@ -10,33 +10,34 @@ internal static class ProxyNodeParser
 {
     internal static ProxyNode Parse(ClashProxyNode proxy)
     {
-        (string Name, SourceFieldSchema Schema, Func<ClashProxyNode, string, ProxyNode> Parse) definition = proxy.Type?.ToLowerInvariant() switch
+        string? type = new NodeFieldReader(proxy).String("type");
+        (string Name, SourceFieldSchema Schema, Func<NodeFieldReader, string, ProxyNode> Parse) definition = type?.ToLowerInvariant() switch
         {
-            "vless" => ("VLESS", VlessProtocol.Schema, VlessProtocol.ParseValidated),
-            "trojan" => ("Trojan", TrojanProtocol.Schema, TrojanProtocol.ParseValidated),
-            "hysteria2" => ("Hysteria2", Hysteria2Protocol.Schema, Hysteria2Protocol.ParseValidated),
-            "ss" or "shadowsocks" => ("Shadowsocks", ShadowsocksProtocol.Schema, ShadowsocksProtocol.ParseValidated),
-            "anytls" => ("AnyTLS", AnyTlsProtocol.Schema, AnyTlsProtocol.ParseValidated),
-            null => throw new NodeParseException($"节点 '{proxy.Name}' 缺少 type 字段",
+            "vless" => ("VLESS", VlessProtocol.Schema, VlessProtocol.Parse),
+            "trojan" => ("Trojan", TrojanProtocol.Schema, TrojanProtocol.Parse),
+            "hysteria2" => ("Hysteria2", Hysteria2Protocol.Schema, Hysteria2Protocol.Parse),
+            "ss" or "shadowsocks" => ("Shadowsocks", ShadowsocksProtocol.Schema, ShadowsocksProtocol.Parse),
+            "anytls" => ("AnyTLS", AnyTlsProtocol.Schema, AnyTlsProtocol.Parse),
+            null => throw new NodeParseException($"节点 '{proxy.Name ?? "<未命名>"}' 缺少 type 字段",
                 new ConfigDiagnostic("SRC002", "source.type", "节点协议类型缺失或不受支持。")),
-            _ => throw new NodeParseException($"节点 '{proxy.Name}' 使用了不支持的类型: {proxy.Type}",
+            _ => throw new NodeParseException($"节点 '{proxy.Name ?? "<未命名>"}' 使用了不支持的类型: {type}",
                 new ConfigDiagnostic("SRC002", "source.type", "节点协议类型缺失或不受支持。"))
         };
         var (displayName, schema, parse) = definition;
+        string name = "<未命名>";
         try
         {
-            string name = proxy.GetRequiredString("name");
-            schema.Validate(proxy);
-            ProxyNode node = parse(proxy, name) with
+            NodeFieldReader reader = schema.Bind(proxy, out name);
+            ProxyNode node = parse(reader, name) with
             {
-                AddressFamily = proxy.GetPresentField("ip-version") is null ? null : AddressFamilyPolicy.Ipv4Only
+                AddressFamily = reader.PresentField("ip-version") is null ? null : AddressFamilyPolicy.Ipv4Only
             };
             node.Validate();
             return node;
         }
         catch (NodeParseException ex)
         {
-            throw new NodeParseException($"{displayName} 节点 '{proxy.Name}' 解析失败 -> {ex.Message}",
+            throw new NodeParseException($"{displayName} 节点 '{name}' 解析失败 -> {ex.Message}",
                 ex.Diagnostics[0], ex);
         }
     }

@@ -10,6 +10,7 @@ internal sealed partial class OutputTransaction : IDisposable
     private readonly Action<string, string> moveDirectory;
     private string? stagingDirectory;
     private bool hasChanges;
+    private readonly Dictionary<string, ConversionArtifact> artifacts = new(PathComparer);
 
     public OutputTransaction(
         string outputDirectory,
@@ -21,15 +22,10 @@ internal sealed partial class OutputTransaction : IDisposable
         this.moveDirectory = moveDirectory ?? Directory.Move;
         string outputParent = Directory.GetParent(outputDirectory)?.FullName
             ?? throw new InvalidOperationException("输出目录不能是文件系统根目录。");
-        Directory.CreateDirectory(outputParent);
-        ReportExistingTransactions(outputParent);
+        if (Directory.Exists(outputParent)) ReportExistingTransactions(outputParent);
         stagingDirectory = Path.Combine(
             outputParent,
             $".{Path.GetFileName(outputDirectory)}.boxforge-{Guid.NewGuid():N}");
-        if (OperatingSystem.IsWindows())
-            Directory.CreateDirectory(stagingDirectory);
-        else
-            Directory.CreateDirectory(stagingDirectory, PrivateDirectoryMode);
     }
 
     public async Task<bool> StageAsync(
@@ -50,33 +46,50 @@ internal sealed partial class OutputTransaction : IDisposable
             throw new InvalidOperationException($"配置输出路径必须位于暂存目录内：{configName}");
         }
 
+        relativePath = Path.GetRelativePath(staging, stagedFile);
         string existingFile = Path.Combine(outputDirectory, relativePath);
-        Directory.CreateDirectory(Path.GetDirectoryName(stagedFile)!);
-        await File.WriteAllTextAsync(stagedFile, artifact.Content, cancellationToken);
-        if (!OperatingSystem.IsWindows())
-            File.SetUnixFileMode(stagedFile, File.Exists(existingFile)
-                ? File.GetUnixFileMode(existingFile)
-                : UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        cancellationToken.ThrowIfCancellationRequested();
         bool changed = !File.Exists(existingFile)
             || !string.Equals(
                 await File.ReadAllTextAsync(existingFile, cancellationToken),
                 artifact.Content,
                 StringComparison.Ordinal);
+        artifacts[relativePath] = artifact;
         hasChanges |= changed;
         return changed;
     }
 
-    public void Commit()
+    public async Task CommitAsync(CancellationToken cancellationToken = default)
     {
         string staging = stagingDirectory ?? throw new ObjectDisposedException(nameof(OutputTransaction));
-        if (!hasChanges && HaveSameFileSet(staging, outputDirectory))
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!hasChanges && HaveSameFileSet())
         {
             return;
         }
 
-        PreserveDirectoryPermissions(staging);
-
         string parentDirectory = Directory.GetParent(outputDirectory)!.FullName;
+        Directory.CreateDirectory(parentDirectory);
+        if (OperatingSystem.IsWindows())
+            Directory.CreateDirectory(staging);
+        else
+            Directory.CreateDirectory(staging, PrivateDirectoryMode);
+        foreach (var (relativePath, artifact) in artifacts)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string stagedFile = Path.Combine(staging, relativePath);
+            string existingFile = Path.Combine(outputDirectory, relativePath);
+            Directory.CreateDirectory(Path.GetDirectoryName(stagedFile)!);
+            await File.WriteAllTextAsync(stagedFile, artifact.Content, cancellationToken);
+            if (!OperatingSystem.IsWindows())
+                File.SetUnixFileMode(stagedFile, File.Exists(existingFile)
+                    ? File.GetUnixFileMode(existingFile)
+                    : UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+        PreserveDirectoryPermissions(staging);
+        cancellationToken.ThrowIfCancellationRequested();
+
         string backupDirectory = Path.Combine(
             parentDirectory,
             $".{Path.GetFileName(outputDirectory)}.backup-{Guid.NewGuid():N}");
@@ -92,6 +105,7 @@ internal sealed partial class OutputTransaction : IDisposable
 
             moveDirectory(staging, outputDirectory);
             stagingDirectory = null;
+            artifacts.Clear();
         }
         catch (Exception publishFailure)
         {
@@ -132,6 +146,7 @@ internal sealed partial class OutputTransaction : IDisposable
     {
         string? staging = stagingDirectory;
         stagingDirectory = null;
+        artifacts.Clear();
         if (staging is not null && Directory.Exists(staging))
         {
             try
@@ -190,16 +205,11 @@ internal sealed partial class OutputTransaction : IDisposable
         Directory.Delete(directory, recursive: true);
     }
 
-    private static bool HaveSameFileSet(string stagingDirectory, string outputDirectory)
-    {
-        return Directory.Exists(outputDirectory)
-            && RelativeFiles(stagingDirectory).SequenceEqual(RelativeFiles(outputDirectory), PathComparer);
-
-        static IEnumerable<string> RelativeFiles(string directory) => Directory
-            .EnumerateFiles(directory, "*", SearchOption.AllDirectories)
-            .Select(path => Path.GetRelativePath(directory, path))
-            .Order(PathComparer);
-    }
+    private bool HaveSameFileSet() => Directory.Exists(outputDirectory)
+        && artifacts.Keys.Order(PathComparer).SequenceEqual(Directory
+            .EnumerateFiles(outputDirectory, "*", SearchOption.AllDirectories)
+            .Select(path => Path.GetRelativePath(outputDirectory, path))
+            .Order(PathComparer), PathComparer);
 
     private const UnixFileMode PrivateDirectoryMode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
 

@@ -416,7 +416,7 @@ public sealed class DnsProfileBuilderTests
     }
 
     [Test]
-    public void OverlappingServicePoolsFollowRoutePhaseAndListOrderWithCustomIdentities()
+    public void OverlappingServicePoolsFollowServicePriorityAndListOrderWithCustomIdentities()
     {
         var profile = BoxForgeProfile.Default.ApplyOverrides(JsonNode.Parse("""
             {"route":{"services":{"replace":[
