@@ -86,7 +86,7 @@
       "id": "hysteria2.ports",
       "source_field": "ports",
       "source_meaning": "Nonempty ports takes precedence over port; retain source order, scalar ports and explicit ranges.",
-      "target_meaning": "Emit server_port for one scalar; otherwise emit server_ports as start:end ranges, including equal-endpoint ranges for list scalars.",
+      "target_meaning": "With nonempty ports, allow omitted/null port or an integer 0..65535, including the compatible zero sentinel; otherwise require port 1..65535. Emit server_port for one scalar; otherwise emit server_ports as start:end ranges, including equal-endpoint ranges for list scalars.",
       "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/hysteria2.go",
       "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/hysteria2/outbound.go",
       "status": "Mapped"

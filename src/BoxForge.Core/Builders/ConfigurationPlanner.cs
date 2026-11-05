@@ -20,11 +20,8 @@ internal static class ConfigurationPlanner
         var dns = DnsProfileBuilder.Plan(settings);
         var route = RouteProfileBuilder.Plan(settings);
         bool apiEnabled = settings.Features.Api.Enabled;
-        string ruleSetDetour = groups.Probes.Count > 0
-            ? groups.Probes[0].Name
-            : nodes.Names.Count > 0
-                ? nodes.Names[0]
-                : SingboxTags.MainProxyGroup;
+        string ruleSetDetour = groups.Regions.FirstOrDefault(region => region.Name == groups.Main.Preferred)?.Preferred
+            ?? groups.Main.Preferred;
         AddressFamilyPolicy controlPlaneFamily = platform.AddressFamily.ForControlPlane();
         var clients = new List<HttpClientPlan>
         {
@@ -39,7 +36,7 @@ internal static class ConfigurationPlanner
         {
             DirectResolver = new DomainResolverPlan(SingboxTags.DirectAliDns, platform.AddressFamily, true, true),
             NodeResolvers = nodes.Nodes.Where(node => node.AddressFamily == AddressFamilyPolicy.Ipv4Only
-                    && platform.AddressFamily != AddressFamilyPolicy.Ipv4Only)
+                    && controlPlaneFamily != AddressFamilyPolicy.Ipv4Only)
                 .DistinctBy(node => node.Name, StringComparer.Ordinal)
                 .ToImmutableDictionary(node => node.Name,
                     _ => new DomainResolverPlan(SingboxTags.DirectAliDns, AddressFamilyPolicy.Ipv4Only, true), StringComparer.Ordinal)

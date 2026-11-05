@@ -90,7 +90,7 @@ public sealed class ProtocolSourceMappingTests
             .Count(rule => rule.GetProperty("action").GetString() == "reject"
                 && rule.TryGetProperty("ip_version", out JsonElement version)
                 && version.GetInt32() == 6
-                && !rule.TryGetProperty("rule_set", out _)), Is.EqualTo(2));
+                && !rule.TryGetProperty("rule_set", out _)), Is.EqualTo(1));
 
         switch (fixture)
         {

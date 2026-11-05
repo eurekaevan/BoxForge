@@ -173,7 +173,8 @@ public sealed class GenerateCommandParserTests
                 Assert.That(bootstrap.GetProperty("server").GetString(), Is.EqualTo("203.0.113.53"));
                 Assert.That(bootstrap.GetProperty("tls").GetProperty("server_name").GetString(), Is.EqualTo("dns.example.net"));
                 Assert.That(document.RootElement.GetProperty("route").GetProperty("rules").EnumerateArray()
-                    .Any(rule => rule.TryGetProperty("ip_cidr", out var cidrs) && cidrs[0].GetString() == "203.0.113.53/32"), Is.True);
+                    .Any(rule => rule.TryGetProperty("ip_cidr", out var cidrs) && cidrs[0].GetString() == "203.0.113.53/32"), Is.False,
+                    "Resolver overrides must not create client routing exemptions.");
             }
             await File.WriteAllTextAsync(path, """{"unknown":true}""");
             var rejected = await RunCliAsync(arguments, environment);

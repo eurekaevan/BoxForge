@@ -157,6 +157,9 @@ public sealed class ResolvedProfile
             if (service.RuleSets.IsDefaultOrEmpty || (validateReferences && service.RuleSets.Any(tag => !ruleSetTags.Contains(tag)))
                 || service.RuleSets.Distinct(StringComparer.Ordinal).Count() != service.RuleSets.Length)
                 throw new ProfileValidationException("profile." + servicePath + ".rule_sets", "profile.services.rule_sets: 必须为非空、不重复且全部引用已声明 rule-set 的数组。");
+            if (validateReferences && service.RuleSets.Contains(RuleSetTags.CnIp))
+                throw new ProfileValidationException("profile." + servicePath + ".rule_sets",
+                    "profile.services.rule_sets: cnip 为 IP 专用规则集，不能用于服务 DNS 查询前分类。");
         }
         for (int index = 0; index < data.Route.Services.Length; index++)
         {
@@ -187,6 +190,8 @@ public sealed class ResolvedProfile
             throw new ProfileValidationException("profile.dns", $"{path}: 无效的地址族或 DNS 模式。");
         if (platform != TargetPlatform.Linux && settings.MultiQueue == true)
             throw new ProfileValidationException("profile.route.multi_queue", $"{path}.multi_queue: 仅支持 Linux。");
+        if (platform == TargetPlatform.Windows && settings.AutoRedirect == true)
+            throw new ProfileValidationException("profile.route.auto_redirect", $"{path}.auto_redirect: 不支持 Windows。");
         Duration(settings.ConnectTimeout, "profile.tuning.connect_timeout");
         Duration(settings.UrlTestInterval, "profile.tuning.url_test_interval");
         if (settings.TcpKeepAlive is { } keepAlive) Duration(keepAlive, "profile.tuning.tcp_keep_alive");
@@ -200,6 +205,7 @@ public sealed class ResolvedProfile
             string[] parts = address.Split('/');
             if (parts.Length != 2 || !IPAddress.TryParse(parts[0], out var ip) || ip.ToString() != parts[0]
                 || !int.TryParse(parts[1], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int prefix)
+                || parts[1] != prefix.ToString(System.Globalization.CultureInfo.InvariantCulture)
                 || prefix < 1 || prefix > (ip.AddressFamily == AddressFamily.InterNetwork ? 32 : 128)
                 || ip.IsIPv4MappedToIPv6 || !families.Add(ip.AddressFamily))
                 throw new ProfileValidationException("profile.route.tun_addresses", $"{path}.tun_addresses: 必须是规范且不重复地址族的 CIDR 地址。");

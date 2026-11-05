@@ -83,7 +83,7 @@
 
 - 来源字段：`ports`；状态：`Mapped`。
 - 来源解释：Nonempty ports takes precedence over port; retain source order, scalar ports and explicit ranges.
-- 目标解释：Emit server_port for one scalar; otherwise emit server_ports as start:end ranges, including equal-endpoint ranges for list scalars.
+- 目标解释：With nonempty ports, allow omitted/null port or an integer 0..65535, including the compatible zero sentinel; otherwise require port 1..65535. Emit server_port for one scalar; otherwise emit server_ports as start:end ranges, including equal-endpoint ranges for list scalars.
 - 固定源码：[来源](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/hysteria2.go)、[目标](https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/hysteria2/outbound.go)。
 
 ### `hysteria2.upload`

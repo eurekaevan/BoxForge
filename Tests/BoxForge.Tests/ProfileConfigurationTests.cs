@@ -81,7 +81,8 @@ public sealed class ProfileConfigurationTests
             {
                 Assert.That(profile.Resolve(platform).Settings.AddressFamily, Is.EqualTo(AddressFamilyPolicy.Auto));
                 Assert.That(dns.TryGetProperty("strategy", out _), Is.False);
-                Assert.That(dns.GetProperty("rules")[0].GetProperty("rules")[1]
+                Assert.That(dns.GetProperty("rules")[0].GetProperty("server").GetString(), Is.EqualTo("dns-tailscale"));
+                Assert.That(dns.GetProperty("rules")[1].GetProperty("rules")[1]
                     .GetProperty("default_interface_address")[0].GetString(), Is.EqualTo("2000::/3"));
                 Assert.That(root.GetProperty("inbounds")[0].GetProperty("address").EnumerateArray()
                     .Select(value => value.GetString()).Any(value => value!.Contains(':')), Is.True);
@@ -107,7 +108,7 @@ public sealed class ProfileConfigurationTests
         Assert.Multiple(() =>
         {
             Assert.That(customJson.RootElement.GetProperty("dns").TryGetProperty("strategy", out _), Is.False);
-            Assert.That(customJson.RootElement.GetProperty("dns").GetProperty("rules")[0]
+            Assert.That(customJson.RootElement.GetProperty("dns").GetProperty("rules")[1]
                 .GetProperty("rules")[1].GetProperty("default_interface_address")[0].GetString(), Is.EqualTo("2000::/3"));
             Assert.That(ordinaryJson.RootElement.GetProperty("dns").GetProperty("strategy").GetString(), Is.EqualTo("ipv4_only"));
             Assert.That(ordinaryJson.RootElement.GetProperty("dns").GetProperty("rules")[0]
@@ -119,7 +120,7 @@ public sealed class ProfileConfigurationTests
     [TestCase(TargetPlatform.Android)]
     [TestCase(TargetPlatform.Linux)]
     [TestCase(TargetPlatform.Windows)]
-    public async Task AutoRetainsExplicitNodeIpv4ResolutionWithoutConstrainingOtherNodes(TargetPlatform platform)
+    public async Task AutoUsesGlobalIpv4ResolutionForConstrainedAndUnconstrainedNodes(TargetPlatform platform)
     {
         var profile = Load("""{"dns":{"address_family":"Auto"}}""");
         string yaml = Yaml("constrained") + "    ip-version: ipv4\n" + Yaml("unconstrained")["proxies:\n".Length..];
@@ -130,7 +131,9 @@ public sealed class ProfileConfigurationTests
         JsonElement unconstrained = proxies.Single(node => node.GetProperty("tag").GetString() == "unconstrained");
         Assert.Multiple(() =>
         {
-            Assert.That(constrained.GetProperty("domain_resolver").GetProperty("strategy").GetString(), Is.EqualTo("ipv4_only"));
+            Assert.That(document.RootElement.GetProperty("route").GetProperty("default_domain_resolver")
+                .GetProperty("strategy").GetString(), Is.EqualTo("ipv4_only"));
+            Assert.That(constrained.TryGetProperty("domain_resolver", out _), Is.False);
             Assert.That(unconstrained.TryGetProperty("domain_resolver", out _), Is.False);
         });
     }
@@ -255,6 +258,10 @@ public sealed class ProfileConfigurationTests
             Assert.That(tun.TryGetProperty("strict_route", out _), Is.False);
             Assert.That(tun.TryGetProperty("auto_redirect", out _), Is.False);
             Assert.That(tun.TryGetProperty("multi_queue", out _), Is.False);
+            Assert.That(document.RootElement.GetProperty("route").GetProperty("rules").EnumerateArray()
+                .Any(rule => rule.TryGetProperty("action", out var action) && action.GetString() == "bypass"), Is.False);
+            Assert.That(document.RootElement.GetProperty("outbounds").EnumerateArray()
+                .Any(outbound => outbound.GetProperty("type").GetString() == "bridge"), Is.True);
         });
     }
 
@@ -402,6 +409,8 @@ public sealed class ProfileConfigurationTests
     [TestCase("{\"route\":{\"tun_addresses\":{\"replace\":[\"fd00::1/126\"]}}}")]
     [TestCase("{\"platforms\":{\"Windows\":{\"route\":{\"multi_queue\":true}}}}")]
     [TestCase("{\"platforms\":{\"Android\":{\"route\":{\"multi_queue\":true}}}}")]
+    [TestCase("{\"route\":{\"auto_redirect\":true}}")]
+    [TestCase("{\"platforms\":{\"Windows\":{\"route\":{\"auto_redirect\":true}}}}")]
     [TestCase("{\"tuning\":{\"url_test_url\":\"\"}}")]
     [TestCase("{\"tuning\":{\"url_test_url\":\"file:///tmp/probe\"}}")]
     [TestCase("{\"route\":{\"main_default_region\":\"missing\"}}")]
@@ -415,6 +424,64 @@ public sealed class ProfileConfigurationTests
     {
         var overlay = JsonNode.Parse(fields)!.AsObject();
         Assert.Throws<ProfileValidationException>(() => Load(overlay.ToJsonString()));
+    }
+
+    [Test]
+    public void TunPrefixLeadingZerosAreRejectedAtEveryProfileEntryPoint(
+        [Values] TargetPlatform platform,
+        [Values("172.19.0.1/030", "fd32:f937:4cd0:1::1/0126")] string invalidAddress)
+    {
+        string[] addresses = invalidAddress.Contains(':')
+            ? ["172.19.0.1/30", invalidAddress] : [invalidAddress, "fd32:f937:4cd0:1::1/126"];
+        foreach (bool scoped in new[] { false, true })
+        {
+            var route = JsonSerializer.SerializeToNode(new { route = new { tun_addresses = new { replace = addresses } } })!.AsObject();
+            var overlay = scoped ? new JsonObject { ["platforms"] = new JsonObject { [platform.ToString()] = route } } : route;
+            string prefix = scoped ? $"platforms:{platform}:" : string.Empty;
+            var host = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                [$"{prefix}route:tun_addresses"] = JsonSerializer.Serialize(new { replace = addresses })
+            }).Build();
+            var errors = new[]
+            {
+                Assert.Throws<ProfileValidationException>(() => Load(overlay.ToJsonString()))!,
+                Assert.Throws<ProfileValidationException>(() => BoxForgeProfile.Default.ApplyOverrides(overlay))!,
+                Assert.Throws<ProfileValidationException>(() => BoxForgeProfile.Default.Resolve(platform, overlay))!,
+                Assert.Throws<ProfileValidationException>(() => ProfileConfiguration.ResolveProfile(host))!
+            };
+            foreach (var error in errors)
+            {
+                Assert.That(error.Diagnostics.Single().Path, Does.StartWith("profile.effective.").And.EndWith(".route.tun_addresses"));
+                Assert.That(error.Message, Does.Contain("规范"));
+            }
+            Assert.That(errors[2].Diagnostics.Single().Path, Is.EqualTo($"profile.effective.{platform}.route.tun_addresses"));
+        }
+    }
+
+    [TestCase("172.19.0.1/1", "fd32:f937:4cd0:1::1/1")]
+    [TestCase("172.19.0.1/30", "fd32:f937:4cd0:1::1/126")]
+    [TestCase("172.19.0.1/32", "fd32:f937:4cd0:1::1/128")]
+    public async Task CanonicalTunPrefixesPreserveTheirAddressesDuringGeneration(string ipv4, string ipv6)
+    {
+        string[] addresses = [ipv4, ipv6];
+        var profile = Load(JsonSerializer.Serialize(new { route = new { tun_addresses = new { replace = addresses } } }));
+        foreach (TargetPlatform platform in Enum.GetValues<TargetPlatform>())
+        {
+            using var document = await Generate(profile, platform, Yaml("US01"));
+            Assert.That(document.RootElement.GetProperty("inbounds")[0].GetProperty("address").EnumerateArray()
+                .Select(address => address.GetString()), Is.EqualTo(addresses));
+        }
+    }
+
+    [TestCase("{\"route\":{\"auto_redirect\":true}}")]
+    [TestCase("{\"platforms\":{\"Windows\":{\"route\":{\"auto_redirect\":true}}}}")]
+    public void WindowsAutoRedirectIsRejectedByStoredAndRequestOverrides(string fields)
+    {
+        var overlay = JsonNode.Parse(fields)!.AsObject();
+        var stored = Assert.Throws<ProfileValidationException>(() => BoxForgeProfile.Default.ApplyOverrides(overlay))!;
+        var request = Assert.Throws<ProfileValidationException>(() => BoxForgeProfile.Default.Resolve(TargetPlatform.Windows, overlay))!;
+        foreach (var error in new[] { stored, request })
+            Assert.That(error.Diagnostics.Single().Path, Is.EqualTo("profile.effective.Windows.route.auto_redirect"));
     }
 
     [TestCase(1)]
@@ -543,6 +610,76 @@ public sealed class ProfileConfigurationTests
     public void RejectsInvalidServices(string field, string value) => Assert.Throws<ProfileValidationException>(() =>
         ReplaceEntity("route", "services", "ai", new JsonObject { [field] = JsonNode.Parse(value) }));
 
+    [Test]
+    public void KnownIpOnlyServiceScopesAreRejectedAtEveryProfileEntryPoint(
+        [Values] TargetPlatform platform, [Values(false, true)] bool mixed)
+    {
+        string[] scopes = mixed ? ["games", "cnip"] : ["cnip"];
+        var patch = new[] { new { id = "games", rule_sets = new { replace = scopes } } };
+        foreach (bool scoped in new[] { false, true })
+        {
+            var root = JsonSerializer.SerializeToNode(new { route = new { services = new { patch } } })!.AsObject();
+            var overlay = scoped ? new JsonObject { ["platforms"] = new JsonObject { [platform.ToString()] = root } } : root;
+            string prefix = scoped ? $"platforms:{platform}:" : string.Empty;
+            var host = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                [$"{prefix}route:services"] = JsonSerializer.Serialize(new { patch })
+            }).Build();
+            var errors = new[]
+            {
+                Assert.Throws<ProfileValidationException>(() => Load(overlay.ToJsonString()))!,
+                Assert.Throws<ProfileValidationException>(() => BoxForgeProfile.Default.ApplyOverrides(overlay))!,
+                Assert.Throws<ProfileValidationException>(() => BoxForgeProfile.Default.Resolve(platform, overlay))!,
+                Assert.Throws<ProfileValidationException>(() => ProfileConfiguration.ResolveProfile(host))!
+            };
+            foreach (var error in errors)
+            {
+                Assert.That(error.Diagnostics.Single().Path, Does.StartWith("profile.effective.").And.EndWith(".route.services[4].rule_sets"));
+                Assert.That(error.Message, Does.Contain("cnip").And.Contain("DNS"));
+            }
+            Assert.That(errors[2].Diagnostics.Single().Path, Is.EqualTo($"profile.effective.{platform}.route.services[4].rule_sets"));
+        }
+    }
+
+    [Test]
+    public void PlatformOverridesCanReplaceAnIpOnlyServiceScopeBeforeSemanticValidation()
+    {
+        var overlay = JsonNode.Parse("""
+            {"route":{"services":{"patch":[{"id":"games","rule_sets":{"replace":["cnip"]}}]}},"platforms":{}}
+            """)!.AsObject();
+        foreach (TargetPlatform platform in Enum.GetValues<TargetPlatform>())
+            overlay["platforms"]![platform.ToString()] = JsonNode.Parse("""
+                {"route":{"services":{"patch":[{"id":"games","rule_sets":{"replace":["games"]}}]}}}
+                """);
+        var profile = BoxForgeProfile.Default.ApplyOverrides(overlay);
+        foreach (TargetPlatform platform in Enum.GetValues<TargetPlatform>())
+            Assert.That(profile.Resolve(platform).Services.Single(service => service.Id == "games").RuleSets, Is.EqualTo(new[] { "games" }));
+    }
+
+    [TestCase("cn")]
+    [TestCase("ads")]
+    public async Task KnownDomainServiceScopesRemainValidAndAdsRetainPriority(string scope)
+    {
+        var profile = ReplaceEntity("route", "services", "games", new JsonObject { ["rule_sets"] = new JsonArray(scope) });
+        using var document = await Generate(profile, TargetPlatform.Linux, Yaml("US01"));
+        var dnsRules = document.RootElement.GetProperty("dns").GetProperty("rules").EnumerateArray().ToArray();
+        int dnsAds = Array.FindIndex(dnsRules, rule => rule.TryGetProperty("rcode", out var rcode) && rcode.GetString() == "NXDOMAIN"
+            && rule.GetProperty("rule_set").EnumerateArray().Any(tag => tag.GetString() == "ads"));
+        int dnsService = Array.FindIndex(dnsRules, rule => rule.TryGetProperty("server", out var server)
+            && server.GetString() == "dns-service-games-cloudflare");
+        var routes = document.RootElement.GetProperty("route").GetProperty("rules").EnumerateArray().ToArray();
+        int routeAds = Array.FindIndex(routes, rule => rule.TryGetProperty("rule_set", out var sets)
+            && sets.EnumerateArray().Any(tag => tag.GetString() == "ads") && rule.GetProperty("action").GetString() == "reject");
+        string games = profile.Services.Single(service => service.Id == "games").Name;
+        int routeService = Array.FindIndex(routes, rule => rule.TryGetProperty("outbound", out var outbound) && outbound.GetString() == games);
+        Assert.Multiple(() =>
+        {
+            Assert.That(dnsAds, Is.GreaterThanOrEqualTo(0).And.LessThan(dnsService));
+            Assert.That(routeAds, Is.GreaterThanOrEqualTo(0).And.LessThan(routeService));
+            Assert.That(routes[routeService].GetProperty("rule_set").EnumerateArray().Select(tag => tag.GetString()), Is.EqualTo(new[] { scope }));
+        });
+    }
+
     [TestCase("route", "regions", "us")]
     [TestCase("route", "services", "ai")]
     [TestCase("dns", "resolvers", "alidns")]
@@ -578,10 +715,23 @@ public sealed class ProfileConfigurationTests
         var rules = root.GetProperty("route").GetProperty("rules").EnumerateArray().ToArray();
         int customIndex = Array.FindIndex(rules, rule => rule.TryGetProperty("outbound", out var outbound) && outbound.GetString() == "Custom AI");
         int domesticIndex = Array.FindIndex(rules, rule => rule.TryGetProperty("rule_set", out var sets)
-            && sets.EnumerateArray().Any(tag => tag.GetString() == "cn") && rule.TryGetProperty("network", out var network)
-            && network.EnumerateArray().Any(item => item.GetString() == "udp"));
+            && sets.EnumerateArray().Any(tag => tag.GetString() == "cn") && rule.TryGetProperty("outbound", out var outbound)
+            && outbound.GetString() == SingboxTags.DirectOutbound);
+        Assert.That(customIndex, Is.GreaterThanOrEqualTo(0));
+        Assert.That(domesticIndex, Is.GreaterThanOrEqualTo(0));
+        Assert.That(rules[domesticIndex].TryGetProperty("network", out _), Is.False);
+        Assert.That(rules[domesticIndex].TryGetProperty("port", out _), Is.False);
         if (priority) Assert.That(customIndex, Is.LessThan(domesticIndex));
         else Assert.That(customIndex, Is.GreaterThan(domesticIndex));
+        var dnsRules = root.GetProperty("dns").GetProperty("rules").EnumerateArray().ToArray();
+        int customDnsIndex = Array.FindIndex(dnsRules, rule => rule.TryGetProperty("tag", out var tag)
+            && tag.GetString() == "response-service-ai-primary");
+        int domesticDnsIndex = Array.FindIndex(dnsRules, rule => rule.TryGetProperty("tag", out var tag)
+            && tag.GetString() == DnsResponseTags.DomesticPrimary);
+        Assert.That(customDnsIndex, Is.GreaterThanOrEqualTo(0));
+        Assert.That(domesticDnsIndex, Is.GreaterThanOrEqualTo(0));
+        if (priority) Assert.That(customDnsIndex, Is.LessThan(domesticDnsIndex));
+        else Assert.That(customDnsIndex, Is.GreaterThan(domesticDnsIndex));
         Assert.That(rules[customIndex].GetProperty("rule_set").EnumerateArray().Select(tag => tag.GetString()), Is.EqualTo(new[] { "games" }));
         Assert.That(root.GetProperty("dns").GetProperty("rules").EnumerateArray().Any(rule =>
             rule.TryGetProperty("rule_set", out var sets) && sets.EnumerateArray().Any(tag => tag.GetString() == "games")), Is.True);
@@ -780,9 +930,10 @@ public sealed class ProfileConfigurationTests
     }
 
     [TestCaseSource(nameof(ResolverCases))]
-    public async Task CompleteResolverReplacementChangesDohTlsAndBootstrapRouteTogether(string id, string tag, TargetPlatform platform)
+    public async Task CompleteResolverReplacementChangesDohTlsWithoutChangingClientRoutes(string id, string tag, TargetPlatform platform)
     {
         var profile = ReplaceEntity("dns", "resolvers", id, new JsonObject { ["server"] = "192.0.2.53", ["server_name"] = "dns.example.net" });
+        using var baseline = await Generate(BoxForgeProfile.Default, platform, Yaml("US01"));
         using var document = await Generate(profile, platform, Yaml("US01"));
         JsonElement root = document.RootElement;
         var affectedTags = new HashSet<string>(StringComparer.Ordinal) { tag };
@@ -802,9 +953,11 @@ public sealed class ProfileConfigurationTests
                 Assert.That(server.GetProperty("tls").GetProperty("server_name").GetString(), affected
                     ? Is.EqualTo("dns.example.net") : Is.Not.EqualTo("dns.example.net"));
             }
-            if (id == "alidns")
-                Assert.That(root.GetProperty("route").GetProperty("rules").EnumerateArray().Any(rule =>
-                    rule.TryGetProperty("ip_cidr", out var cidrs) && cidrs.EnumerateArray().Any(cidr => cidr.GetString() == "192.0.2.53/32")), Is.True);
+            Assert.That(root.GetProperty("route").GetRawText(), Is.EqualTo(baseline.RootElement.GetProperty("route").GetRawText()),
+                "Changing a resolver endpoint must not add a client routing exemption.");
+            Assert.That(servers.Where(server => server.GetProperty("tag").GetString() is SingboxTags.DirectAliDns or SingboxTags.DirectTencentDns)
+                .All(server => !server.TryGetProperty("detour", out _)), Is.True,
+                "Internal domestic DoH must keep using its direct dialer.");
         });
     }
 
@@ -1318,16 +1471,19 @@ public sealed class ProfileConfigurationTests
         added["name"] = "Custom service";
         added.Remove("precedes_domestic_routes");
         var overlay = ArrayOperation("route", "services", "append", added);
+        var omitted = BoxForgeProfile.Default.ApplyOverrides(overlay);
+        Assert.That(omitted.Services.Last().PrecedesDomesticRoutes, Is.True,
+            "Omitting service priority must default to precedence over domestic routing and DNS.");
         overlay["route"]!["services"]!["patch"] = new JsonArray(new JsonObject
         {
             ["id"] = "custom",
-            ["precedes_domestic_routes"] = true
+            ["precedes_domestic_routes"] = false
         });
 
         var profile = BoxForgeProfile.Default.ApplyOverrides(overlay);
 
         Assert.That(profile.Services.Last().Id, Is.EqualTo("custom"));
-        Assert.That(profile.Services.Last().PrecedesDomesticRoutes, Is.True);
+        Assert.That(profile.Services.Last().PrecedesDomesticRoutes, Is.False);
     }
 
     [TestCase("{\"route\":{\"services\":{\"patch\":[{\"id\":\"sensitive-selector\",\"default_region\":\"jp\"}]}}}", "profile.request.route.services.patch[0]")]

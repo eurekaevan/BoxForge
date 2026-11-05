@@ -18,9 +18,9 @@ internal static class RouteProfileBuilder
             return new RuleSetPlan(source.Tags, url, interval);
         }).ToArray();
         return new RoutePlan(settings.AddressFamily, settingsProfile.Features.Tailscale.Enabled,
-            settings.UseDirectForwarding, SingboxTags.MainProxyGroup, HttpClientTags.RuleSetProxy,
+            settings.UseDirectForwarding, settings.AutoRedirect == true, SingboxTags.MainProxyGroup, HttpClientTags.RuleSetProxy,
             new DomainResolverPlan(SingboxTags.DirectAliDns, settings.AddressFamily.ForControlPlane(), true), ruleSets,
-            settingsProfile.GetResolver("alidns").Server, settingsProfile.Route.SniffTimeout,
+            settingsProfile.Route.SniffTimeout,
             settingsProfile.Route.SniffExcludedPorts,
             [.. settingsProfile.Services.OrderByDescending(service => service.PrecedesDomesticRoutes)
                 .Select(service => new ServiceRoutePlan(service.Id, service.RuleSets, service.Name, service.PrecedesDomesticRoutes))]);

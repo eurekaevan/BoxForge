@@ -50,7 +50,9 @@ HTTP 错误格式保持不变。
 
 API 启用后生成仅监听 `127.0.0.1:9090` 的 sing-box service 和 Dashboard，
 不改变 BoxForge HTTP Server 的监听地址。Dashboard 使用独立直连 HTTP client；
-远程规则集通过地区 AUTO（若无则首个节点）下载。控制面不开放远程监听或共享 secret。
+远程规则集复用主组按 `route.main_default_region`（默认 `us`）规划的初始目标，
+绑定对应地区的默认 AUTO 或单个节点；无该地区节点时复用主组回退顺序。
+主组运行时切换不改变下载出口。控制面不开放远程监听或共享 secret。
 
 ## 统一 profile
 
@@ -93,16 +95,32 @@ CLI、Server 在宿主边界加载并校验独立的 `BOXFORGE_` 环境配置快
 
 地址族接受 `Ipv4Only`、`DualStack`、`Auto` 或 `DirectDualStack`，默认使用 `Ipv4Only`（全局 IPv4，直连与代理流量都拒绝 IPv6）。
 需要直连 IPv6 时可覆盖为 `DirectDualStack`：保留 TUN 双栈捕获，固定代理类别（服务分流和最终出口）仅使用 IPv4，
-直连流量（私网、Tailscale、`cn`、`cnip`）保留 IPv6，并同样按当前出口接口是否具有公网 IPv6 地址决定是否拒绝 IPv6。
+私网和 Tailscale 的 IPv6 先行处理，不依赖公网出口地址；其余 IPv6（包括 `cn`、`cnip` 直连）
+按当前出口接口是否具有公网 IPv6 地址决定是否拒绝。
 限制按固定类别生效，服务组或主组切到 DIRECT 也不解除该类别的 IPv6 限制。DNS 保留 AAAA，不承诺被拒绝连接会自动回退 IPv4。
-`Auto` 同样保留 TUN 双栈捕获并按出口接口判断，但不限制代理流量的 IPv6。
+`Auto` 同样保留 TUN 双栈捕获并按出口接口判断，但不额外拒绝代理类别的客户端 IPv6；
+出口条件允许时，可通过 IPv4 代理节点访问 IPv6 目标。
+`Auto` 与 `DirectDualStack` 的节点域名和规则集 HTTP client 均使用 `ipv4_only` 控制面解析，
+并拒绝 IPv6 字面量代理节点；仅 `DualStack` 保留完整双栈节点控制面。
+DIRECT 在这两个模式下仍使用 `prefer_ipv4`，Dashboard 直连 HTTP client 也不强制 IPv4。
 它们都不执行公网可达性探测。Android 依赖客户端提供默认物理接口信息，尚未完成真机验证；
-缺少接口信息时保守拒绝客户端 IPv6。详细边界见[DNS 与路由策略](routing-and-dns.md#dns-分类与控制面解析)。
+缺少接口信息时拒绝未被 Tailscale 或私网直连处理的客户端 IPv6。
+`Auto` 与 `DirectDualStack` 的 Tailscale DNS 也先于条件 AAAA 空答规则，保留 MagicDNS 和 split DNS 的 IPv6 答案。
+详细边界见[DNS 与路由策略](routing-and-dns.md#dns-分类与控制面解析)。
 DNS 模式接受 `SequentialFallback` 或 `ParallelFastest`。超时和间隔必须是正 Go duration；DNS 缓存容量为正，URL test
 容差为 1–65535ms，默认 50ms；不接受 `0`，因为锁定核心会将它解释为默认 50ms，无法实现零容差。
 探测 URL 只接受不带用户信息和片段的 HTTP(S) URL。
-TUN 地址须包含 IPv4 和 IPv6 CIDR；`multi_queue: true` 仅支持 Linux。
-排除端口为不重复的 1～65535 整数。调优只补齐来源节点缺失的值；
+TUN 地址须包含规范格式的 IPv4 和 IPv6 CIDR，前缀长度不得包含前导零（如 `/030`）；`multi_queue: true` 仅支持 Linux。
+`route.auto_redirect: true` 支持 Linux 和 root Android，Windows 在 profile 校验时拒绝。
+Android 需要 root 服务或 root shell，普通 VPN 客户端不支持该模式。
+`route.use_direct_forwarding` 独立控制 `bridge` 转发，支持 Linux、root Android，以及具备
+WinDivert 后端并以管理员权限运行的 Windows x86/x64；默认仅 Linux 启用。
+只有它与 `auto_redirect: true` 同时启用时才生成 `bypass`；关闭或清空 `auto_redirect`
+仍可保留 bridge 与原 `DIRECT` 回退。Windows、Android 的默认 `auto_redirect` 为 `null`、转发开关为 `false`。
+`route.sniff_excluded_ports` 仅排除 TCP 目标端口，不影响 UDP 的 QUIC/STUN 嗅探；
+端口为不重复的 1～65535 整数。`route.sniff_timeout` 是嗅探超时设置，不代表每条连接固定增加该时长。
+国内公网 IP（`cnip`）也在嗅探、STUN/广告拒绝和相应服务优先级之后匹配直连。
+调优只补齐来源节点缺失的值；
 例如 `tcp_keep_alive: null` 取消平台默认值，不会清除节点显式设置。
 
 ### 数组操作
@@ -248,8 +266,14 @@ JSON 中反斜杠需转义。地区匹配至少两个节点才生成 selector �
 ```
 
 服务规则集不得为空或重复，必须引用最终 `route.rule_sets` 的 tag；偏好地区须存在。
-服务名是 selector tag，不得与其他有效标签冲突。`precedes_domestic_routes` 选择
-既有优先或普通服务阶段，不开放任意阶段或绕过守卫。DNS 服务域名池随最终服务列表更新。
+服务同时生成查询前的 DNS 分类，不能引用 IP 专用的内置 `cnip`，与其他 tag 混用也会拒绝；
+`cnip` 仍保留用于国内 IP 路由。自定义远程规则集应具有 DNS 查询前可匹配的分支，实际内容无法仅凭 tag 或 URL 离线判定，仍需由核心加载检查。
+`ads` 不受此限制，但广告 DNS NXDOMAIN 和路由拒绝始终先于服务；仅引用 `ads` 的服务会被前置广告规则遮蔽。
+服务名是 selector tag，不得与其他有效标签冲突。`precedes_domestic_routes` 可省略，默认 `true`；
+所有内置服务（含 Spotify、Games）均为 `true`。`true` 服务优先于国内 `cn`/`cnip` 路由，
+`false` 服务位于国内路由之后，对 TCP、UDP 的所有端口一致生效，不开放任意阶段或绕过守卫。
+DNS 池顺序同样为优先服务 → DOMESTIC（`cn` 域名）→ 普通 `false` 服务 → GLOBAL，各服务阶段保持列表顺序。
+仅按 `cnip` 命中的目标无法在 DNS 查询前确定 IP 归属，不保证 DNS 查询出口总与业务出口相同。
 
 ## rule-set 来源 profile
 
@@ -301,7 +325,8 @@ CIDR、非规范数字、`0.*` 或首段大于等于 224 的地址。
 `server_name` 为 ASCII DNS 名称（国际域名使用 punycode），总长 1～253、每 label
 1～63 字符，只允许字母、数字和内部连字符，不接受 IP、通配符、尾点或空白。
 TLS 始终启用，不开放明文回退、任意 detour 或主备角色改变。
-更换 AliDNS 地址后 bootstrap CIDR、控制面及 HTTP client 仍使用相同固定 tag；
+更换 resolver 地址或 TLS 名称只更新相应 DoH 端点，控制面及 HTTP client 仍绑定相同固定 tag；
+不为解析器地址生成客户端路由例外。内部 AliDNS、Tencent DoH 由各自 dialer 直连，不经过 TUN 客户端路由链。
 配置和核心检查不证明远端可达、证书匹配或实际冷启动成功。
 
 ## 生成 tag 约定
@@ -328,7 +353,7 @@ kebab-case，并按对象用途区分。默认地区组如下，地区覆盖可�
 | 类型 | 固定 tag |
 | --- | --- |
 | TUN inbound | `tun-in` |
-| L3 bridge outbound（仅 Linux） | `bridge-out` |
+| L3 bridge outbound（启用 `use_direct_forwarding` 时） | `bridge-out` |
 | Tailscale endpoint / DNS | `tailscale`、`dns-tailscale` |
 | 直连 DNS | `dns-direct-alidns`、`dns-direct-tencent` |
 | 代理 DNS | `dns-proxy-google`、`dns-proxy-cloudflare` |

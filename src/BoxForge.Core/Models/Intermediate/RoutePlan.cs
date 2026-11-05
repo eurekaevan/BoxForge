@@ -2,7 +2,6 @@ using BoxForge.Exceptions;
 using BoxForge.Configuration;
 using BoxForge.Helpers;
 using System.Collections.Immutable;
-using System.Net;
 
 namespace BoxForge.Models.Intermediate;
 
@@ -10,11 +9,11 @@ internal sealed record RoutePlan(
     AddressFamilyPolicy AddressFamily,
     bool TailscaleEnabled,
     bool UseDirectForwarding,
+    bool AutoRedirect,
     string FinalOutbound,
     string DefaultHttpClient,
     DomainResolverPlan DefaultDomainResolver,
     IReadOnlyList<RuleSetPlan> RuleSets,
-    string BootstrapAddress,
     string SniffTimeout,
     ImmutableArray<int> SniffExcludedPorts,
     ImmutableArray<ServiceRoutePlan> Services)
@@ -30,9 +29,6 @@ internal sealed record RoutePlan(
     {
         if (!Enum.IsDefined(AddressFamily))
             diagnostics.Add(new("IR008", "plan.route.address_family", "路由地址族无效。"));
-        if (!IPAddress.TryParse(BootstrapAddress, out var address)
-            || address.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork || address.ToString() != BootstrapAddress)
-            diagnostics.Add(new("IR008", "plan.route.bootstrap_address", "直连 bootstrap 必须使用 IPv4 地址。"));
         if (SniffTimeout is null || !GoDurationHelper.IsPositiveDuration(SniffTimeout))
             diagnostics.Add(new("IR008", "plan.route.sniff_timeout", "Sniff 超时必须是有效的正 Go duration。"));
         if (SniffExcludedPorts.IsDefault)

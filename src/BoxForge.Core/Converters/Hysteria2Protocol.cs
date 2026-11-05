@@ -142,6 +142,8 @@ internal static partial class Hysteria2Protocol
             return Array.AsReadOnly(new[] { new Hysteria2PortSpan(node.RequiredPort("port"), null) });
         }
 
+        _ = node.OptionalInt("port", 0, 65535);
+
         string[] entries = portsValue.Split(
             ',',
             StringSplitOptions.TrimEntries);

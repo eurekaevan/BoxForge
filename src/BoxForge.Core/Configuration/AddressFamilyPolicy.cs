@@ -24,7 +24,7 @@ public static class AddressFamilyPolicies
     internal static bool UsesInterfaceGuard(this AddressFamilyPolicy policy) =>
         policy is AddressFamilyPolicy.Auto or AddressFamilyPolicy.DirectDualStack;
 
-    // Node, rule-set and dashboard resolution may ride the IPv4-only proxy path.
+    // Proxy bootstrap has its own address-family policy, separate from client and direct traffic.
     internal static AddressFamilyPolicy ForControlPlane(this AddressFamilyPolicy policy) =>
-        policy == AddressFamilyPolicy.DirectDualStack ? AddressFamilyPolicy.Ipv4Only : policy;
+        policy is AddressFamilyPolicy.Auto or AddressFamilyPolicy.DirectDualStack ? AddressFamilyPolicy.Ipv4Only : policy;
 }

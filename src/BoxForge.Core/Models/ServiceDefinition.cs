@@ -8,7 +8,7 @@ public record ServiceDefinition(
     string Name,
     string? DefaultRegion,
     ImmutableArray<string> RuleSets,
-    bool PrecedesDomesticRoutes = false
+    bool PrecedesDomesticRoutes = true
 );
 
 public record RegionDefinition(

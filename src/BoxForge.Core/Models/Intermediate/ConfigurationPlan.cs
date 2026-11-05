@@ -37,13 +37,22 @@ internal sealed record ConfigurationPlan(
             diagnostics.Add(new("IR001", "plan.dns.selection_mode", "DNS 选择模式必须与平台策略一致。"));
         if (Route.UseDirectForwarding != UseDirectForwarding)
             diagnostics.Add(new("IR001", "plan.route.use_direct_forwarding", "直连转发必须与平台策略一致。"));
+        if (Route.AutoRedirect != (Tun.AutoRedirect == true))
+            diagnostics.Add(new("IR001", "plan.route.auto_redirect", "路由重定向必须与 TUN 策略一致。"));
+        if (Platform == TargetPlatform.Windows && Tun.AutoRedirect == true)
+            diagnostics.Add(new("IR008", "plan.tun.auto_redirect", "auto_redirect 不支持 Windows。"));
+        if (Platform != TargetPlatform.Linux && Tun.MultiQueue == true)
+            diagnostics.Add(new("IR008", "plan.tun.multi_queue", "multi_queue 仅支持 Linux。"));
+        if (Tun.Addresses.IsDefaultOrEmpty)
+            diagnostics.Add(new("IR008", "plan.tun.addresses", "TUN 地址不能为空或未初始化。"));
         for (int index = 0; index < Groups.Probes.Count; index++)
         {
             if (Groups.Probes[index].Interval != ProbeInterval)
                 diagnostics.Add(new("IR001", $"plan.groups.probes[{index}].interval", "探测间隔必须与平台策略一致。"));
         }
 
-        var leaves = Nodes.Select(node => node.Name).ToHashSet(StringComparer.Ordinal);
+        var nodesByName = Nodes.ToLookup(node => node.Name, StringComparer.Ordinal);
+        var leaves = nodesByName.Select(group => group.Key).ToHashSet(StringComparer.Ordinal);
         for (int index = 0; index < Groups.Leaves.Count; index++)
             Require(leaves, Groups.Leaves[index], "IR002", $"plan.groups.leaves[{index}]");
         var targets = new HashSet<string>(leaves, StringComparer.Ordinal) { Groups.Main.Name, Groups.DirectName };
@@ -74,8 +83,9 @@ internal sealed record ConfigurationPlan(
         if (!Dns.Pools.IsDefaultOrEmpty)
         {
             var serviceRoutes = Route.Services.IsDefault ? [] : Route.Services;
+            int domesticIndex = serviceRoutes.Count(service => service?.PrecedesDomesticRoutes == true);
             if (Dns.Pools.Length != serviceRoutes.Length + 2)
-                diagnostics.Add(new("IR011", "plan.dns.pools", "DNS 必须依次包含各服务、国内和全局解析池。"));
+                diagnostics.Add(new("IR011", "plan.dns.pools", "DNS 必须依次包含优先服务、国内、普通服务和全局解析池。"));
             for (int index = 0; index < Dns.Pools.Length; index++)
             {
                 if (Dns.Pools[index] is not { } pool) continue;
@@ -84,12 +94,13 @@ internal sealed record ConfigurationPlan(
                     for (int scope = 0; scope < pool.RuleSets.Length; scope++)
                         Require(ruleSets, pool.RuleSets[scope], "IR005", $"{path}.rule_sets[{scope}]");
                 if (index >= serviceRoutes.Length + 2) continue;
-                bool service = index < serviceRoutes.Length;
-                bool domestic = index == serviceRoutes.Length;
-                if (service && serviceRoutes[index] is null) continue;
-                string? serviceId = service ? serviceRoutes[index].ServiceId : null;
-                ImmutableArray<string> scopeSets = service ? serviceRoutes[index].RuleSets : domestic ? [RuleSetTags.Cn] : default;
-                string? detour = service ? serviceRoutes[index].Outbound : domestic ? null : Groups.Main.Name;
+                bool domestic = index == domesticIndex;
+                bool service = !domestic && index < serviceRoutes.Length + 1;
+                int serviceIndex = index < domesticIndex ? index : index - 1;
+                if (service && serviceRoutes[serviceIndex] is null) continue;
+                string? serviceId = service ? serviceRoutes[serviceIndex].ServiceId : null;
+                ImmutableArray<string> scopeSets = service ? serviceRoutes[serviceIndex].RuleSets : domestic ? [RuleSetTags.Cn] : default;
+                string? detour = service ? serviceRoutes[serviceIndex].Outbound : domestic ? null : Groups.Main.Name;
                 string primary = service ? SingboxTags.ServiceDns(serviceId ?? string.Empty, "cloudflare")
                     : domestic ? SingboxTags.DirectAliDns : SingboxTags.ProxyCloudflareDns;
                 string secondary = service ? SingboxTags.ServiceDns(serviceId ?? string.Empty, "google")
@@ -119,11 +130,16 @@ internal sealed record ConfigurationPlan(
             Require(leaves, node, "IR002", path);
             Require(resolvers, resolver.Server, "IR006", path + ".server");
             ValidateResolver(resolver, path);
+            var matchingNodes = nodesByName[node];
+            // Duplicate names retain the target validator's SB009 diagnostic.
+            if (matchingNodes.Count() == 1 && (AddressFamily.ForControlPlane() == AddressFamilyPolicy.Ipv4Only
+                || matchingNodes.First().AddressFamily != AddressFamilyPolicy.Ipv4Only))
+                diagnostics.Add(new("IR011", path, "独立节点解析器仅用于双栈控制面下来源声明 IPv4 限制的节点。"));
         }
         for (int index = 0; index < Nodes.Count; index++)
         {
             ProxyNode node = Nodes[index];
-            if (AddressFamily != AddressFamilyPolicy.Ipv4Only && node.AddressFamily == AddressFamilyPolicy.Ipv4Only
+            if (AddressFamily.ForControlPlane() != AddressFamilyPolicy.Ipv4Only && node.AddressFamily == AddressFamilyPolicy.Ipv4Only
                 && (!NodeResolvers.TryGetValue(node.Name, out var binding)
                     || binding != new DomainResolverPlan(SingboxTags.DirectAliDns, AddressFamilyPolicy.Ipv4Only, true)))
                 diagnostics.Add(new("IR011", $"plan.nodes[{index}].domain_resolver", "来源 IPv4 限制必须绑定独立的 IPv4 解析器。"));
@@ -137,6 +153,10 @@ internal sealed record ConfigurationPlan(
                 Require(targets, detour, "IR003", $"plan.http_clients[{index}].detour");
             ValidateResolver(client.Resolver, $"plan.http_clients[{index}].resolver");
             Require(resolvers, client.Resolver.Server, "IR006", $"plan.http_clients[{index}].resolver");
+            var family = client.Name == HttpClientTags.DashboardDirect && client.Name != Route.DefaultHttpClient
+                ? AddressFamily : AddressFamily.ForControlPlane();
+            if (client.Resolver != new DomainResolverPlan(SingboxTags.DirectAliDns, family, true))
+                diagnostics.Add(new("IR011", $"plan.http_clients[{index}].resolver", "HTTP 解析器必须符合客户端角色的地址族策略并禁用 optimistic 过期缓存。"));
         }
         var clients = HttpClients.Select(client => client.Name).ToHashSet(StringComparer.Ordinal);
         Require(clients, Route.DefaultHttpClient, "IR007", "plan.route.default_http_client");

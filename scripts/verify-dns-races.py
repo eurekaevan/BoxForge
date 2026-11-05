@@ -139,7 +139,7 @@ async def main(core, generated):
                                       if line.lower().startswith(b"content-length:")))
                     packet = await reader.readexactly(length)
                     name, _, _ = question(packet)
-                    events.append((name, upstream, time.monotonic()))
+                    events.append((name, upstream))
                     delay, mode, ttl = specs[upstream]
                     if mode == "drop":
                         await reader.read()

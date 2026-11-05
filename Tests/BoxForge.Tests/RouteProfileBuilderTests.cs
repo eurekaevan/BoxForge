@@ -85,6 +85,7 @@ public sealed class RouteProfileBuilderTests
             Assert.That(JsonSerializer.Serialize(SingboxRouteEmitter.Emit(plan)), Is.EqualTo(expected));
             Assert.That(plan.AddressFamily, Is.EqualTo(addressFamily));
             Assert.That(plan.UseDirectForwarding, Is.EqualTo(settings.UseDirectForwarding));
+            Assert.That(plan.AutoRedirect, Is.EqualTo(settings.AutoRedirect == true));
             Assert.That(plan.TailscaleEnabled, Is.True);
             Assert.That(RouteProfileBuilder.Plan(profile.Resolve(platform)).TailscaleEnabled, Is.True);
             Assert.That(RouteProfileBuilder.Plan(changedProfile.Resolve(platform)).TailscaleEnabled, Is.False);
@@ -135,8 +136,7 @@ public sealed class RouteProfileBuilderTests
             "service_reference" => plan with { Services = plan.Services.SetItem(0, first with { RuleSets = ["missing"] }) },
             "service_priority_order" => plan with
             {
-                Services = [.. plan.Services.Where(service => !service.PrecedesDomesticRoutes),
-                    .. plan.Services.Where(service => service.PrecedesDomesticRoutes)]
+                Services = plan.Services.SetItem(0, first with { PrecedesDomesticRoutes = false })
             },
             "duplicate_service_id" => plan with { Services = plan.Services.SetItem(1, plan.Services[1] with { ServiceId = first.ServiceId }) },
             "duplicate_service_outbound" => plan with { Services = plan.Services.SetItem(1, plan.Services[1] with { Outbound = first.Outbound }) },
@@ -164,15 +164,13 @@ public sealed class RouteProfileBuilderTests
         RouteRule[] guards = route.Rules.Where(rule => rule.Action == RouteRuleAction.Reject
             && rule.Rules?.Any(child => child.IpVersion == 6) == true).ToArray();
         RouteRule[] sniff = route.Rules.Where(rule => rule.Action == RouteRuleAction.Sniff).ToArray();
-        RouteRule[] direct = route.Rules.Where(rule => rule.IpIsPrivate == true
-            || rule.IpCidr?.SequenceEqual([plan.BootstrapAddress + "/32"]) == true).ToArray();
+        RouteRule[] direct = route.Rules.Where(rule => rule.IpIsPrivate == true).ToArray();
         var settings = BoxForgeProfile.Default.Resolve(TargetPlatform.Linux);
         Assert.Multiple(() =>
         {
-            Assert.That(plan.BootstrapAddress, Is.EqualTo(settings.GetResolver("alidns").Server));
             Assert.That(plan.SniffTimeout, Is.EqualTo("300ms"));
             Assert.That(plan.SniffExcludedPorts, Is.EqualTo(new[] { 21, 22, 3306, 5900 }));
-            Assert.That(guards, Has.Length.EqualTo(2));
+            Assert.That(guards, Has.Length.EqualTo(1));
             foreach (RouteRule guard in guards)
             {
                 Assert.That(guard.Mode, Is.EqualTo(RouteLogicalMode.And));
@@ -189,12 +187,10 @@ public sealed class RouteProfileBuilderTests
             Assert.That(sniff[1].Network, Is.EqualTo(new[] { "udp" }));
             Assert.That(direct.Select(rule => rule.Action), Is.EqualTo(new RouteRuleAction?[]
             {
-                RouteRuleAction.Bypass, RouteRuleAction.Route, RouteRuleAction.Route,
                 RouteRuleAction.Bypass, RouteRuleAction.Route, RouteRuleAction.Route
             }));
             Assert.That(direct.Select(rule => rule.Outbound), Is.EqualTo(new string?[]
             {
-                null, SingboxTags.BridgeOutbound, SingboxTags.DirectOutbound,
                 null, SingboxTags.BridgeOutbound, SingboxTags.DirectOutbound
             }));
             Assert.That(plan.Services.Where(service => service.PrecedesDomesticRoutes).Select(service => service.Outbound),
@@ -204,15 +200,16 @@ public sealed class RouteProfileBuilderTests
         });
     }
 
-    [TestCase(TargetPlatform.Android)]
-    [TestCase(TargetPlatform.Linux)]
-    [TestCase(TargetPlatform.Windows)]
-    public void AutoIpv6GuardsRunBeforeDirectRoutesAndAfterSniffing(TargetPlatform platform)
+    [Test]
+    public void InterfaceIpv6GuardFollowsLocalRoutesAndPrecedesSniffing(
+        [Values(TargetPlatform.Android, TargetPlatform.Linux, TargetPlatform.Windows)] TargetPlatform platform,
+        [Values(AddressFamilyPolicy.Auto, AddressFamilyPolicy.DirectDualStack)] AddressFamilyPolicy addressFamily,
+        [Values(false, true)] bool tailscaleEnabled)
     {
-        RouteConfig route = SingboxRouteEmitter.Emit(CreatePlan(platform));
+        RouteConfig route = SingboxRouteEmitter.Emit(CreatePlan(platform, addressFamily) with { TailscaleEnabled = tailscaleEnabled });
         RouteRule[] guards = route.Rules.Where(rule => rule.Action == RouteRuleAction.Reject
             && rule.Rules?.Any(child => child.IpVersion == 6) == true).ToArray();
-        Assert.That(guards, Has.Length.EqualTo(2));
+        Assert.That(guards, Has.Length.EqualTo(1));
         foreach (RouteRule guard in guards)
         {
             Assert.Multiple(() =>
@@ -226,14 +223,25 @@ public sealed class RouteProfileBuilderTests
                 Assert.That(JsonSerializer.Serialize(guard), Does.Not.Contain("network_interface_address").And.Not.Contain("network_type"));
             });
         }
-        int firstGuard = route.Rules.IndexOf(guards[0]);
-        int lastGuard = route.Rules.IndexOf(guards[1]);
+        int guardIndex = route.Rules.IndexOf(guards[0]);
+        int privateIndex = route.Rules.FindIndex(rule => rule.IpIsPrivate == true
+            && rule.Outbound == SingboxTags.DirectOutbound);
+        int tailscaleIndex = route.Rules.FindIndex(rule => rule.Outbound == SingboxTags.TailscaleEndpoint);
         Assert.Multiple(() =>
         {
-            Assert.That(firstGuard, Is.LessThan(route.Rules.FindIndex(rule => rule.IpIsPrivate == true)));
-            Assert.That(lastGuard, Is.GreaterThan(route.Rules.FindLastIndex(rule => rule.Action == RouteRuleAction.Sniff)));
-            Assert.That(lastGuard, Is.LessThan(route.Rules.FindIndex(rule => rule.RuleSet?.Contains("ai") == true)));
-            Assert.That(route.Rules.Any(rule => rule.IpVersion == 6 && rule.Action == RouteRuleAction.Reject), Is.False);
+            Assert.That(privateIndex, Is.GreaterThanOrEqualTo(0).And.LessThan(guardIndex));
+            Assert.That(route.Rules[privateIndex].IpVersion, Is.Null, "Local IPv6 must remain eligible for DIRECT.");
+            Assert.That(guardIndex, Is.LessThan(FindFirstSniffIndex(route)));
+            Assert.That(guardIndex, Is.LessThan(route.Rules.FindIndex(rule => rule.RuleSet?.Contains("ai") == true)));
+            if (tailscaleEnabled)
+            {
+                Assert.That(tailscaleIndex, Is.GreaterThanOrEqualTo(0).And.LessThan(privateIndex));
+                Assert.That(route.Rules[tailscaleIndex].PreferredBy, Is.EqualTo(new[] { SingboxTags.TailscaleEndpoint }));
+                Assert.That(route.Rules[tailscaleIndex].IpVersion, Is.Null);
+            }
+            else Assert.That(tailscaleIndex, Is.EqualTo(-1));
+            if (addressFamily == AddressFamilyPolicy.Auto)
+                Assert.That(route.Rules.Any(rule => rule.IpVersion == 6 && rule.Action == RouteRuleAction.Reject), Is.False);
         });
     }
 
@@ -274,37 +282,56 @@ public sealed class RouteProfileBuilderTests
         });
     }
 
-    [TestCase(TargetPlatform.Android)]
-    [TestCase(TargetPlatform.Linux)]
-    [TestCase(TargetPlatform.Windows)]
-    public void DirectDualStackPreservesDomesticUdpPriorityWhenServiceScopesOverlap(TargetPlatform platform)
+    [Test]
+    public void DirectDualStackUsesTheSameServicePriorityForEveryProtocolWhenScopesOverlap(
+        [Values] TargetPlatform platform,
+        [Values(false, true)] bool priority,
+        [Values("cn", "cnip")] string scope)
     {
-        var profile = BoxForgeProfile.Default.ApplyOverrides(JsonSerializer.SerializeToNode(new
+        // Exercise route overlap independently of DNS service-scope validation.
+        RoutePlan plan = CreatePlan(platform, AddressFamilyPolicy.DirectDualStack);
+        plan = plan with
         {
-            dns = new { address_family = "DirectDualStack" },
-            route = new { services = new { patch = new[] { new { id = "games", rule_sets = new { replace = new[] { "cn" } } } } } }
-        })!.AsObject());
-        RoutePlan plan = RouteProfileBuilder.Plan(profile.Resolve(platform));
+            Services = [.. plan.Services.Select(service => service.ServiceId == "games"
+                ? service with { RuleSets = [scope], PrecedesDomesticRoutes = priority } : service)
+                .OrderByDescending(service => service.PrecedesDomesticRoutes)]
+        };
         Assert.DoesNotThrow(plan.Validate);
         List<RouteRule> rules = SingboxRouteEmitter.Emit(plan).Rules;
         string games = plan.Services.Single(service => service.ServiceId == "games").Outbound;
-        int direct = rules.FindIndex(rule => rule.Outbound == SingboxTags.DirectOutbound
-            && rule.Port?.Contains(443) == true && rule.RuleSet?.Contains("cn") == true);
+        RouteRule direct = rules.Single(rule => rule.Outbound == SingboxTags.DirectOutbound
+            && rule.RuleSet?.SequenceEqual([scope]) == true);
+        var domestic = rules.Where(rule => rule.RuleSet?.SequenceEqual([scope]) == true
+            && (rule.Action == RouteRuleAction.Bypass
+                || rule.Outbound is SingboxTags.DirectOutbound or SingboxTags.BridgeOutbound)).ToArray();
         int guard = rules.FindIndex(rule => rule.Action == RouteRuleAction.Reject
-            && rule.IpVersion == 6 && rule.RuleSet?.Contains("cn") == true);
-        int service = rules.FindIndex(rule => rule.Outbound == games && rule.RuleSet?.Contains("cn") == true);
-        Assert.That(direct, Is.GreaterThanOrEqualTo(0));
-        Assert.That(guard, Is.GreaterThan(direct));
-        Assert.That(service, Is.GreaterThan(guard));
-        RouteRule priorityGuard = rules.First(rule => rule.Action == RouteRuleAction.Reject
-            && rule.IpVersion == 6 && rule.RuleSet is not null);
-        Assert.That(priorityGuard.RuleSet, Does.Not.Contain("cn"));
+            && rule.IpVersion == 6 && rule.RuleSet?.Contains(scope) == true);
+        int service = rules.FindIndex(rule => rule.Outbound == games && rule.RuleSet?.Contains(scope) == true);
+        Assert.Multiple(() =>
+        {
+            Assert.That(direct.Port, Is.Null);
+            Assert.That(direct.Network, Is.Null);
+            Assert.That(direct.Protocol, Is.Null);
+            Assert.That(domestic, Is.Not.Empty);
+            Assert.That(domestic.All(rule => rule.Port is null && rule.Protocol is null), Is.True);
+            Assert.That(guard, Is.GreaterThanOrEqualTo(0));
+            Assert.That(service, Is.GreaterThan(guard));
+            if (priority)
+                Assert.That(domestic.All(rule => rules.IndexOf(rule) > service), Is.True);
+            else
+                Assert.That(domestic.All(rule => rules.IndexOf(rule) < guard), Is.True);
+        });
     }
 
     [Test]
     public void DirectDualStackEmissionShieldsBothServiceClassesAndFinalOutbound()
     {
         RoutePlan plan = CreatePlan(TargetPlatform.Linux, AddressFamilyPolicy.DirectDualStack);
+        plan = plan with
+        {
+            Services = plan.Services.SetItem(plan.Services.Length - 1,
+            plan.Services[^1] with { PrecedesDomesticRoutes = false })
+        };
         Assert.DoesNotThrow(plan.Validate);
         List<RouteRule> rules = SingboxRouteEmitter.Emit(plan).Rules;
         RouteRule[] guards = rules.Where(rule => rule.Action == RouteRuleAction.Reject
@@ -344,7 +371,7 @@ public sealed class RouteProfileBuilderTests
         Assert.That(rules.Any(rule => rule.Action == RouteRuleAction.Reject && rule.IpVersion == 6
             && rule.RuleSet is not null), Is.False);
         Assert.That(rules.Count(rule => rule.Action == RouteRuleAction.Reject && rule.IpVersion == 6),
-            Is.EqualTo(addressFamily == AddressFamilyPolicy.Ipv4Only ? 2 : 0));
+            Is.EqualTo(addressFamily == AddressFamilyPolicy.Ipv4Only ? 1 : 0));
         Assert.That(rules[^1].IpVersion, Is.Null);
     }
 
@@ -365,20 +392,16 @@ public sealed class RouteProfileBuilderTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(androidDirect, Has.Count.EqualTo(6));
-            Assert.That(preSniffDirect, Has.Count.EqualTo(2));
+            Assert.That(androidDirect, Has.Count.EqualTo(3));
+            Assert.That(preSniffDirect, Has.Count.EqualTo(1));
             Assert.That(
                 preSniffDirect.Any(rule => rule.IpIsPrivate == true),
-                Is.True);
-            Assert.That(
-                preSniffDirect.Any(rule =>
-                    rule.IpCidr?.SequenceEqual(["223.5.5.5/32"]) == true),
                 Is.True);
             Assert.That(DirectRules(windows), Has.Count.EqualTo(androidDirect.Count));
             Assert.That(DirectRules(linux), Has.Count.EqualTo(androidDirect.Count));
             Assert.That(windowsBridge, Is.Empty);
-            Assert.That(linuxBridge, Has.Count.EqualTo(6));
-            Assert.That(linuxBypass, Has.Count.EqualTo(6));
+            Assert.That(linuxBridge, Has.Count.EqualTo(3));
+            Assert.That(linuxBypass, Has.Count.EqualTo(3));
             Assert.That(
                 windows.Rules.Any(rule => rule.Action == RouteRuleAction.Bypass),
                 Is.False);
@@ -403,15 +426,15 @@ public sealed class RouteProfileBuilderTests
             Assert.That(
                 linuxBridge.Count(rule => linux.Rules.IndexOf(rule)
                     < FindFirstSniffIndex(linux)),
-                Is.EqualTo(2));
+                Is.EqualTo(1));
             Assert.That(
                 linuxBridge.Count(rule => linux.Rules.IndexOf(rule)
                     > FindSniffIndex(linux, "udp")),
-                Is.EqualTo(4));
+                Is.EqualTo(2));
             Assert.That(
                 linuxBypass.Count(rule => linux.Rules.IndexOf(rule)
                     > FindSniffIndex(linux, "udp")),
-                Is.EqualTo(4));
+                Is.EqualTo(2));
             Assert.That(
                 linuxBridge.Where(rule => linux.Rules.IndexOf(rule)
                     > FindSniffIndex(linux, "udp"))
@@ -437,6 +460,8 @@ public sealed class RouteProfileBuilderTests
         {
             Assert.That(gate.Inbound, Is.EqualTo(new[] { SingboxTags.TunInbound }));
             Assert.That(gate.Outbound, Is.EqualTo(SingboxTags.TailscaleEndpoint));
+            Assert.That(route.Rules.FindIndex(rule => rule.IpVersion == 6 && rule.Action == RouteRuleAction.Reject),
+                Is.GreaterThanOrEqualTo(0).And.LessThan(route.Rules.IndexOf(gate)), "Ipv4Only also applies to Tailscale.");
             Assert.That(route.Rules.IndexOf(gate), Is.LessThan(privateDirectIndex));
             Assert.That(route.Rules.Any(rule => rule.Action == RouteRuleAction.Resolve), Is.False);
             Assert.That(SingboxRouteEmitter.Emit(CreatePlan(platform)).Rules.Any(rule =>
@@ -447,34 +472,27 @@ public sealed class RouteProfileBuilderTests
     [TestCase(TargetPlatform.Android)]
     [TestCase(TargetPlatform.Linux)]
     [TestCase(TargetPlatform.Windows)]
-    public void AllIpv6IsRejectedBeforeSniffWithLateFallbackPreserved(
+    public void Ipv4OnlyRejectsIpv6BeforeLocalRoutesAndSniffWithoutADuplicateGuard(
         TargetPlatform platform)
     {
         RouteConfig route = SingboxRouteEmitter.Emit(CreatePlan(platform, AddressFamilyPolicy.Ipv4Only));
         List<RouteRule> ipv6Rejects = route.Rules.Where(rule =>
             rule.Action == RouteRuleAction.Reject
             && rule.IpVersion == 6).ToList();
-        RouteRule earlyReject = ipv6Rejects[0];
-        int earlyRejectIndex = route.Rules.FindIndex(rule =>
-            rule.Action == RouteRuleAction.Reject && rule.IpVersion == 6);
-        RouteRule lateReject = ipv6Rejects[1];
-        int lateRejectIndex = route.Rules.FindLastIndex(rule =>
-            rule.Action == RouteRuleAction.Reject && rule.IpVersion == 6);
+        Assert.That(ipv6Rejects, Has.Count.EqualTo(1));
+        int rejectIndex = route.Rules.IndexOf(ipv6Rejects[0]);
 
         Assert.Multiple(() =>
         {
             Assert.That(
                 new[]
                 {
-                    earlyRejectIndex,
-                    FindFirstSniffIndex(route),
-
-                    lateRejectIndex
+                    rejectIndex,
+                    route.Rules.FindIndex(rule => rule.IpIsPrivate == true),
+                    FindFirstSniffIndex(route)
                 },
                 Is.Ordered.And.All.GreaterThanOrEqualTo(0));
-            Assert.That(ipv6Rejects, Has.Count.EqualTo(2));
-            Assert.That(earlyReject.Type, Is.Null);
-            Assert.That(lateReject.Type, Is.Null);
+            Assert.That(ipv6Rejects[0].Type, Is.Null);
             Assert.That(route.Rules.Any(rule =>
                 rule.Action == RouteRuleAction.Route
                 && ContainsIpv6Condition(rule)), Is.False);
@@ -542,7 +560,7 @@ public sealed class RouteProfileBuilderTests
             rule.Action == RouteRuleAction.Reject
             && rule.RuleSet?.SequenceEqual(
                 [RuleSetTags.Ads]) == true);
-        int lateIpv6RejectIndex = route.Rules.FindLastIndex(rule =>
+        int ipv6RejectIndex = route.Rules.FindLastIndex(rule =>
             rule.Action == RouteRuleAction.Reject
             && ContainsIpv6Condition(rule));
         int aiRouteIndex = FindRouteRuleIndex(
@@ -561,8 +579,8 @@ public sealed class RouteProfileBuilderTests
             Assert.That(
                 new[]
                 {
+                    ipv6RejectIndex,
                     adBlockingIndex,
-                    lateIpv6RejectIndex,
                     aiRouteIndex,
                     googleRouteIndex,
                     firstDomesticIpv4RuleIndex
@@ -580,13 +598,10 @@ public sealed class RouteProfileBuilderTests
     [TestCase(TargetPlatform.Android)]
     [TestCase(TargetPlatform.Linux)]
     [TestCase(TargetPlatform.Windows)]
-    public void Udp443UsesServiceOrFinalProxyRoutesWithDomesticDirectPreserved(TargetPlatform platform)
+    public void DefaultServiceAndDomesticRoutesHaveNoProtocolSpecificPriority(TargetPlatform platform)
     {
         RouteConfig route = SingboxRouteEmitter.Emit(CreatePlan(platform));
 
-        int domesticDomainUdpDirectIndex = FindUdp443DirectIndex(route, "cn");
-        int domesticIpUdpDirectIndex = FindUdp443DirectIndex(route, "cnip");
-        int firstStandardServiceIndex = FindFirstStandardServiceIndex(route);
         int domesticDomainDirectIndex = FindRouteRuleIndex(route, "cn");
         int domesticIpDirectIndex = FindRouteRuleIndex(route, "cnip");
         RouteRule[] serviceRoutes = BoxForgeProfile.Default.Services
@@ -596,20 +611,18 @@ public sealed class RouteProfileBuilderTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(route.Rules.Any(rule => rule.Action == RouteRuleAction.Reject
-                && ContainsUdp443Condition(rule)), Is.False);
+            Assert.That(route.Rules.Any(ContainsUdp443Condition), Is.False);
             Assert.That(serviceRoutes.All(rule => rule.Port == null
                 && rule.Network == null && rule.Protocol == null), Is.True,
                 "Service routes must accept UDP 443 as well as other traffic.");
             Assert.That(route.Final, Is.EqualTo(SingboxTags.MainProxyGroup));
+            Assert.That(BoxForgeProfile.Default.Services.All(service => service.PrecedesDomesticRoutes), Is.True);
+            Assert.That(serviceRoutes.All(rule => route.Rules.IndexOf(rule) < domesticDomainDirectIndex), Is.True);
             Assert.That(
                 new[]
                 {
                     FindRouteRuleIndex(route, "ai"),
                     FindRouteRuleIndex(route, "google"),
-                    domesticDomainUdpDirectIndex,
-                    domesticIpUdpDirectIndex,
-                    firstStandardServiceIndex,
                     domesticDomainDirectIndex,
                     domesticIpDirectIndex
                 },
@@ -639,12 +652,12 @@ public sealed class RouteProfileBuilderTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(ipv6RejectIndexes, Has.Count.EqualTo(2));
+            Assert.That(ipv6RejectIndexes, Has.Count.EqualTo(1));
             Assert.That(proxyServiceRouteIndexes, Is.Not.Empty);
             Assert.That(
                 proxyServiceRouteIndexes,
                 Is.All.GreaterThan(ipv6RejectIndexes[^1]),
-                "Every proxy service route must be behind the late IPv6 gate.");
+                "Every proxy service route must be behind the IPv6 gate.");
             Assert.That(
                 route.Rules.Any(rule => rule.Action == RouteRuleAction.Route
                     && ContainsIpv6Condition(rule)),
@@ -701,9 +714,8 @@ public sealed class RouteProfileBuilderTests
             route,
             "ai");
         int googleRouteIndex = FindRouteRuleIndex(route, "google");
-        int domesticDomainUdpDirectIndex = FindUdp443DirectIndex(route, "cn");
-        int domesticIpUdpDirectIndex = FindUdp443DirectIndex(route, "cnip");
-        int firstStandardServiceIndex = FindFirstStandardServiceIndex(route);
+        int spotifyRouteIndex = FindRouteRuleIndex(route, "spotify");
+        int gamesRouteIndex = FindRouteRuleIndex(route, "games");
         int domesticDomainDirectIndex = FindRouteRuleIndex(route, "cn");
         int domesticIpDirectIndex = FindRouteRuleIndex(route, "cnip");
 
@@ -715,9 +727,8 @@ public sealed class RouteProfileBuilderTests
                 stunProtocolRejectIndex,
                 aiRouteIndex,
                 googleRouteIndex,
-                domesticDomainUdpDirectIndex,
-                domesticIpUdpDirectIndex,
-                firstStandardServiceIndex,
+                spotifyRouteIndex,
+                gamesRouteIndex,
                 domesticDomainDirectIndex,
                 domesticIpDirectIndex
             },
@@ -784,9 +795,6 @@ public sealed class RouteProfileBuilderTests
         }));
     }
 
-    [TestCase("bootstrap", "plan.route.bootstrap_address")]
-    [TestCase("bootstrap_ipv6", "plan.route.bootstrap_address")]
-    [TestCase("bootstrap_shorthand", "plan.route.bootstrap_address")]
     [TestCase("sniff_timeout", "plan.route.sniff_timeout")]
     [TestCase("sniff_ports_default", "plan.route.sniff_excluded_ports")]
     [TestCase("sniff_port_range", "plan.route.sniff_excluded_ports")]
@@ -797,9 +805,6 @@ public sealed class RouteProfileBuilderTests
         var plan = CreatePlan(TargetPlatform.Linux);
         plan = fault switch
         {
-            "bootstrap" => plan with { BootstrapAddress = "invalid" },
-            "bootstrap_ipv6" => plan with { BootstrapAddress = "2001:db8::1" },
-            "bootstrap_shorthand" => plan with { BootstrapAddress = "127.1" },
             "sniff_timeout" => plan with { SniffTimeout = "0s" },
             "sniff_ports_default" => plan with { SniffExcludedPorts = default },
             "sniff_port_range" => plan with { SniffExcludedPorts = [0, 65536] },
@@ -873,7 +878,15 @@ public sealed class RouteProfileBuilderTests
             string.Join(';', rule.Rules?.Select(MatcherKey) ?? []));
     }
 
-    private static void AssertDirectLayerOrder(RouteConfig route)
+    [Test]
+    public void BridgeOnlyForwardingPreservesMatchersAndRuleOrder()
+    {
+        RouteConfig route = SingboxRouteEmitter.Emit(CreatePlan(TargetPlatform.Linux) with { AutoRedirect = false });
+        Assert.That(route.Rules.Any(rule => rule.Action == RouteRuleAction.Bypass), Is.False);
+        AssertDirectLayerOrder(route, bypassEnabled: false);
+    }
+
+    private static void AssertDirectLayerOrder(RouteConfig route, bool bypassEnabled = true)
     {
         int udpSniffIndex = FindSniffIndex(route, "udp");
         for (var index = 0; index < route.Rules.Count; index++)
@@ -899,6 +912,8 @@ public sealed class RouteProfileBuilderTests
                     useBridgeGate: true);
             });
 
+            if (!bypassEnabled)
+                continue;
             RouteRule bypass = route.Rules[index - 2];
             Assert.Multiple(() =>
             {
@@ -960,21 +975,6 @@ public sealed class RouteProfileBuilderTests
     private static string Join<T>(IEnumerable<T>? values) =>
         values == null ? string.Empty : string.Join(',', values);
 
-    private static int FindFirstStandardServiceIndex(RouteConfig route) =>
-        route.Rules.FindIndex(rule =>
-            rule.Action == RouteRuleAction.Route
-            && BoxForgeProfile.Default.Services
-                .Where(service => !service.PrecedesDomesticRoutes)
-                .Any(service =>
-                rule.Outbound == service.Name));
-
-    private static int FindUdp443DirectIndex(RouteConfig route, string ruleSet) =>
-        route.Rules.FindIndex(rule =>
-            rule.Action == RouteRuleAction.Route
-            && rule.Outbound == SingboxTags.DirectOutbound
-            && ContainsUdp443Condition(rule)
-            && rule.RuleSet?.Contains(ruleSet) == true);
-
     private static int FindSniffIndex(RouteConfig route, string network) =>
         route.Rules.FindIndex(rule =>
             rule.Action == RouteRuleAction.Sniff
@@ -986,7 +986,6 @@ public sealed class RouteProfileBuilderTests
             && (rule.Outbound == SingboxTags.DirectOutbound
                 || BoxForgeProfile.Default.Services.Any(service =>
                     service.Name == rule.Outbound))
-            && !ContainsUdp443Condition(rule)
             && !ContainsIpv6Condition(rule)
             && rule.RuleSet?.Contains(ruleSet) == true);
 

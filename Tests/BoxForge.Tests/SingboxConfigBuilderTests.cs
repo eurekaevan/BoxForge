@@ -17,6 +17,80 @@ namespace BoxForge.Tests;
 [TestFixture]
 public sealed class SingboxConfigBuilderTests
 {
+    [TestCase(false)]
+    [TestCase(true)]
+    public void NoPriorityServicesKeepDomesticFirstInDnsAndRoute(bool noServices)
+    {
+        var overlay = JsonSerializer.SerializeToNode(new
+        {
+            dns = new { address_family = "DirectDualStack" },
+            route = new
+            {
+                services = new
+                {
+                    patch = BoxForgeProfile.Default.Services.Select(service =>
+                        new { id = service.Id, precedes_domestic_routes = false }).ToArray()
+                }
+            }
+        })!.AsObject();
+        if (noServices)
+            overlay["route"]!["services"] = JsonSerializer.SerializeToNode(new { replace = Array.Empty<object>() });
+        var profile = BoxForgeProfile.Default.Resolve(TargetPlatform.Linux, overlay);
+        var nodes = new NodeCatalog([CreateProxy("US01", "us.example.com")], ["US01"]);
+        var plan = ConfigurationPlanner.Plan(nodes, profile);
+        Assert.DoesNotThrow(plan.Validate);
+        var config = new SingboxConfigBuilder().Build(plan, new string('a', 64));
+        int lastDomestic = config.Route.Rules.FindLastIndex(rule => rule.Outbound == SingboxTags.DirectOutbound
+            && rule.RuleSet?.Contains(RuleSetTags.CnIp) == true);
+        Assert.Multiple(() =>
+        {
+            Assert.That(plan.Dns.Pools[0].Kind, Is.EqualTo(DnsPoolKind.Domestic));
+            Assert.That(plan.Dns.Pools[^1].Kind, Is.EqualTo(DnsPoolKind.Global));
+            Assert.That(plan.Dns.Pools.Length, Is.EqualTo(profile.Services.Length + 2));
+            Assert.That(plan.Dns.Pools.Skip(1).SkipLast(1).Select(pool => pool.ServiceId),
+                Is.EqualTo(profile.Services.Select(service => service.Id)));
+            Assert.That(lastDomestic, Is.GreaterThanOrEqualTo(0));
+            foreach (var service in profile.Services)
+                Assert.That(config.Route.Rules.FindIndex(rule => rule.Outbound == service.Name), Is.GreaterThan(lastDomestic));
+            var guards = config.Route.Rules.Where(rule => rule.IpVersion == 6 && rule.RuleSet is not null).ToArray();
+            Assert.That(guards.Length, Is.EqualTo(noServices ? 0 : 1));
+            Assert.That(guards.All(rule => config.Route.Rules.IndexOf(rule) > lastDomestic), Is.True);
+            Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.DirectDualStack));
+        });
+    }
+
+    [Test]
+    public void ForwardingAndAutoRedirectHaveIndependentOutputContracts(
+        [Values] TargetPlatform platform,
+        [Values(null, false, true)] bool? autoRedirect,
+        [Values] bool forwarding)
+    {
+        var overlay = JsonSerializer.SerializeToNode(new
+        {
+            route = new { auto_redirect = autoRedirect, use_direct_forwarding = forwarding }
+        })!.AsObject();
+        if (platform == TargetPlatform.Windows && autoRedirect == true)
+        {
+            var error = Assert.Throws<ProfileValidationException>(() => BoxForgeProfile.Default.Resolve(platform, overlay))!;
+            Assert.That(error.Diagnostics.Single().Path, Is.EqualTo("profile.effective.Windows.route.auto_redirect"));
+            return;
+        }
+
+        var profile = BoxForgeProfile.Default.Resolve(platform, overlay);
+        var nodes = new NodeCatalog([CreateProxy("US01", "us.example.com")], ["US01"]);
+        var config = new SingboxConfigBuilder().Build(ConfigurationPlanner.Plan(nodes, profile), cacheId: new string('a', 64));
+        Assert.Multiple(() =>
+        {
+            Assert.That(config.Inbounds.Single().AutoRedirect, Is.EqualTo(autoRedirect));
+            Assert.That(config.Outbounds.OfType<BridgeOutbound>().Count(), Is.EqualTo(forwarding ? 1 : 0));
+            Assert.That(config.Route.Rules.Count(rule => rule.Outbound == SingboxTags.BridgeOutbound), Is.EqualTo(forwarding ? 3 : 0));
+            Assert.That(config.Route.Rules.Count(rule => rule.Action == RouteRuleAction.Bypass),
+                Is.EqualTo(forwarding && autoRedirect == true ? 3 : 0));
+            Assert.That(config.Route.Rules.Count(rule => rule.Outbound == SingboxTags.DirectOutbound), Is.EqualTo(3));
+            Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, profile.Settings.AddressFamily));
+        });
+    }
+
     [TestCase("pool_primary")]
     [TestCase("pool_scope")]
     [TestCase("pool_order")]
@@ -27,7 +101,6 @@ public sealed class SingboxConfigBuilderTests
     [TestCase("route_services_missing")]
     [TestCase("route_sniff_timeout")]
     [TestCase("route_sniff_ports")]
-    [TestCase("route_bootstrap")]
     [TestCase("service_dns_detour")]
     [TestCase("service_primary_secondary_swapped")]
     [TestCase("node_binding_removed")]
@@ -37,7 +110,9 @@ public sealed class SingboxConfigBuilderTests
     public void BuildRejectsMissingOrContradictoryPolicyBeforeEmission(string fault)
     {
         var source = CreateProxy("US01", "us.example.com") with { AddressFamily = AddressFamilyPolicy.Ipv4Only };
-        var plan = ConfigurationPlanner.Plan(new NodeCatalog([source], [source.Name]), CreateDirectDualStackProfile(TargetPlatform.Linux));
+        var plan = ConfigurationPlanner.Plan(new NodeCatalog([source], [source.Name]),
+            BoxForgeProfile.Default.Resolve(TargetPlatform.Linux,
+                JsonSerializer.SerializeToNode(new { dns = new { address_family = "DualStack" } })!.AsObject()));
         Assert.DoesNotThrow(plan.Validate);
         var binding = plan.NodeResolvers[source.Name];
         var first = plan.Dns.Pools[0];
@@ -57,7 +132,6 @@ public sealed class SingboxConfigBuilderTests
             "route_services_missing" => plan with { Route = plan.Route with { Services = default } },
             "route_sniff_timeout" => plan with { Route = plan.Route with { SniffTimeout = "invalid" } },
             "route_sniff_ports" => plan with { Route = plan.Route with { SniffExcludedPorts = default } },
-            "route_bootstrap" => plan with { Route = plan.Route with { BootstrapAddress = "invalid" } },
             "service_dns_detour" => plan with { Dns = plan.Dns with { Resolvers = [.. plan.Dns.Resolvers.Select(resolver => resolver.Name == firstPrimary ? resolver with { Detour = SingboxTags.MainProxyGroup } : resolver)] } },
             "service_primary_secondary_swapped" => plan with
             {
@@ -109,6 +183,7 @@ public sealed class SingboxConfigBuilderTests
     [TestCase("dns_block_rule_set", "IR005", "plan.dns.blocked_rule_set")]
     [TestCase("dns_pool_scope", "IR005", "plan.dns.pools[0].rule_sets[0]")]
     [TestCase("service_selector", "IR003", "service_rule")]
+    [TestCase("service_priority", "IR011", "plan.dns.pools[4]")]
     [TestCase("route_final", "IR003", "plan.route.final_outbound")]
     [TestCase("resolver", "IR006", "plan.http_clients[0].resolver")]
     [TestCase("client_detour", "IR003", "plan.http_clients[0].detour")]
@@ -117,6 +192,8 @@ public sealed class SingboxConfigBuilderTests
     [TestCase("endpoint", "IR004", "plan.dns.tailscale_enabled")]
     [TestCase("address_family", "IR001", "plan.dns.address_family")]
     [TestCase("forwarding", "IR001", "plan.route.use_direct_forwarding")]
+    [TestCase("auto_redirect", "IR001", "plan.route.auto_redirect")]
+    [TestCase("windows_auto_redirect", "IR008", "plan.tun.auto_redirect")]
     [TestCase("probe_interval", "IR001", "plan.groups.probes[0].interval")]
     [TestCase("bootstrap_resolver", "IR006", "plan.route.default_domain_resolver")]
     [TestCase("selection_mode", "IR001", "plan.dns.selection_mode")]
@@ -134,6 +211,14 @@ public sealed class SingboxConfigBuilderTests
             "dns_block_rule_set" => plan with { Route = plan.Route with { RuleSets = [.. plan.Route.RuleSets.Where(source => !source.Tags.Contains(RuleSetTags.Ads))] } },
             "dns_pool_scope" => plan with { Dns = plan.Dns with { Pools = plan.Dns.Pools.SetItem(0, plan.Dns.Pools[0] with { RuleSets = ["missing"] }) } },
             "service_selector" => plan with { Groups = plan.Groups with { Services = [] } },
+            "service_priority" => plan with
+            {
+                Route = plan.Route with
+                {
+                    Services = plan.Route.Services.SetItem(
+                        plan.Route.Services.Length - 1, plan.Route.Services[^1] with { PrecedesDomesticRoutes = false })
+                }
+            },
             "route_final" => plan with { Route = plan.Route with { FinalOutbound = "missing" } },
             "resolver" => plan with { HttpClients = [plan.HttpClients[0] with { Resolver = plan.HttpClients[0].Resolver with { Server = "missing" } }, .. plan.HttpClients.Skip(1)] },
             "client_detour" => plan with { HttpClients = [plan.HttpClients[0] with { Detour = "missing" }, .. plan.HttpClients.Skip(1)] },
@@ -142,6 +227,8 @@ public sealed class SingboxConfigBuilderTests
             "endpoint" => plan with { TailscaleEndpointEnabled = false },
             "address_family" => plan with { Dns = plan.Dns with { AddressFamily = AddressFamilyPolicy.DualStack } },
             "forwarding" => plan with { Route = plan.Route with { UseDirectForwarding = false } },
+            "auto_redirect" => plan with { Route = plan.Route with { AutoRedirect = false } },
+            "windows_auto_redirect" => plan with { Platform = TargetPlatform.Windows },
             "probe_interval" => plan with { Groups = plan.Groups with { Probes = [plan.Groups.Probes[0] with { Interval = "9m" }] } },
             "bootstrap_resolver" => plan with
             {
@@ -180,6 +267,7 @@ public sealed class SingboxConfigBuilderTests
             ("IR005", "plan.dns.pools[0].rule_sets[0]"),
             ("IR011", "plan.dns.pools[0]"),
             ("IR006", "plan.http_clients[0].resolver"),
+            ("IR011", "plan.http_clients[0].resolver"),
             ("IR007", "plan.services.dashboard.http_client")
         }));
         Assert.That(second.Diagnostics, Is.EqualTo(first.Diagnostics));
@@ -228,6 +316,111 @@ public sealed class SingboxConfigBuilderTests
             ("IR002", "plan.node_resolvers[1]"), ("IR006", "plan.node_resolvers[1].server")
         }));
         Assert.That(JsonSerializer.Serialize(error.Diagnostics), Does.Not.Contain("sensitive"));
+    }
+
+    [Test]
+    public void NodeResolversExistOnlyForSourceIpv4RestrictionsThatTheControlPlaneDoesNotProvide(
+        [Values] AddressFamilyPolicy family, [Values] bool sourceIpv4Only)
+    {
+        var node = CreateProxy("US01", "us.example.com") with
+        {
+            AddressFamily = sourceIpv4Only ? AddressFamilyPolicy.Ipv4Only : null
+        };
+        var resolved = BoxForgeProfile.Default.Resolve(TargetPlatform.Linux,
+            JsonSerializer.SerializeToNode(new { dns = new { address_family = family.ToString() } })!.AsObject());
+        var plan = ConfigurationPlanner.Plan(new NodeCatalog([node], [node.Name]), resolved);
+        bool needsBinding = family == AddressFamilyPolicy.DualStack && sourceIpv4Only;
+        Assert.That(plan.NodeResolvers.ContainsKey(node.Name), Is.EqualTo(needsBinding));
+        Assert.DoesNotThrow(plan.Validate);
+
+        var binding = new DomainResolverPlan(SingboxTags.DirectAliDns, AddressFamilyPolicy.Ipv4Only, true);
+        plan = plan with { NodeResolvers = plan.NodeResolvers.SetItem(node.Name, binding) };
+        if (needsBinding)
+            Assert.DoesNotThrow(plan.Validate);
+        else
+        {
+            var error = Assert.Throws<ConfigValidationException>(plan.Validate)!;
+            Assert.That(error.Diagnostics.Select(item => (item.Code, item.Path)),
+                Is.EqualTo(new[] { ("IR011", "plan.node_resolvers[0]") }));
+        }
+    }
+
+    [Test]
+    public void HttpClientResolversMustMatchTheirRoleAndUseFreshResolution(
+        [Values] AddressFamilyPolicy family, [Values] bool dashboard,
+        [Values("family", "cache", "server", "prefer")] string fault)
+    {
+        var resolved = BoxForgeProfile.Default.Resolve(TargetPlatform.Linux, JsonSerializer.SerializeToNode(new
+        {
+            dns = new { address_family = family.ToString() },
+            features = new { api = new { enabled = true } }
+        })!.AsObject());
+        var plan = ConfigurationPlanner.Plan(new NodeCatalog([], []), resolved);
+        Assert.DoesNotThrow(plan.Validate);
+        int index = plan.HttpClients.ToList().FindIndex(client => client.Name ==
+            (dashboard ? HttpClientTags.DashboardDirect : HttpClientTags.RuleSetProxy));
+        var client = plan.HttpClients[index];
+        var resolver = fault switch
+        {
+            "family" => client.Resolver with
+            {
+                AddressFamily = client.Resolver.AddressFamily == AddressFamilyPolicy.Ipv4Only
+                    ? AddressFamilyPolicy.DualStack : AddressFamilyPolicy.Ipv4Only
+            },
+            "cache" => client.Resolver with { DisableOptimisticCache = false },
+            "server" => client.Resolver with { Server = SingboxTags.ProxyGoogleDns },
+            _ => client.Resolver with { PreferIpv4 = true }
+        };
+        plan = plan with
+        {
+            HttpClients = [.. plan.HttpClients.Select((item, position) => position == index ? item with { Resolver = resolver } : item)]
+        };
+        var error = Assert.Throws<ConfigValidationException>(plan.Validate)!;
+        Assert.That(error.Diagnostics.Select(item => (item.Code, item.Path)),
+            Is.EqualTo(new[] { ("IR011", $"plan.http_clients[{index}].resolver") }));
+    }
+
+    [TestCase(AddressFamilyPolicy.Auto)]
+    [TestCase(AddressFamilyPolicy.DirectDualStack)]
+    public void DefaultHttpClientMustUseControlPlaneResolutionEvenWhenNamedDashboard(AddressFamilyPolicy family)
+    {
+        var resolved = BoxForgeProfile.Default.Resolve(TargetPlatform.Linux, JsonSerializer.SerializeToNode(new
+        {
+            dns = new { address_family = family.ToString() },
+            features = new { api = new { enabled = true } }
+        })!.AsObject());
+        var plan = ConfigurationPlanner.Plan(new NodeCatalog([], []), resolved);
+        Assert.DoesNotThrow(plan.Validate);
+        int index = plan.HttpClients.ToList().FindIndex(client => client.Name == HttpClientTags.DashboardDirect);
+        plan = plan with { Route = plan.Route with { DefaultHttpClient = HttpClientTags.DashboardDirect } };
+        var error = Assert.Throws<ConfigValidationException>(() => new SingboxConfigBuilder().Build(plan, null))!;
+        Assert.That(error.Diagnostics.Select(item => (item.Code, item.Path)),
+            Is.EqualTo(new[] { ("IR011", $"plan.http_clients[{index}].resolver") }));
+    }
+
+    [Test]
+    public void BuildRejectsInvalidTunAddressesAndUnsupportedMultiQueueBeforeEmission(
+        [Values] TargetPlatform platform, [Values("default", "empty", "multi_queue")] string fault)
+    {
+        var plan = ConfigurationPlanner.Plan(new NodeCatalog([], []), CreateProfile(platform));
+        plan = plan with
+        {
+            Tun = fault switch
+            {
+                "default" => plan.Tun with { Addresses = default },
+                "empty" => plan.Tun with { Addresses = [] },
+                _ => plan.Tun with { MultiQueue = true }
+            }
+        };
+        if (fault == "multi_queue" && platform == TargetPlatform.Linux)
+            Assert.DoesNotThrow(() => new SingboxConfigBuilder().Build(plan, null));
+        else
+        {
+            var error = Assert.Throws<ConfigValidationException>(() => new SingboxConfigBuilder().Build(plan, null))!;
+            string field = fault == "multi_queue" ? "multi_queue" : "addresses";
+            Assert.That(error.Diagnostics.Select(item => (item.Code, item.Path)),
+                Is.EqualTo(new[] { ("IR008", $"plan.tun.{field}") }));
+        }
     }
 
     [Test]
@@ -576,6 +769,43 @@ public sealed class SingboxConfigBuilderTests
         Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Ipv4Only));
     }
 
+    [TestCase(null, new[] { "香港 01", "香港 02", "美国 01", "美国 02" }, "🇺🇸 US AUTO")]
+    [TestCase(null, new[] { "日本 01", "日本 02", "美国 01" }, "美国 01")]
+    [TestCase("hk", new[] { "美国 01", "美国 02", "香港 01", "香港 02" }, "🇭🇰 HK AUTO")]
+    [TestCase("hk", new[] { "美国 01", "美国 02", "香港 01" }, "香港 01")]
+    [TestCase("hk", new[] { "美国 01", "香港 01" }, "香港 01")]
+    [TestCase(null, new[] { "香港 01", "香港 02", "日本 01", "日本 02" }, "🇯🇵 JP AUTO")]
+    [TestCase(null, new[] { "香港 01", "日本 01" }, "香港 01")]
+    [TestCase(null, new string[] { }, SingboxTags.DirectOutbound)]
+    public void RuleSetDownloadsUseInitialMainRegionTarget(string? preferredRegion, string[] names, string expected)
+    {
+        var profile = preferredRegion is null ? BoxForgeProfile.Default : BoxForgeProfile.Default.ApplyOverrides(
+            JsonSerializer.SerializeToNode(new { route = new { main_default_region = preferredRegion } })!.AsObject());
+        var nodes = new NodeCatalog(names.Select(name => CreateProxy(name, "node.example.com")).ToArray(), names);
+        foreach (TargetPlatform platform in Enum.GetValues<TargetPlatform>())
+        {
+            var plan = ConfigurationPlanner.Plan(nodes, profile.Resolve(platform));
+            Assert.That(plan.HttpClients.Single(client => client.Name == HttpClientTags.RuleSetProxy).Detour,
+                Is.EqualTo(expected), platform.ToString());
+            var config = new SingboxConfigBuilder().Build(plan, new string('a', 64));
+            var main = config.Outbounds.OfType<SelectorOutbound>().Single(group => group.Tag == SingboxTags.MainProxyGroup);
+            var region = config.Outbounds.OfType<SelectorOutbound>().SingleOrDefault(group => group.Tag == main.Default);
+            Assert.Multiple(() =>
+            {
+                Assert.That(config.HttpClients.Single(client => client.Tag == HttpClientTags.RuleSetProxy).Detour,
+                    Is.EqualTo(expected));
+                Assert.That(expected, Is.EqualTo(region?.Default ?? main.Default));
+                Assert.That(expected, Is.Not.EqualTo(SingboxTags.MainProxyGroup));
+                Assert.That(profile.Route.MainDefaultRegion, Is.EqualTo(preferredRegion ?? "us"));
+            });
+            if (region is not null)
+                config.Outbounds[config.Outbounds.IndexOf(region)] = region with { Default = region.Outbounds[^1] };
+            config.Outbounds[config.Outbounds.IndexOf(main)] = main with { Default = SingboxTags.DirectOutbound };
+            Assert.That(config.HttpClients.Single(client => client.Tag == HttpClientTags.RuleSetProxy).Detour, Is.EqualTo(expected));
+            Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, profile.Resolve(platform).Settings.AddressFamily));
+        }
+    }
+
     [Test]
     public void DefaultRouteSerializesConditionalIpv6GuardsWithoutPortBasedQuicRejection()
     {
@@ -597,14 +827,14 @@ public sealed class SingboxConfigBuilderTests
             Assert.That(json, Does.Contain("\"ip_version\": 6"));
             Assert.That(
                 json.Split("\"ip_version\": 6", StringSplitOptions.None).Length - 1,
-                Is.EqualTo(5), "two interface guards plus two service-stage guards and the final proxy IPv6 guard");
+                Is.EqualTo(3), "one interface guard plus the default priority-service guard and the final proxy IPv6 guard");
             Assert.That(document.RootElement.GetProperty("route").GetRawText(), Does.Not.Contain("::/0"));
             Assert.That(json, Does.Not.Contain("\"no_drop\""));
             Assert.That(document.RootElement.GetProperty("route").GetProperty("rules").EnumerateArray()
                 .Any(rule => rule.GetProperty("action").GetString() == "reject"
                     && rule.TryGetProperty("port", out JsonElement ports)
                     && ports.EnumerateArray().Any(port => port.GetInt32() == 443)), Is.False);
-            Assert.That(ipv6Rejects, Has.Count.EqualTo(2));
+            Assert.That(ipv6Rejects, Has.Count.EqualTo(1));
             Assert.That(ipv6Rejects.All(rule =>
                 rule.GetProperty("action").GetString() == "reject"
                 && rule.GetProperty("rules")[1].GetProperty("default_interface_address")[0].GetString() == "2000::/3"
@@ -778,7 +1008,7 @@ public sealed class SingboxConfigBuilderTests
         SelectorOutbound github = config.Outbounds.OfType<SelectorOutbound>().Single(group => group.Tag == "🐙 GitHub");
         int githubRoute = config.Route.Rules.FindIndex(rule => rule.Outbound == github.Tag);
         int googleRoute = config.Route.Rules.FindIndex(rule => rule.Outbound == "🔎 Google");
-        int domesticUdp = config.Route.Rules.FindIndex(rule => rule.Port?.Contains(443) == true
+        int domestic = config.Route.Rules.FindIndex(rule => rule.Outbound == SingboxTags.DirectOutbound
             && rule.RuleSet?.Contains(RuleSetTags.Cn) == true);
         var resolvers = config.Dns.Servers.OfType<HttpsDnsServer>()
             .Where(server => server.Tag?.StartsWith("dns-service-github-", StringComparison.Ordinal) == true).ToArray();
@@ -786,7 +1016,8 @@ public sealed class SingboxConfigBuilderTests
         {
             Assert.That(github.Default, Is.EqualTo("🇺🇸 US"));
             Assert.That(github.Outbounds, Does.Contain(github.Default));
-            Assert.That(githubRoute, Is.GreaterThan(googleRoute).And.LessThan(domesticUdp));
+            Assert.That(domestic, Is.GreaterThanOrEqualTo(0));
+            Assert.That(githubRoute, Is.GreaterThan(googleRoute).And.LessThan(domestic));
             Assert.That(config.Route.Rules[githubRoute].RuleSet, Is.EqualTo(new[] { "github" }));
             Assert.That(resolvers.Select(server => server.Tag), Is.EquivalentTo(new[] { "dns-service-github-cloudflare", "dns-service-github-google" }));
             Assert.That(resolvers.Select(server => server.Detour), Is.All.EqualTo(github.Tag));
@@ -889,56 +1120,78 @@ public sealed class SingboxConfigBuilderTests
         Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Ipv4Only));
     }
 
-    [TestCase(TargetPlatform.Android)]
-    [TestCase(TargetPlatform.Linux)]
-    [TestCase(TargetPlatform.Windows)]
-    public void DirectDualStackKeepsDirectResolutionDualStackAndProxyControlPlaneIpv4(TargetPlatform platform)
+    [Test]
+    public void ConditionalClientIpv6ModesKeepDirectAndProxyResolutionSeparate(
+        [Values] TargetPlatform platform,
+        [Values(AddressFamilyPolicy.Auto, AddressFamilyPolicy.DirectDualStack)] AddressFamilyPolicy family)
     {
-        var resolved = CreateDirectDualStackProfile(platform);
+        var resolved = BoxForgeProfile.Default.Resolve(platform, JsonSerializer.SerializeToNode(new
+        {
+            dns = new { address_family = family.ToString() },
+            features = new { api = new { enabled = true } }
+        })!.AsObject());
         SingboxConfig config = PlanAndBuild(
             new NodeCatalog([CreateProxy("US01", "us.example.com")], ["US01"]), resolved, new string('a', 64));
         Assert.Multiple(() =>
         {
-            Assert.That(resolved.Settings.AddressFamily, Is.EqualTo(AddressFamilyPolicy.DirectDualStack));
+            Assert.That(resolved.Settings.AddressFamily, Is.EqualTo(family));
             Assert.That(config.Dns.Strategy, Is.Null);
             Assert.That(config.Route.DefaultDomainResolver!.Strategy, Is.EqualTo(DnsStrategy.Ipv4Only));
-            Assert.That(config.HttpClients.Single().DomainResolver!.Strategy, Is.EqualTo(DnsStrategy.Ipv4Only));
+            Assert.That(config.HttpClients.Single(client => client.Tag == HttpClientTags.RuleSetProxy)
+                .DomainResolver!.Strategy, Is.EqualTo(DnsStrategy.Ipv4Only));
+            Assert.That(config.HttpClients.Single(client => client.Tag == HttpClientTags.DashboardDirect)
+                .DomainResolver!.Strategy, Is.Null);
             Assert.That(config.Outbounds.OfType<DirectOutbound>().Single().DomainResolver!.Strategy,
                 Is.EqualTo(DnsStrategy.PreferIpv4));
-            Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.DirectDualStack));
+            Assert.That(config.Route.Rules.Any(rule => rule.IpVersion == 6 && rule.RuleSet is null
+                && rule.Action == RouteRuleAction.Reject), Is.EqualTo(family == AddressFamilyPolicy.DirectDualStack));
+            Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, family));
             Assert.Throws<Exceptions.ConfigValidationException>(
                 () => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Ipv4Only));
         });
     }
 
-    [Test]
-    public void DirectDualStackValidatorStillGuardsControlPlaneResolution()
+    [TestCase(AddressFamilyPolicy.Auto)]
+    [TestCase(AddressFamilyPolicy.DirectDualStack)]
+    public void ConditionalClientIpv6ModesValidateControlPlaneResolution(AddressFamilyPolicy family)
     {
-        SingboxConfig config = PlanAndBuild(
-            new NodeCatalog([], []), CreateDirectDualStackProfile(TargetPlatform.Linux), new string('a', 64));
+        var resolved = BoxForgeProfile.Default.Resolve(TargetPlatform.Linux,
+            JsonSerializer.SerializeToNode(new { dns = new { address_family = family.ToString() } })!.AsObject());
+        var plan = ConfigurationPlanner.Plan(new NodeCatalog([], []), resolved);
+        var invalidPlan = plan with
+        {
+            Route = plan.Route with
+            {
+                DefaultDomainResolver = plan.Route.DefaultDomainResolver with { AddressFamily = AddressFamilyPolicy.DualStack }
+            }
+        };
+        var planError = Assert.Throws<ConfigValidationException>(invalidPlan.Validate)!;
+        Assert.That(planError.Diagnostics.Any(item => item.Code == "IR011" && item.Path == "plan.route.default_domain_resolver"), Is.True);
+        SingboxConfig config = new SingboxConfigBuilder().Build(plan, new string('a', 64));
         config = config with
         {
             Route = config.Route with { DefaultDomainResolver = config.Route.DefaultDomainResolver! with { Strategy = null } }
         };
         var error = Assert.Throws<ConfigValidationException>(
-            () => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.DirectDualStack))!;
+            () => new SingboxConfigValidator().Validate(config, family))!;
         Assert.That(error.Diagnostics.Select(diagnostic => diagnostic.Code), Does.Contain("SB061"));
     }
 
-    [TestCase(TargetPlatform.Android)]
-    [TestCase(TargetPlatform.Linux)]
-    [TestCase(TargetPlatform.Windows)]
-    public void DirectDualStackRejectsIpv6LiteralProxyNodes(TargetPlatform platform)
+    [Test]
+    public void ConditionalClientIpv6ModesRejectIpv6LiteralProxyNodes(
+        [Values] TargetPlatform platform,
+        [Values(AddressFamilyPolicy.Auto, AddressFamilyPolicy.DirectDualStack)] AddressFamilyPolicy family)
     {
         var node = CreateProxy("US IPv6", "2001:db8::1234");
+        var resolved = BoxForgeProfile.Default.Resolve(platform,
+            JsonSerializer.SerializeToNode(new { dns = new { address_family = family.ToString() } })!.AsObject());
         var error = Assert.Throws<ConfigValidationException>(() =>
             new SingboxConfigValidator().Validate(PlanAndBuild(new NodeCatalog([node], [node.Name]),
-                CreateDirectDualStackProfile(platform), "cache"), AddressFamilyPolicy.DirectDualStack));
+                resolved, new string('a', 64)), family));
         Assert.That(error!.Diagnostics.Select(diagnostic => diagnostic.Code), Does.Contain("SB062"));
     }
 
     [TestCase(AddressFamilyPolicy.DualStack)]
-    [TestCase(AddressFamilyPolicy.Auto)]
     public void BuilderAndValidatorShareTheResolvedProfileAddressFamily(AddressFamilyPolicy addressFamily)
     {
         var profile = BoxForgeProfile.Default.ApplyOverrides(JsonSerializer.SerializeToNode(new

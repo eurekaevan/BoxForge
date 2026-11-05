@@ -65,9 +65,7 @@ form.addEventListener("submit", async event => {
   event.preventDefault();
 
   const file = fileInput.files[0];
-  const platforms = [
-    ...form.querySelectorAll('input[name="platforms"]:checked')
-  ];
+  const platforms = form.querySelectorAll('input[name="platforms"]:checked');
   if (!file) {
     setStatus("请先选择 YAML 文件。", "error");
     fileInput.focus();

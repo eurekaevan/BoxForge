@@ -11,6 +11,30 @@ public sealed class SingboxConfigValidatorTests
 {
     private readonly SingboxConfigValidator validator = new();
 
+    [Test]
+    public void BypassWithoutOutboundRequiresAutoRedirect(
+        [Values(null, false, true)] bool? autoRedirect,
+        [Values(false, true)] bool hasOutbound,
+        [Values(false, true)] bool nested)
+    {
+        var valid = CreateValidConfig();
+        var bypass = new RouteRule { Action = RouteRuleAction.Bypass, Outbound = hasOutbound ? "direct" : null };
+        var config = valid with
+        {
+            Inbounds = [valid.Inbounds[0] with { Type = "tun", AutoRedirect = autoRedirect }],
+            Route = valid.Route with
+            {
+                Rules = nested ? [new RouteRule { Type = RouteRuleType.Logical, Mode = RouteLogicalMode.And, Rules = [bypass] }] : [bypass]
+            }
+        };
+        if (autoRedirect == true || hasOutbound)
+            Assert.DoesNotThrow(() => validator.Validate(config, AddressFamilyPolicy.DualStack));
+        else
+            AssertDiagnostics(config, new ConfigDiagnostic("SB093",
+                nested ? "route.rules[0].rules[0].action" : "route.rules[0].action",
+                "无 outbound 的 bypass 必须启用 TUN auto_redirect。"));
+    }
+
     [TestCase("none")]
     [TestCase("chrome120")]
     [TestCase("chrome_psk")]
@@ -479,10 +503,16 @@ public sealed class SingboxConfigValidatorTests
     }
 
     [TestCase(AddressFamilyPolicy.Ipv4Only)]
+    [TestCase(AddressFamilyPolicy.Auto)]
     [TestCase(AddressFamilyPolicy.DirectDualStack)]
     public void ControlPlaneMustUseFreshIpv4OnlyResolutionAndRejectIpv6Literals(AddressFamilyPolicy addressFamily)
     {
-        SingboxConfig valid = addressFamily == AddressFamilyPolicy.Ipv4Only ? CreateValidIpv4Config() : CreateValidDirectDualStackConfig();
+        SingboxConfig valid = addressFamily switch
+        {
+            AddressFamilyPolicy.Ipv4Only => CreateValidIpv4Config(),
+            AddressFamilyPolicy.Auto => CreateValidAutoConfig(),
+            _ => CreateValidDirectDualStackConfig()
+        };
         SingboxConfig config = valid with
         {
             Outbounds =
@@ -774,12 +804,89 @@ public sealed class SingboxConfigValidatorTests
         {
             valid.Dns.Rules.Skip(1).ToList(),
             valid.Dns.Rules.AsEnumerable().Reverse().ToList(),
-            new List<DnsRule> { valid.Dns.Rules[0] with { Domain = ["example.com"] }, valid.Dns.Rules[1] }
+            new List<DnsRule> { valid.Dns.Rules[0] with { Domain = ["example.com"] }, valid.Dns.Rules[1] },
+            new List<DnsRule> { valid.Dns.Rules[0] with { IpCidr = ["192.0.2.0/24"] }, valid.Dns.Rules[1] }
         })
         {
             var config = valid with { Dns = valid.Dns with { Rules = rules } };
             var error = Assert.Throws<ConfigValidationException>(() => validator.Validate(config, AddressFamilyPolicy.Ipv4Only));
             Assert.That(error!.Diagnostics.Select(diagnostic => diagnostic.Code), Is.EqualTo(new[] { "SB082" }));
+        }
+    }
+
+    [TestCase(null)]
+    [TestCase(DnsStrategy.PreferIpv4)]
+    public void Ipv4OnlyRequiresGlobalIpv4DnsStrategy(DnsStrategy? strategy)
+    {
+        SingboxConfig valid = CreateValidIpv4Config();
+        var error = Assert.Throws<ConfigValidationException>(() => validator.Validate(
+            valid with { Dns = valid.Dns with { Strategy = strategy } }, AddressFamilyPolicy.Ipv4Only))!;
+        Assert.That(error.Diagnostics.Select(item => (item.Code, item.Path)),
+            Is.EqualTo(new[] { ("SB082", "dns.strategy") }));
+    }
+
+    [Test]
+    public void ExplicitResolversMustRespectTheirRoleAndDisableStaleCache(
+        [Values] AddressFamilyPolicy family,
+        [Values("proxy", "direct", "ruleset_default", "ruleset_explicit", "dashboard")] string role,
+        [Values("strategy", "cache", "cache_missing")] string fault)
+    {
+        SingboxConfig valid = family switch
+        {
+            AddressFamilyPolicy.Ipv4Only => CreateValidIpv4Config(),
+            AddressFamilyPolicy.Auto => CreateValidAutoConfig(),
+            AddressFamilyPolicy.DirectDualStack => CreateValidDirectDualStackConfig(),
+            _ => CreateValidConfig()
+        };
+        bool controlPlane = role is "proxy" or "ruleset_default" or "ruleset_explicit";
+        bool requiresIpv4 = (controlPlane ? family.ForControlPlane() : family) == AddressFamilyPolicy.Ipv4Only;
+        var resolver = new DnsResolverOptions
+        {
+            Server = "dns",
+            Strategy = requiresIpv4 ? DnsStrategy.Ipv4Only : null,
+            DisableOptimisticCache = true
+        };
+        resolver = fault switch
+        {
+            "strategy" => resolver with { Strategy = null },
+            "cache" => resolver with { DisableOptimisticCache = false },
+            _ => resolver with { DisableOptimisticCache = null }
+        };
+        string path;
+        SingboxConfig config;
+        if (role == "proxy")
+        {
+            path = $"outbounds[{valid.Outbounds.Count}].domain_resolver";
+            config = valid with { Outbounds = [.. valid.Outbounds, CreateProxyOutbound("proxy") with { DomainResolver = resolver }] };
+        }
+        else if (role == "direct")
+        {
+            path = "outbounds[0].domain_resolver";
+            config = valid with { Outbounds = [((DirectOutbound)valid.Outbounds[0]) with { DomainResolver = resolver }, .. valid.Outbounds.Skip(1)] };
+        }
+        else
+        {
+            path = "http_clients[0].domain_resolver";
+            config = valid with { HttpClients = [valid.HttpClients[0] with { DomainResolver = resolver }] };
+            if (role != "ruleset_default")
+                config = config with
+                {
+                    HttpClients = [config.HttpClients[0] with { Tag = "explicit" }, valid.HttpClients[0]],
+                    Route = valid.Route with
+                    {
+                        RuleSet = [valid.Route.RuleSet[0] with { HttpClient = role == "ruleset_explicit" ? "explicit" : "http" }]
+                    }
+                };
+        }
+        if (fault == "strategy" && !requiresIpv4)
+            Assert.DoesNotThrow(() => validator.Validate(config, family));
+        else
+        {
+            var error = Assert.Throws<ConfigValidationException>(() => validator.Validate(config, family))!;
+            string code = fault == "strategy" ? "SB061" : "SB064";
+            string field = fault == "strategy" ? "strategy" : "disable_optimistic_cache";
+            Assert.That(error.Diagnostics.Select(item => (item.Code, item.Path)),
+                Is.EqualTo(new[] { (code, path + "." + field) }));
         }
     }
 
@@ -835,6 +942,58 @@ public sealed class SingboxConfigValidatorTests
         Assert.That(forcedError!.Diagnostics.Select(diagnostic => diagnostic.Code), Does.Contain("SB092"));
     }
 
+    [TestCase(AddressFamilyPolicy.Auto)]
+    [TestCase(AddressFamilyPolicy.DirectDualStack)]
+    public void InterfaceDnsGuardAllowsOnlyATailscalePreferenceRuleBeforeIt(AddressFamilyPolicy addressFamily)
+    {
+        SingboxConfig valid = addressFamily == AddressFamilyPolicy.Auto ? CreateValidAutoConfig() : CreateValidDirectDualStackConfig();
+        var tailscale = new DnsRule { PreferredBy = ["tail-dns"], Action = DnsRuleAction.Route, Server = "tail-dns" };
+        valid = valid with
+        {
+            Endpoints = [CreateEndpoint("tailscale")],
+            Dns = valid.Dns with
+            {
+                Servers = [.. valid.Dns.Servers, new TailscaleDnsServer { Tag = "tail-dns", Endpoint = "tailscale" }],
+                Rules = [tailscale, .. valid.Dns.Rules]
+            }
+        };
+        Assert.DoesNotThrow(() => validator.Validate(valid, addressFamily));
+        foreach (DnsRule preceding in new[]
+        {
+            tailscale with { PreferredBy = null },
+            tailscale with { Invert = true },
+            tailscale with { Server = "dns" },
+            tailscale with { PreferredBy = ["tail-dns", "dns"] },
+            tailscale with { QueryType = ["AAAA"] },
+            tailscale with { Domain = ["example.com"] },
+            tailscale with { DomainSuffix = ["example.com"] },
+            tailscale with { RuleSet = ["rules"] },
+            tailscale with { DefaultInterfaceAddress = ["2000::/3"] },
+            tailscale with { IpCidr = ["192.0.2.0/24"] },
+            tailscale with { Mode = RouteLogicalMode.And },
+            tailscale with { Rules = [new DnsRule { QueryType = ["AAAA"] }] },
+            tailscale with { MatchResponse = "restricted" },
+            tailscale with { ResponseRcode = DnsResponseCode.NoError }
+        })
+        {
+            var config = valid with { Dns = valid.Dns with { Rules = [preceding, .. valid.Dns.Rules.Skip(1)] } };
+            var error = Assert.Throws<ConfigValidationException>(() => validator.Validate(config, addressFamily))!;
+            Assert.That(error.Diagnostics, Has.Some.Matches<ConfigDiagnostic>(item => item.Code == "SB092" && item.Path == "dns.rules[0]"));
+        }
+        foreach (List<DnsRule> rules in new List<DnsRule>[]
+        {
+            [tailscale],
+            [tailscale, new DnsRule { Action = DnsRuleAction.Route, Server = "dns" }, .. valid.Dns.Rules.Skip(1)]
+        })
+        {
+            var error = Assert.Throws<ConfigValidationException>(() => validator.Validate(valid with
+            {
+                Dns = valid.Dns with { Rules = rules }
+            }, addressFamily))!;
+            Assert.That(error.Diagnostics, Has.Some.Matches<ConfigDiagnostic>(item => item.Code == "SB092" && item.Path == "dns.rules[1]"));
+        }
+    }
+
     [TestCase("server", "SB007")]
     [TestCase("rule_set", "SB011")]
     [TestCase("match_response", "SB086")]
@@ -865,27 +1024,28 @@ public sealed class SingboxConfigValidatorTests
         Assert.That(error.Diagnostics.Single().Path, Does.StartWith("dns.rules[0].rules[0]"));
     }
 
-    [Test]
-    public void DirectDualStackKeepsIpv4ControlPlaneAndAllowsDirectIpv4Preference()
+    [TestCase(AddressFamilyPolicy.Auto)]
+    [TestCase(AddressFamilyPolicy.DirectDualStack)]
+    public void ConditionalClientIpv6ModesKeepIpv4ControlPlaneAndAllowDirectIpv4Preference(AddressFamilyPolicy family)
     {
-        SingboxConfig valid = CreateValidDirectDualStackConfig();
-        Assert.DoesNotThrow(() => validator.Validate(valid, AddressFamilyPolicy.DirectDualStack));
+        SingboxConfig valid = family == AddressFamilyPolicy.Auto ? CreateValidAutoConfig() : CreateValidDirectDualStackConfig();
+        Assert.DoesNotThrow(() => validator.Validate(valid, family));
 
         var dualStackControlPlane = valid with
         {
             Route = valid.Route with { DefaultDomainResolver = valid.Route.DefaultDomainResolver! with { Strategy = null } }
         };
         var resolverError = Assert.Throws<ConfigValidationException>(
-            () => validator.Validate(dualStackControlPlane, AddressFamilyPolicy.DirectDualStack))!;
+            () => validator.Validate(dualStackControlPlane, family))!;
         Assert.That(resolverError.Diagnostics.Select(diagnostic => diagnostic.Code), Does.Contain("SB061"));
 
         var directPrefersIpv4 = valid with
         {
             Outbounds = valid.Outbounds.Select(outbound => outbound is DirectOutbound direct
-                ? direct with { DomainResolver = new DnsResolverOptions { Server = "dns", Strategy = DnsStrategy.PreferIpv4 } }
+                ? direct with { DomainResolver = new DnsResolverOptions { Server = "dns", Strategy = DnsStrategy.PreferIpv4, DisableOptimisticCache = true } }
                 : outbound).ToList()
         };
-        Assert.DoesNotThrow(() => validator.Validate(directPrefersIpv4, AddressFamilyPolicy.DirectDualStack));
+        Assert.DoesNotThrow(() => validator.Validate(directPrefersIpv4, family));
     }
 
     private static SingboxConfig CreateValidDirectDualStackConfig()
@@ -959,6 +1119,7 @@ public sealed class SingboxConfigValidatorTests
         {
             Dns = valid.Dns with
             {
+                Strategy = DnsStrategy.Ipv4Only,
                 Rules = [new DnsRule
                 {
                     QueryType = ["AAAA"], Action = DnsRuleAction.Predefined, Rcode = DnsResponseCode.NoError

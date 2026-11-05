@@ -47,7 +47,15 @@ internal static class SingboxDnsEmitter
                 Action = DnsRuleAction.Predefined,
                 Rcode = DnsResponseCode.NoError
             });
-        else if (plan.AddressFamily.UsesInterfaceGuard())
+        if (plan.TailscaleEnabled)
+            rules.Add(new DnsRule
+            {
+                PreferredBy = [SingboxTags.TailscaleDns],
+                Action = DnsRuleAction.Route,
+                Server = SingboxTags.TailscaleDns,
+                DisableOptimisticCache = true
+            });
+        if (plan.AddressFamily.UsesInterfaceGuard())
             rules.Add(new DnsRule
             {
                 Type = RouteRuleType.Logical,
@@ -59,14 +67,6 @@ internal static class SingboxDnsEmitter
                 ],
                 Action = DnsRuleAction.Predefined,
                 Rcode = DnsResponseCode.NoError
-            });
-        if (plan.TailscaleEnabled)
-            rules.Add(new DnsRule
-            {
-                PreferredBy = [SingboxTags.TailscaleDns],
-                Action = DnsRuleAction.Route,
-                Server = SingboxTags.TailscaleDns,
-                DisableOptimisticCache = true
             });
         rules.Add(new DnsRule
         {
@@ -142,9 +142,7 @@ internal static class SingboxDnsEmitter
         DnsResponseCode rcode, string? queryType = null, bool race = false) =>
         rules.Add(new DnsRule
         {
-            // Domain rule-sets and IP predicates share an OR group in sing-box.
-            // The evaluated-response tag already carries the pool's domain scope.
-            RuleSet = race && queryType is not null ? null : Copy(pool.RuleSets),
+            // The unique response tag already binds this rule to the evaluate scope.
             QueryType = queryType is null ? null : [queryType],
             IpCidr = race && queryType is not null ? [queryType == "A" ? "0.0.0.0/0" : "::/0"] : null,
             MatchResponse = ResponseTag(pool, primary, queryType),

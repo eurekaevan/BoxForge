@@ -77,11 +77,50 @@ public sealed class DnsProfileBuilderTests
             Assert.That(evaluations[^2].RuleSet, Is.EqualTo(new[] { RuleSetTags.Cn }));
             Assert.That(evaluations[^1].RuleSet, Is.Null);
             Assert.That(plan.Pools.Select(pool => pool.ServiceId),
-                Is.EqualTo(profile.Services.OrderByDescending(service => service.PrecedesDomesticRoutes)
-                    .Select(service => (string?)service.Id).Concat([null, null])));
+                Is.EqualTo(profile.Services.Where(service => service.PrecedesDomesticRoutes)
+                    .Select(service => (string?)service.Id).Append(null)
+                    .Concat(profile.Services.Where(service => !service.PrecedesDomesticRoutes).Select(service => (string?)service.Id))
+                    .Append(null)));
             Assert.That(emitted.Rules.Single(rule => rule.Action == DnsRuleAction.Predefined
                 && rule.Rcode == DnsResponseCode.NameError).RuleSet, Is.EqualTo(new[] { RuleSetTags.Ads }));
         });
+    }
+
+    [Test]
+    public void ResponsesInheritPrecedingEvaluateScopeAcrossPolicies(
+        [Values] TargetPlatform platform,
+        [Values] AddressFamilyPolicy family,
+        [Values] DnsResolverSelectionMode selectionMode)
+    {
+        var profile = BoxForgeProfile.Default.Resolve(platform, JsonSerializer.SerializeToNode(new
+        {
+            dns = new { address_family = family.ToString(), selection_mode = selectionMode.ToString() }
+        })!.AsObject());
+        DnsConfig dns = SingboxDnsEmitter.Emit(DnsProfileBuilder.Plan(profile));
+        var precedingEvaluations = new HashSet<string>(StringComparer.Ordinal);
+        foreach (DnsRule rule in dns.Rules)
+        {
+            if (rule.Action == DnsRuleAction.Evaluate)
+            {
+                Assert.That(rule.Tag, Is.Not.Null);
+                Assert.That(precedingEvaluations.Add(rule.Tag!), Is.True, "Evaluate tags must be unique.");
+            }
+            else if (rule.Action == DnsRuleAction.Respond)
+            {
+                Assert.That(rule.RuleSet, Is.Null, "Response scope must come only from match_response.");
+                Assert.That(rule.MatchResponse, Is.Not.Null);
+                Assert.That(precedingEvaluations, Does.Contain(rule.MatchResponse));
+            }
+        }
+
+        var blocks = ResolverBlocks(dns.Rules).ToArray();
+        var scopes = ExpectedResolverScopes(profile).ToArray();
+        Assert.That(blocks, Has.Length.EqualTo(scopes.Length));
+        for (int index = 0; index < blocks.Length; index++)
+            foreach (DnsRule rule in dns.Rules.Skip(blocks[index].Start).Take(blocks[index].End - blocks[index].Start + 1)
+                .Where(rule => rule.Action != DnsRuleAction.Respond))
+                Assert.That(rule.RuleSet, Is.EqualTo(scopes[index].RuleSets),
+                    "Evaluate and terminal SERVFAIL rules must retain their pool scope.");
     }
 
     [Test]
@@ -115,7 +154,7 @@ public sealed class DnsProfileBuilderTests
                     Assert.That(pool.Skip(2).Take(2).All(rule => rule.Action == DnsRuleAction.Respond
                         && rule.ResponseRcode == DnsResponseCode.NoError && rule.Race == true
                         && rule.IpCidr?.SequenceEqual(["::/0"]) == true && rule.RuleSet is null), Is.True);
-                    AssertResponses(pool.Skip(4).Take(4).ToList(), definition.RuleSets,
+                    AssertResponses(pool.Skip(4).Take(4).ToList(),
                         [primary, secondary, primary, secondary],
                         [DnsResponseCode.NoError, DnsResponseCode.NoError, DnsResponseCode.NameError, DnsResponseCode.NameError],
                         [null, null, null, null]);
@@ -145,8 +184,8 @@ public sealed class DnsProfileBuilderTests
     {
         var plan = CreatePlan(TargetPlatform.Linux, tailscaleEnabled: true, AddressFamilyPolicy.Auto);
         DnsConfig dns = SingboxDnsEmitter.Emit(plan);
-        var guard = dns.Rules[0];
-        var tailscale = dns.Rules[1];
+        var tailscale = dns.Rules[0];
+        var guard = dns.Rules[1];
         var blocking = dns.Rules[2];
         var firstService = BoxForgeProfile.Default.Services
             .OrderByDescending(service => service.PrecedesDomesticRoutes).First();
@@ -207,6 +246,19 @@ public sealed class DnsProfileBuilderTests
             Is.EqualTo(new[] { ("IR008", "plan.dns.pools") }));
     }
 
+    [TestCase(0)]
+    [TestCase(2)]
+    public void StandaloneDnsPlanAllowsDomesticBeforeOrBetweenServices(int domesticIndex)
+    {
+        var plan = CreatePlan(TargetPlatform.Linux);
+        var domestic = plan.Pools.Single(pool => pool.Kind == DnsPoolKind.Domestic);
+        plan = plan with { Pools = plan.Pools.Remove(domestic).Insert(domesticIndex, domestic) };
+
+        Assert.DoesNotThrow(plan.Validate);
+        Assert.That(plan.Pools.Count(pool => pool.Kind == DnsPoolKind.Domestic), Is.EqualTo(1));
+        Assert.That(plan.Pools[^1].Kind, Is.EqualTo(DnsPoolKind.Global));
+    }
+
     [TestCase("final")]
     [TestCase("primary_resolver")]
     [TestCase("secondary_resolver")]
@@ -217,6 +269,7 @@ public sealed class DnsProfileBuilderTests
     [TestCase("early_global")]
     [TestCase("no_global")]
     [TestCase("no_domestic")]
+    [TestCase("duplicate_domestic")]
     [TestCase("empty_scope")]
     [TestCase("default_service_scope")]
     [TestCase("global_scope")]
@@ -242,6 +295,7 @@ public sealed class DnsProfileBuilderTests
             "early_global" => plan with { Pools = plan.Pools.SetItem(0, plan.Pools[global]) },
             "no_global" => plan with { Pools = plan.Pools.RemoveAt(global) },
             "no_domestic" => plan with { Pools = plan.Pools.RemoveAt(domestic) },
+            "duplicate_domestic" => plan with { Pools = plan.Pools.Insert(0, plan.Pools[domestic]) },
             "empty_scope" => plan with { Pools = plan.Pools.SetItem(0, plan.Pools[0] with { RuleSets = [] }) },
             "default_service_scope" => plan with { Pools = plan.Pools.SetItem(0, plan.Pools[0] with { RuleSets = default }) },
             "global_scope" => plan with { Pools = plan.Pools.SetItem(global, plan.Pools[global] with { RuleSets = [RuleSetTags.Cn] }) },
@@ -262,7 +316,7 @@ public sealed class DnsProfileBuilderTests
             "duplicate_service" => ("IR009", "plan.dns.pools[1].service_id"),
             "missing_service_id" => ("IR009", "plan.dns.pools[0].service_id"),
             "no_global" => ("IR011", $"plan.dns.pools[{global - 1}]"),
-            "no_domestic" => ("IR011", $"plan.dns.pools[{domestic - 1}]"),
+            "no_domestic" or "duplicate_domestic" => ("IR011", "plan.dns.pools"),
             "global_scope" => ("IR011", $"plan.dns.pools[{global}]"),
             "domestic_scope" => ("IR011", $"plan.dns.pools[{domestic}]"),
             "unknown_kind" => ("IR008", "plan.dns.pools[0].kind"),
@@ -382,6 +436,26 @@ public sealed class DnsProfileBuilderTests
         });
     }
 
+    [Test]
+    public void TailscaleDnsBypassesInterfaceGuardButRespectsIpv4Only(
+        [Values(TargetPlatform.Android, TargetPlatform.Linux, TargetPlatform.Windows)] TargetPlatform platform,
+        [Values(AddressFamilyPolicy.Ipv4Only, AddressFamilyPolicy.Auto, AddressFamilyPolicy.DirectDualStack)] AddressFamilyPolicy addressFamily)
+    {
+        DnsConfig dns = SingboxDnsEmitter.Emit(CreatePlan(platform, tailscaleEnabled: true, addressFamily));
+        int tailscaleIndex = dns.Rules.FindIndex(rule => rule.Server == SingboxTags.TailscaleDns);
+        int guardIndex = dns.Rules.FindIndex(rule => rule.Action == DnsRuleAction.Predefined
+            && rule.Rcode == DnsResponseCode.NoError);
+        Assert.Multiple(() =>
+        {
+            Assert.That(tailscaleIndex, Is.EqualTo(addressFamily == AddressFamilyPolicy.Ipv4Only ? 1 : 0));
+            Assert.That(guardIndex, Is.EqualTo(addressFamily == AddressFamilyPolicy.Ipv4Only ? 0 : 1));
+            Assert.That(dns.Rules[tailscaleIndex].Action, Is.EqualTo(DnsRuleAction.Route));
+            Assert.That(dns.Rules[tailscaleIndex].PreferredBy, Is.EqualTo(new[] { SingboxTags.TailscaleDns }));
+            Assert.That(dns.Rules[tailscaleIndex].QueryType, Is.Null, "MagicDNS must accept AAAA as well as A queries.");
+            Assert.That(dns.Rules[tailscaleIndex].DisableOptimisticCache, Is.True);
+        });
+    }
+
     [TestCase(TargetPlatform.Android)]
     [TestCase(TargetPlatform.Linux)]
     [TestCase(TargetPlatform.Windows)]
@@ -396,6 +470,8 @@ public sealed class DnsProfileBuilderTests
 
         Assert.Multiple(() =>
         {
+            Assert.That(profile.Services.All(service => service.PrecedesDomesticRoutes), Is.True,
+                "All built-in services, including Spotify and Games, precede domestic routing and DNS.");
             foreach (var service in profile.Services)
             {
                 var primary = dns.Rules.Single(rule => rule.Tag == $"response-service-{service.Id}-primary");
@@ -420,7 +496,7 @@ public sealed class DnsProfileBuilderTests
     {
         var profile = BoxForgeProfile.Default.ApplyOverrides(JsonNode.Parse("""
             {"route":{"services":{"replace":[
-              {"id":"late","name":"Late service","default_region":"hk","rule_sets":["ai"]},
+              {"id":"late","name":"Late service","default_region":"hk","rule_sets":["ai"],"precedes_domestic_routes":false},
               {"id":"first","name":"First service","default_region":"jp","rule_sets":["ai"],"precedes_domestic_routes":true},
               {"id":"second","name":"Second service","default_region":"us","rule_sets":["ai"],"precedes_domestic_routes":true}
             ]}}}
@@ -433,11 +509,27 @@ public sealed class DnsProfileBuilderTests
 
         Assert.Multiple(() =>
         {
+            Assert.DoesNotThrow(plan.Validate);
+            Assert.That(plan.Pools.Select(pool => (pool.Kind, pool.ServiceId)), Is.EqualTo(new[]
+            {
+                (DnsPoolKind.Service, (string?)"first"), (DnsPoolKind.Service, "second"),
+                (DnsPoolKind.Domestic, null), (DnsPoolKind.Service, "late"), (DnsPoolKind.Global, null)
+            }));
             Assert.That(ResolverBlocks(dns.Rules).Select(block => dns.Rules[block.Start].Tag),
                 Is.EqualTo(new[] { "response-service-first-primary-a", "response-service-second-primary-a",
-                    "response-service-late-primary-a", "response-domestic-primary-a", "response-global-primary-a" }));
+                    "response-domestic-primary-a", "response-service-late-primary-a", "response-global-primary-a" }));
             Assert.That(serviceRoutes.Select(rule => rule.Outbound),
                 Is.EqualTo(new[] { "First service", "Second service", "Late service" }));
+            var domesticRoutes = route.Rules.Where(rule => rule.Outbound == SingboxTags.DirectOutbound
+                && rule.RuleSet?.Any(scope => scope is RuleSetTags.Cn or RuleSetTags.CnIp) == true).ToArray();
+            Assert.That(domesticRoutes, Has.Length.EqualTo(2));
+            foreach (var domesticRoute in domesticRoutes)
+            {
+                Assert.That(domesticRoute.Port, Is.Null);
+                Assert.That(domesticRoute.Network, Is.Null);
+                Assert.That(route.Rules.IndexOf(domesticRoute), Is.GreaterThan(route.Rules.IndexOf(serviceRoutes[1]))
+                    .And.LessThan(route.Rules.IndexOf(serviceRoutes[2])));
+            }
             for (int index = 0; index < serviceRoutes.Length; index++)
             {
                 string id = new[] { "first", "second", "late" }[index];
@@ -587,7 +679,7 @@ public sealed class DnsProfileBuilderTests
                 && rule.IpCidr?.SequenceEqual(["0.0.0.0/0"]) == true
                 && rule.RuleSet is null), Is.True,
                 "Address races inherit scope from unique response tags, not OR-combined domain matchers.");
-            AssertResponses(pool.Skip(4).Take(4).ToList(), generalPrimary.RuleSet,
+            AssertResponses(pool.Skip(4).Take(4).ToList(),
                 [primaryTag + "-a", secondaryTag + "-a", primaryTag + "-a", secondaryTag + "-a"],
                 [DnsResponseCode.NoError, DnsResponseCode.NoError,
                     DnsResponseCode.NameError, DnsResponseCode.NameError],
@@ -615,7 +707,7 @@ public sealed class DnsProfileBuilderTests
         Assert.That(dns.Rules[0].Rcode, Is.EqualTo(DnsResponseCode.NoError));
         Assert.That(route.Rules.Count(rule =>
             rule.Action == RouteRuleAction.Reject && rule.IpVersion == 6 && rule.RuleSet is null),
-            Is.EqualTo(2));
+            Is.EqualTo(1));
     }
 
     [TestCase(TargetPlatform.Android, DnsResolverSelectionMode.SequentialFallback)]
@@ -640,10 +732,11 @@ public sealed class DnsProfileBuilderTests
         Assert.That(plan.AddressFamily, Is.EqualTo(AddressFamilyPolicy.DirectDualStack));
         Assert.That(plan.SelectionMode, Is.EqualTo(selectionMode));
         Assert.That(dns.Strategy, Is.Null);
-        Assert.That(dns.Rules[0].Rules![0].QueryType, Is.EqualTo(new[] { "AAAA" }));
-        Assert.That(dns.Rules[0].Rules![1].DefaultInterfaceAddress, Is.EqualTo(new[] { "2000::/3" }));
-        Assert.That(dns.Rules[0].Rules![1].Invert, Is.True);
-        Assert.That(dns.Rules.Skip(1).Any(rule =>
+        Assert.That(dns.Rules[0].Server, Is.EqualTo(SingboxTags.TailscaleDns));
+        Assert.That(dns.Rules[1].Rules![0].QueryType, Is.EqualTo(new[] { "AAAA" }));
+        Assert.That(dns.Rules[1].Rules![1].DefaultInterfaceAddress, Is.EqualTo(new[] { "2000::/3" }));
+        Assert.That(dns.Rules[1].Rules![1].Invert, Is.True);
+        Assert.That(dns.Rules.Skip(2).Any(rule =>
             rule.Action == DnsRuleAction.Predefined && rule.Rcode == DnsResponseCode.NoError), Is.False,
             "DNS classification cannot determine whether a selector or cnip route ultimately chooses DIRECT.");
         var blocks = ResolverBlocks(dns.Rules).ToArray();
@@ -769,11 +862,11 @@ public sealed class DnsProfileBuilderTests
                 primaryTag, "2s");
             AssertEvaluate(secondary, expectedRuleSets, expectedSecondaryServer,
                 secondaryTag, null);
-            AssertResponses(primaryResponses, expectedRuleSets,
+            AssertResponses(primaryResponses,
                 [primaryTag, primaryTag],
                 [DnsResponseCode.NoError, DnsResponseCode.NameError],
                 [null, null]);
-            AssertResponses(secondaryResponses, expectedRuleSets,
+            AssertResponses(secondaryResponses,
                 [secondaryTag, secondaryTag],
                 [DnsResponseCode.NoError, DnsResponseCode.NameError],
                 [null, null]);
@@ -855,7 +948,7 @@ public sealed class DnsProfileBuilderTests
                 primaryTag, null);
             AssertEvaluate(secondary, expectedRuleSets, expectedSecondaryServer,
                 secondaryTag, null);
-            AssertResponses(responses, expectedRuleSets, responseOrder, responseCodes,
+            AssertResponses(responses, responseOrder, responseCodes,
                 [true, true, null, null]);
             AssertTerminalServfail(rules[terminalIndex], expectedRuleSets);
         });
@@ -880,7 +973,6 @@ public sealed class DnsProfileBuilderTests
 
     private static void AssertResponses(
         List<DnsRule> responses,
-        IReadOnlyList<string>? expectedRuleSets,
         string[] expectedTags,
         DnsResponseCode[] expectedCodes,
         bool?[] expectedRace)
@@ -894,10 +986,8 @@ public sealed class DnsProfileBuilderTests
             Assert.That(responses.Select(rule => rule.Race), Is.EqualTo(expectedRace));
             Assert.That(responses.All(rule => rule.Action == DnsRuleAction.Respond),
                 Is.True);
-            Assert.That(responses.All(rule =>
-                    rule.RuleSet?.SequenceEqual(expectedRuleSets ?? [])
-                    ?? expectedRuleSets is null),
-                Is.True);
+            Assert.That(responses.All(rule => rule.RuleSet is null), Is.True,
+                "Responses inherit their evaluate scope through match_response.");
         });
     }
 
@@ -929,10 +1019,13 @@ public sealed class DnsProfileBuilderTests
     private static IEnumerable<(string Name, IReadOnlyList<string>? RuleSets, string PrimaryResolver, string SecondaryResolver)>
         ExpectedResolverScopes(ResolvedProfile profile)
     {
-        foreach (var service in profile.Services.OrderByDescending(service => service.PrecedesDomesticRoutes))
+        foreach (var service in profile.Services.Where(service => service.PrecedesDomesticRoutes))
             yield return ($"service-{service.Id}", service.RuleSets,
                 SingboxTags.ServiceDns(service.Id, "cloudflare"), SingboxTags.ServiceDns(service.Id, "google"));
         yield return ("domestic", new[] { RuleSetTags.Cn }, SingboxTags.DirectAliDns, SingboxTags.DirectTencentDns);
+        foreach (var service in profile.Services.Where(service => !service.PrecedesDomesticRoutes))
+            yield return ($"service-{service.Id}", service.RuleSets,
+                SingboxTags.ServiceDns(service.Id, "cloudflare"), SingboxTags.ServiceDns(service.Id, "google"));
         yield return ("global", null, SingboxTags.ProxyCloudflareDns, SingboxTags.ProxyGoogleDns);
     }
 

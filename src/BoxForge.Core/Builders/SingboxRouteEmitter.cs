@@ -26,7 +26,8 @@ internal static class SingboxRouteEmitter
         List<RouteRule> rules = route.Rules;
         // TUN handles DNS natively; retain an explicit port 53 fallback for TCP and UDP.
         rules.Add(new RouteRule { Inbound = [SingboxTags.TunInbound], Port = [53], Action = RouteRuleAction.HijackDns });
-        AddIpv6Guard();
+        if (plan.AddressFamily == AddressFamilyPolicy.Ipv4Only)
+            rules.Add(new RouteRule { IpVersion = 6, Action = RouteRuleAction.Reject });
         if (plan.TailscaleEnabled)
             rules.Add(new RouteRule
             {
@@ -36,7 +37,19 @@ internal static class SingboxRouteEmitter
                 Outbound = SingboxTags.TailscaleEndpoint
             });
         AddDirect(new RouteRule { IpIsPrivate = true }, postSniff: false);
-        AddDirect(new RouteRule { IpCidr = [$"{plan.BootstrapAddress}/32"] }, postSniff: false);
+        // Overlay and private IPv6 do not require a public IPv6 address on the default interface.
+        if (plan.AddressFamily.UsesInterfaceGuard())
+            rules.Add(new RouteRule
+            {
+                Type = RouteRuleType.Logical,
+                Mode = RouteLogicalMode.And,
+                Rules =
+                [
+                    new RouteRule { IpVersion = 6 },
+                    new RouteRule { DefaultInterfaceAddress = [AddressFamilyPolicies.GlobalIpv6Prefix], Invert = true }
+                ],
+                Action = RouteRuleAction.Reject
+            });
         rules.Add(new RouteRule
         {
             Type = RouteRuleType.Logical,
@@ -67,32 +80,13 @@ internal static class SingboxRouteEmitter
             Action = RouteRuleAction.Reject
         });
         rules.Add(new RouteRule { RuleSet = [RuleSetTags.Ads], Action = RouteRuleAction.Reject });
-        AddIpv6Guard();
         AddServices(priority: true);
         foreach (string scope in new[] { RuleSetTags.Cn, RuleSetTags.CnIp })
-            AddDirect(new RouteRule { Inbound = [SingboxTags.TunInbound], Port = [443], Network = ["udp"], RuleSet = [scope] }, postSniff: true);
-        AddServices(priority: false);
-        foreach (string scope in new[] { RuleSetTags.Cn, RuleSetTags.CnIp })
             AddDirect(new RouteRule { RuleSet = [scope] }, postSniff: true);
+        AddServices(priority: false);
         if (plan.AddressFamily == AddressFamilyPolicy.DirectDualStack)
             rules.Add(new RouteRule { IpVersion = 6, Action = RouteRuleAction.Reject });
         return route;
-
-        void AddIpv6Guard()
-        {
-            if (plan.AddressFamily == AddressFamilyPolicy.DualStack) return;
-            rules.Add(plan.AddressFamily.UsesInterfaceGuard() ? new RouteRule
-            {
-                Type = RouteRuleType.Logical,
-                Mode = RouteLogicalMode.And,
-                Rules =
-                [
-                    new RouteRule { IpVersion = 6 },
-                    new RouteRule { DefaultInterfaceAddress = [AddressFamilyPolicies.GlobalIpv6Prefix], Invert = true }
-                ],
-                Action = RouteRuleAction.Reject
-            } : new RouteRule { IpVersion = 6, Action = RouteRuleAction.Reject });
-        }
 
         void AddServices(bool priority)
         {
@@ -113,20 +107,17 @@ internal static class SingboxRouteEmitter
             // Each emitted rule owns its matcher collections, including forwarding variants.
             if (plan.UseDirectForwarding)
             {
+                if (plan.AutoRedirect)
+                    rules.Add(matcher with
+                    {
+                        RuleSet = matcher.RuleSet is null ? null : [.. matcher.RuleSet],
+                        Inbound = [SingboxTags.TunInbound],
+                        Network = postSniff ? ["udp"] : null,
+                        Action = RouteRuleAction.Bypass
+                    });
                 rules.Add(matcher with
                 {
-                    IpCidr = matcher.IpCidr is null ? null : [.. matcher.IpCidr],
                     RuleSet = matcher.RuleSet is null ? null : [.. matcher.RuleSet],
-                    Port = matcher.Port is null ? null : [.. matcher.Port],
-                    Inbound = [SingboxTags.TunInbound],
-                    Network = postSniff ? ["udp"] : null,
-                    Action = RouteRuleAction.Bypass
-                });
-                rules.Add(matcher with
-                {
-                    IpCidr = matcher.IpCidr is null ? null : [.. matcher.IpCidr],
-                    RuleSet = matcher.RuleSet is null ? null : [.. matcher.RuleSet],
-                    Port = matcher.Port is null ? null : [.. matcher.Port],
                     Inbound = [SingboxTags.TunInbound],
                     Network = postSniff ? ["udp"] : null,
                     PreferredBy = [SingboxTags.BridgeOutbound],

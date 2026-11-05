@@ -25,8 +25,9 @@ internal static class DnsProfileBuilder
             resolvers.Add(CreateResolver(secondary, settingsProfile.GetResolver("google"), service.Name));
             pools.Add(new DnsResolverPoolPlan(DnsPoolKind.Service, service.RuleSets, primary, secondary, service.Id));
         }
-        pools.Add(new DnsResolverPoolPlan(DnsPoolKind.Domestic, [RuleSetTags.Cn],
-            SingboxTags.DirectAliDns, SingboxTags.DirectTencentDns));
+        pools.Insert(settingsProfile.Services.Count(service => service.PrecedesDomesticRoutes),
+            new DnsResolverPoolPlan(DnsPoolKind.Domestic, [RuleSetTags.Cn],
+                SingboxTags.DirectAliDns, SingboxTags.DirectTencentDns));
         pools.Add(new DnsResolverPoolPlan(DnsPoolKind.Global, default,
             SingboxTags.ProxyCloudflareDns, SingboxTags.ProxyGoogleDns));
         bool tailscaleEnabled = settingsProfile.Features.Tailscale.Enabled;

@@ -226,6 +226,43 @@ public sealed class ProxyNodeParserTests
         }
     }
 
+    [TestCase(false, null)]
+    [TestCase(true, null)]
+    [TestCase(true, 0)]
+    [TestCase(true, 1)]
+    [TestCase(true, 65535)]
+    [TestCase(true, "443")]
+    public void Hysteria2HoppingKeepsOptionalPortAndZeroCompatibility(bool provided, object? port)
+    {
+        var fields = new Hashtable
+        {
+            ["name"] = "test-node",
+            ["type"] = "hysteria2",
+            ["server"] = "node.example.com",
+            ["password"] = "test-only",
+            ["ports"] = "443,8443-8444"
+        };
+        if (provided) fields["port"] = port;
+        Hysteria2Outbound outbound = SingboxNodeEmitter.Emit(ParseHysteria2(new ClashProxyNode(fields)));
+        Assert.That(outbound.ServerPort, Is.Null);
+        Assert.That(outbound.ServerPorts, Is.EqualTo(new[] { "443:443", "8443:8444" }));
+    }
+
+    [Test]
+    public void Hysteria2HoppingRejectsMalformedOrOutOfRangePort(
+        [Values("443", "443,8443-8444")] string ports,
+        [Values("invalid", "", " ", -1, 65536, 99999, "2147483648", 443.5, false)] object port)
+    {
+        var error = Assert.Throws<NodeParseException>(() => ParseHysteria2(CreateNode("hysteria2", new Hashtable
+        {
+            ["password"] = "test-only",
+            ["ports"] = ports,
+            ["port"] = port
+        })))!;
+        Assert.That(error.Diagnostics.Select(item => (item.Code, item.Path)),
+            Is.EqualTo(new[] { ("SRC002", "source.port") }));
+    }
+
     [TestCase("omitted", null, null)]
     [TestCase("null", null, null)]
     [TestCase("", 30L, null)]

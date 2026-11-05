@@ -505,7 +505,8 @@ public sealed class ServerApiTests
                 Assert.That(bootstrap.GetProperty("server").GetString(), Is.EqualTo("203.0.113.53"));
                 Assert.That(bootstrap.GetProperty("tls").GetProperty("server_name").GetString(), Is.EqualTo("dns.example.net"));
                 Assert.That(config.RootElement.GetProperty("route").GetProperty("rules").EnumerateArray()
-                    .Any(rule => rule.TryGetProperty("ip_cidr", out var cidrs) && cidrs[0].GetString() == "203.0.113.53/32"), Is.True);
+                    .Any(rule => rule.TryGetProperty("ip_cidr", out var cidrs) && cidrs[0].GetString() == "203.0.113.53/32"), Is.False,
+                    "Resolver overrides must not create client routing exemptions.");
                 bool hasTailscale = config.RootElement.TryGetProperty("endpoints", out JsonElement endpoints)
                     && endpoints.EnumerateArray().Any(endpoint => endpoint.GetProperty("type").GetString() == "tailscale");
                 bool hasApi = config.RootElement.TryGetProperty("services", out JsonElement services)

@@ -227,14 +227,17 @@ DNS 规划产生中立的 `DnsPlan`：`DnsHttpsResolverPlan` 记录解析器地�
 连接出口，不可变、有序的 `Pools` 是解析策略的唯一表示；每个 `DnsResolverPoolPlan`
 显式保存池类型、服务 ID、规则集范围和主备解析器引用，不保存展开后的规则。
 `AddressFamily`、`SelectionMode` 和 Tailscale 开关决定全局守卫及解析算法。
-每个服务的主备解析器均经该服务选择组连接；服务池按业务路由中的服务顺序排列，
-之后为 domestic/global；无服务时只保留后两池。
+每个服务的主备解析器均经该服务选择组连接；池顺序与业务路由一致，为优先服务 → domestic → 普通服务 → global，
+各服务阶段保留列表顺序；无服务时只保留 domestic/global。DNS 仅按 `cn` 域名判断国内，
+无法在查询前确定 `cnip` 目标的 IP 归属，因此不保证查询与业务出口总相同。
 
 `DnsProfileBuilder.Plan` 只选择解析器及解析池。
 `SingboxDnsEmitter` 在发射时生成 AAAA 守卫、Tailscale 和广告规则，并将解析池展开为
 顺序回退或正响应竞速规则，包括 A/AAAA 查询隔离、NXDOMAIN 接受顺序、响应标签、
-缓存行为和终止 SERVFAIL。地址正响应竞速不混入域名 rule-set 条件，避免 sing-box 的
-OR 语义改变匹配范围。展开结果不回写计划，每次发射独立拥有所有可变集合。
+缓存行为和终止 SERVFAIL。所有 respond 仅通过唯一响应标签继承 evaluate 的池范围，不重复携带 rule-set；
+evaluate 和终止 SERVFAIL 保留范围条件，地址正响应竞速的 IP 条件不会与域名条件形成 OR 组合。
+服务引用内置 IP 专用 `cnip` 在有效 profile 校验时拒绝；自定义远程集内容仍需核心加载检查。
+展开结果不回写计划，每次发射独立拥有所有可变集合。
 
 `DnsPlan` 直接检查解析池类型、顺序、服务标识、匹配范围及主备引用。
 服务 `ServiceRoutePlan` 保留显式 `ServiceId`；`ConfigurationPlan` 按服务声明顺序检查
@@ -248,15 +251,20 @@ OR 语义改变匹配范围。展开结果不回写计划，每次发射独立�
 结构与一致性校验不替代本地 DNS 行为测试，官方核心检查也仅证明目标配置的格式兼容性。
 
 `RouteProfileBuilder.Plan` 产生声明式 `RoutePlan`，保存地址族、Tailscale 和直连转发开关、
-bootstrap 地址、sniff 超时及排除端口、规则源、最终出口和控制面绑定。
+sniff 超时及排除端口、规则源、最终出口和控制面绑定。
 `ServiceRoutePlan` 明确保存服务 ID、规则集范围、出口及是否优先于国内路由；
 服务声明按优先服务和普通服务分组并保持各组原有顺序，不保存展开后的路由规则。
+`precedes_domestic_routes` 默认 `true`，所有内置服务均为优先服务；显式 `false` 才进入国内路由之后的普通服务阶段。
 计划只使用 IR 类型，不引用 profile DTO 或 sing-box 模型；校验声明值、规则源引用、
 服务身份和出口唯一性及服务分组顺序。DNS 池直接与服务声明比对身份、范围、顺序和出口。
 
-`SingboxRouteEmitter` 是唯一路由展开入口，固定生成 DNS 劫持、早晚地址族守卫、
-Tailscale、私网/bootstrap 直连、sniff、STUN/广告阻断、优先服务、国内 UDP/443、
-普通服务、国内直连及最终代理侧 IPv6 守卫；按平台设置展开 bypass/bridge 伴随规则。
+`SingboxRouteEmitter` 是唯一路由展开入口，固定生成 DNS 劫持、按地址族放置的单道守卫、
+Tailscale、私网直连、sniff、STUN/广告阻断、优先服务、国内直连、
+普通服务及最终代理侧 IPv6 守卫；TCP、UDP 的所有端口使用相同服务优先级。`use_direct_forwarding` 控制 bridge 伴随规则，
+仅同时启用 `auto_redirect` 时在 bridge 前加入 bypass，关闭或清空 auto_redirect 仍可保留 bridge。
+默认仅 Linux 同时启用两者；Windows 拒绝 `auto_redirect: true`，但允许单独启用 bridge。
+运行时 bridge 后端支持 Linux、root Android 和需要 WinDivert/管理员权限的 Windows x86/x64；
+Android auto_redirect 需 root 服务或 root shell，普通 VPN 客户端不支持。
 必要阶段没有可关闭的独立布尔值，守卫顺序也不能通过计划字段重排。
 不再使用 `RouteRulePlan`、`HasSamePolicy` 或反射相等性测试；顺序和匹配范围直接由产物测试验证。
 DNS 与路由发射均为每次输出创建独立的规则、嵌套条件与列表；修改输出不会污染计划。
@@ -290,7 +298,7 @@ DNS server 与 outbound、endpoint、service 使用相同的 `JsonPolymorphic` /
 
 - **结构**：枚举、字段、逻辑树和规则数组合法。
 - **引用**：出口、解析器、规则集、HTTP client 和响应标签已声明且顺序有效。
-- **必要策略**：DNS 劫持、地址族守卫、来源 IPv4 节点的独立 resolver 绑定及路由默认 resolver 符合约定。
+- **必要策略**：DNS 劫持、地址族守卫、来源 IPv4 节点的有效解析约束及路由默认 resolver 符合约定。
 - **产品一致性**：DNS 解析池的服务绑定、范围、顺序和出口与业务路由一致；固定阶段具有实际规则。
 
 嗅探器完整组合、全部响应竞速分支和服务优先级等仍由行为测试及输出基线约束，不能仅凭阶段存在断言产品策略完整。
@@ -355,6 +363,11 @@ profile 无效仍按原有无效配置路径处理。HTTP 的 JSON 和 ZIP 接�
 `400`/`422` 响应，不公开诊断、节点名称、凭据或部分产物。
 真正的未预期错误不通过捕获任意异常伪装成输入错误。
 完整目标 validator 独立复核标签重复、引用、字段合法性与 DNS／控制面地址族约束，不能以计划校验替代。
+计划层拒绝空或未初始化的 TUN 地址、非 Linux 的 multi_queue，以及控制面已限制 IPv4 时的冗余节点解析器；
+独立节点解析器仅用于双栈控制面下来源明确限制 IPv4 的节点。HTTP 解析器按规则集下载与 Dashboard 的角色
+分别校验控制面和平台地址族。目标层允许省略解析器以继承全局设置；显式 HTTP、代理和直连解析器均须禁用
+optimistic 过期缓存，并遵守各自角色的 IPv4 限制。Ipv4Only 同时要求全局 DNS 策略和无附加匹配范围的首条
+AAAA 空答；Auto / DirectDualStack 允许前置的 Tailscale DNS 规则仅按 preferred_by 匹配。
 节点 `SourceValue` 只保存值及显式标记，语义数据表继续保存来源字段及固定源码证据。
 
 ### 现有协议扩展入口
@@ -428,29 +441,39 @@ HY2 hop/BBR 值优先于调优。显式固定间隔不会补入调优的随机�
 是否生成分离；服务的 `DefaultRegion` 对应 0/1/2+ leaf 时分别选择主组/leaf/
 地区 selector。主组使用 `route.main_default_region` 对应的地区 selector 或单个 leaf；
 该地区没有节点时，依次回退到首个地区组、首个 leaf 和 DIRECT。
+规则集下载复用主组规划的初始默认目标；若目标为地区 selector，则绑定该地区的默认 AUTO，
+否则直接绑定 leaf 或 DIRECT，以保持下载出口独立于主组和地区 selector 的运行时选择。
 
 地址族取自有效目标配置的 `dns.address_family`，完整计划统一保存该策略。
 默认三个平台均使用 `Ipv4Only`（全局 IPv4）。DNS、route、控制面 resolver 与 `BoxForgeEngine` 的
 `Validate(config, addressFamily)` 均使用同一实例中的策略，validator 不再次推导平台。
 IPv4-only 的解析策略、IPv6 节点字面量限制及首条无条件 AAAA 空 NOERROR 由目标校验器检查；
-早晚路由 IPv6 reject guards 的位置和范围由发射器固定生成，并由产物测试验证。
+单道路由 IPv6 reject guard 的位置和范围由发射器固定生成，并由产物测试验证。
 `DualStack` 不要求上述 IPv4-only 限制。`Auto` 保留双栈 TUN 捕获，
-将 AAAA 空答与两道 IPv6 拒绝改为缺少公网 IPv6 出口地址时才生效的条件规则；
+将 AAAA 空答与单道 IPv6 拒绝改为缺少公网 IPv6 出口地址时才生效的条件规则；
+Tailscale DNS 先于条件 AAAA 空答，Tailscale 和私网路由先于条件 IPv6 拒绝，
+使这些路径不依赖公网 IPv6 出口；条件路由守卫仍位于 sniff 和其余业务分流之前。
 各平台统一使用反转的 `default_interface_address: ["2000::/3"]` 条件，
 判定发生在核心运行时，不读取生成机器的网卡状态，也不进行主动可达性探测。
-Android 依赖客户端通过 libbox 提供默认物理接口和地址，缺少信息时保守拒绝；
+Android 依赖客户端通过 libbox 提供默认物理接口和地址，缺少信息时拒绝未被上述路径处理的 IPv6；
 锁定核心源码与生成配置检查不代表所有 Android 客户端或真机网络切换都已验证。
-条件 AAAA 规则仅约束 client DNS，`Auto` 不保证控制面 resolver 自动使用 IPv4；
-来源节点显式 `ip-version: ipv4` 仍保留独立 resolver 约束。
+条件 AAAA 规则仅约束 client DNS；`Auto` 与 `DirectDualStack` 的 `ForControlPlane` 均映射为 `Ipv4Only`，
+节点域名继承 `route.default_domain_resolver` 的 `ipv4_only`，rule-set HTTP client 显式使用同一策略，
+并拒绝 IPv6 字面量代理节点。仅 `DualStack` 保留完整双栈节点控制面。
+来源节点显式 `ip-version: ipv4` 仅在 `DualStack` 下绑定独立 IPv4 resolver；
+`Ipv4Only`、`Auto`、`DirectDualStack` 下继承已有的全局控制面 IPv4 限制。
+DIRECT 在 `Auto` 与 `DirectDualStack` 下仍使用 `prefer_ipv4`，Dashboard 直连 HTTP client 也不强制 IPv4。
+`Auto` 在出口条件允许时可通过 IPv4 节点连接客户端 IPv6 目标，不增加代理类别 IPv6 拒绝。
 `DirectDualStack` 在 `Auto` 的条件守卫之上按固定路由类别限制代理侧：不按解析池类别过滤 AAAA；
-路由在优先服务、其他服务各自阶段之前拒绝对应规则集的 IPv6，保留国内 UDP/443 的先行直连优先级，
+路由在优先服务、普通服务各自阶段之前拒绝对应规则集的 IPv6；国内 `cn`/`cnip` 直连位于两者之间，
+因此在接口守卫放行时，`false` 服务与国内重叠的 IPv6 先直连，`true` 服务的 IPv6 则先拒绝；
 在 `route.final` 前对全部其余流量拒绝 `ip_version: 6`，控制面 resolver 与 rule-set HTTP client 使用 `ipv4_only`。
 直连出站仍使用 `prefer_ipv4`。路由发射器固定生成最终无条件 IPv6 拒绝，
 以及每类服务之前覆盖该类完整规则集的 IPv6 拒绝，产物测试检查其位置和范围。
 `DualStack` 可显式启用，不按出口地址拒绝 IPv6。Android 不输出未实现的 strict_route；
 本地静态验证不等于真机防逃逸抓包或网络切换证明。
 
-- 路由规划器只保存高层声明，发射器按固定顺序展开规则及 Linux 的 bypass/bridge 伴随规则，
+- 路由规划器只保存高层声明，发射器按固定顺序及独立的转发/auto_redirect 开关展开 bridge/bypass 伴随规则，
   [路由顺序](routing-and-dns.md#路由规则顺序)由产物行为测试检查。
   目标 validator 独立检查规则引用及平台字段，不重复推导计划策略。
 - 输入文件按文件名排序，平台顺序固定为 Android、Linux、Windows。

@@ -166,18 +166,10 @@ public sealed class BoxForgeEngineTests
         }
     }
 
-    [TestCase("vless", AddressFamilyPolicy.DualStack)]
-    [TestCase("trojan", AddressFamilyPolicy.DualStack)]
-    [TestCase("ss", AddressFamilyPolicy.DualStack)]
-    [TestCase("hysteria2", AddressFamilyPolicy.DualStack)]
-    [TestCase("anytls", AddressFamilyPolicy.DualStack)]
-    [TestCase("vless", AddressFamilyPolicy.Ipv4Only)]
-    [TestCase("trojan", AddressFamilyPolicy.Ipv4Only)]
-    [TestCase("ss", AddressFamilyPolicy.Ipv4Only)]
-    [TestCase("hysteria2", AddressFamilyPolicy.Ipv4Only)]
-    [TestCase("anytls", AddressFamilyPolicy.Ipv4Only)]
-    public async Task SourceIpv4ConstraintOverridesDualStackWithoutChangingUnconstrainedNodes(
-        string protocol, AddressFamilyPolicy family)
+    [Test]
+    public async Task SourceIpv4ConstraintUsesOverrideOnlyWhenGlobalResolverAllowsIpv6(
+        [Values("vless", "trojan", "ss", "hysteria2", "anytls")] string protocol,
+        [Values] AddressFamilyPolicy family)
     {
         using ServiceProvider provider = CreateProvider();
         var engine = provider.GetRequiredService<IBoxForgeEngine>();
@@ -195,13 +187,14 @@ public sealed class BoxForgeEngineTests
                 .Where(node => node.TryGetProperty("server", out _))
                 .ToDictionary(node => node.GetProperty("tag").GetString()!);
             bool constrainedResolver = nodes["constrained"].TryGetProperty("domain_resolver", out var resolver);
+            bool needsOverride = family == AddressFamilyPolicy.DualStack;
             Assert.Multiple(() =>
             {
-                Assert.That(constrainedResolver, Is.EqualTo(family == AddressFamilyPolicy.DualStack), artifact.Platform.ToString());
+                Assert.That(constrainedResolver, Is.EqualTo(needsOverride), artifact.Platform.ToString());
                 Assert.That(nodes["unconstrained"].TryGetProperty("domain_resolver", out _), Is.False,
                     "Omission must inherit the platform resolver without adding a per-node restriction.");
             });
-            if (family == AddressFamilyPolicy.DualStack)
+            if (needsOverride)
             {
                 Assert.Multiple(() =>
                 {
@@ -577,6 +570,8 @@ public sealed class BoxForgeEngineTests
 
     [TestCase("proxies:\n  - name: [", "SRC001", "source")]
     [TestCase("proxies:\n  - name: sensitive-name\n    type: sensitive-type", "SRC002", "source.proxies[0].type")]
+    [TestCase("proxies:\n  - name: sensitive-name\n    type: hysteria2\n    server: node.example.com\n    password: test-only\n    port: sensitive-invalid\n    ports: 443,8443-8444", "SRC002", "source.proxies[0].port")]
+    [TestCase("proxies:\n  - name: sensitive-name\n    type: hysteria2\n    server: node.example.com\n    password: test-only\n    port: 99999\n    ports: 443,8443-8444", "SRC002", "source.proxies[0].port")]
     public void ConversionErrorsExposeSafeDiagnosticsWithoutChangingTheirCategory(string yaml, string code, string path)
     {
         using ServiceProvider provider = CreateProvider();

@@ -59,10 +59,8 @@ internal sealed record DnsPlan(
             }
             if (!Enum.IsDefined(pool.Kind))
                 diagnostics.Add(new("IR008", path + ".kind", "DNS 解析池类型无效。"));
-            DnsPoolKind expected = index < Pools.Length - 2 ? DnsPoolKind.Service
-                : index == Pools.Length - 2 ? DnsPoolKind.Domestic : DnsPoolKind.Global;
-            if (pool.Kind != expected || Pools.Length < 2)
-                diagnostics.Add(new("IR011", path, "DNS 解析池必须依次包含各服务、国内和全局池。"));
+            if ((pool.Kind == DnsPoolKind.Global) != (index == Pools.Length - 1))
+                diagnostics.Add(new("IR011", path, "DNS 全局解析池必须唯一且位于最后。"));
             if (pool.Kind == DnsPoolKind.Service)
             {
                 if (string.IsNullOrWhiteSpace(pool.ServiceId) || !services.Add(pool.ServiceId))
@@ -81,6 +79,8 @@ internal sealed record DnsPlan(
             if (pool.PrimaryServer == pool.SecondaryServer)
                 diagnostics.Add(new("IR011", path, "DNS 解析池主备解析器必须不同。"));
         }
+        if (Pools.Count(pool => pool?.Kind == DnsPoolKind.Domestic) != 1)
+            diagnostics.Add(new("IR011", "plan.dns.pools", "DNS 必须包含唯一的国内解析池。"));
     }
 }
 
