@@ -187,11 +187,11 @@ public sealed class RouteProfileBuilderTests
             Assert.That(sniff[1].Network, Is.EqualTo(new[] { "udp" }));
             Assert.That(direct.Select(rule => rule.Action), Is.EqualTo(new RouteRuleAction?[]
             {
-                RouteRuleAction.Bypass, RouteRuleAction.Route, RouteRuleAction.Route
+                RouteRuleAction.Bypass, RouteRuleAction.Route
             }));
             Assert.That(direct.Select(rule => rule.Outbound), Is.EqualTo(new string?[]
             {
-                null, SingboxTags.BridgeOutbound, SingboxTags.DirectOutbound
+                SingboxTags.BridgeOutbound, SingboxTags.DirectOutbound
             }));
             Assert.That(plan.Services.Where(service => service.PrecedesDomesticRoutes).Select(service => service.Outbound),
                 Is.EqualTo(settings.Services.Where(service => service.PrecedesDomesticRoutes).Select(service => service.Name)));
@@ -422,7 +422,7 @@ public sealed class RouteProfileBuilderTests
             Assert.That(
                 linuxBypass.All(ContainsTunPreMatchGate),
                 Is.True);
-            Assert.That(linuxBypass.All(rule => rule.Outbound == null), Is.True);
+            Assert.That(linuxBypass, Is.EqualTo(linuxBridge));
             Assert.That(
                 linuxBridge.Count(rule => linux.Rules.IndexOf(rule)
                     < FindFirstSniffIndex(linux)),
@@ -847,7 +847,7 @@ public sealed class RouteProfileBuilderTests
 
     private static List<RouteRule> BridgeRules(RouteConfig route) =>
         route.Rules.Where(rule =>
-            rule.Action == RouteRuleAction.Route
+            rule.Action is RouteRuleAction.Route or RouteRuleAction.Bypass
             && rule.Outbound == SingboxTags.BridgeOutbound).ToList();
 
     private static bool SupportsTunPreMatch(RouteRule rule) =>
@@ -901,29 +901,14 @@ public sealed class RouteProfileBuilderTests
             RouteRule bridge = route.Rules[index - 1];
             Assert.Multiple(() =>
             {
-                Assert.That(bridge.Action, Is.EqualTo(RouteRuleAction.Route));
+                Assert.That(bridge.Action, Is.EqualTo(bypassEnabled ? RouteRuleAction.Bypass : RouteRuleAction.Route));
                 Assert.That(
                     bridge.Outbound,
                     Is.EqualTo(SingboxTags.BridgeOutbound));
                 AssertForwardingMatcher(
                     bridge,
                     direct,
-                    postUdpSniff,
-                    useBridgeGate: true);
-            });
-
-            if (!bypassEnabled)
-                continue;
-            RouteRule bypass = route.Rules[index - 2];
-            Assert.Multiple(() =>
-            {
-                Assert.That(bypass.Action, Is.EqualTo(RouteRuleAction.Bypass));
-                Assert.That(bypass.Outbound, Is.Null);
-                AssertForwardingMatcher(
-                    bypass,
-                    direct,
-                    postUdpSniff,
-                    useBridgeGate: false);
+                    postUdpSniff);
             });
         }
     }
@@ -935,8 +920,7 @@ public sealed class RouteProfileBuilderTests
     private static void AssertForwardingMatcher(
         RouteRule forwarding,
         RouteRule direct,
-        bool postUdpSniff,
-        bool useBridgeGate)
+        bool postUdpSniff)
     {
         Assert.That(direct.Type, Is.Null);
         RouteRule normalized = forwarding with
@@ -948,9 +932,7 @@ public sealed class RouteProfileBuilderTests
         Assert.That(MatcherKey(normalized), Is.EqualTo(MatcherKey(direct)));
 
         Assert.That(ContainsTunPreMatchGate(forwarding), Is.True);
-        Assert.That(
-            ContainsBridgePreferenceGate(forwarding),
-            Is.EqualTo(useBridgeGate));
+        Assert.That(ContainsBridgePreferenceGate(forwarding), Is.True);
         Assert.That(
             ContainsNetwork(forwarding, "udp"),
             Is.EqualTo(postUdpSniff || direct.Network?.Contains("udp") == true));

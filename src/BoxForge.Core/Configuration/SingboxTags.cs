@@ -9,7 +9,7 @@ public static class SingboxTags
     public const string TailscaleDns = "dns-tailscale";
     public const string TailscaleStateDirectory = "tailscale";
     public const string DirectAliDns = "dns-direct-alidns";
-    public const string DirectTencentDns = "dns-direct-tencent";
+    public const string DirectAliDnsSecondary = "dns-direct-alidns-secondary";
     public const string ProxyGoogleDns = "dns-proxy-google";
     public const string ProxyCloudflareDns = "dns-proxy-cloudflare";
     public const string TunInbound = "tun-in";

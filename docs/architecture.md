@@ -35,7 +35,8 @@ BoxForge.Tests  ──→ BoxForge.Cli, BoxForge.Server, BoxForge.Core
 5. 按 Android、Linux、Windows 顺序，`ConfigurationPlanner` 将节点绑定到该平台的
    `ResolvedProfile`，检查保留名称并确定完整策略计划；`SingboxConfigBuilder.Build`
    集中校验完整计划，再发射为 inbound、endpoint、outbound、DNS、route 和 experimental 配置。
-   每个平台的 `cache_id` 为 `SHA256(请求配置名 + 平台小写标识)`，不依赖节点内容。
+   每个平台的 `cache_id` 对请求配置名、平台小写标识和生成 DNS 模型的结构化 JSON 做 SHA-256，
+   不依赖节点内容；DNS 端点或策略变化会隔离旧持久缓存，命名空间内的选择器状态也随之隔离。
 6. `SingboxConfigValidator` 检查 BoxForge 自身约束，`ConfigSerializer` 生成
    JSON 并计算小写十六进制 SHA-256。只有全部平台成功才返回
    `ConversionBundle`。
@@ -261,7 +262,8 @@ sniff 超时及排除端口、规则源、最终出口和控制面绑定。
 `SingboxRouteEmitter` 是唯一路由展开入口，固定生成 DNS 劫持、按地址族放置的单道守卫、
 Tailscale、私网直连、sniff、STUN/广告阻断、优先服务、国内直连、
 普通服务及最终代理侧 IPv6 守卫；TCP、UDP 的所有端口使用相同服务优先级。`use_direct_forwarding` 控制 bridge 伴随规则，
-仅同时启用 `auto_redirect` 时在 bridge 前加入 bypass，关闭或清空 auto_redirect 仍可保留 bridge。
+伴随规则均指定 `preferred_by` 和 bridge 出口；同时启用 `auto_redirect` 时使用 bypass 动作，否则使用 route。
+同一规则兼顾内核 bypass 与普通 TUN 的 bridge 转发，进入 L4 后由门控跳过，保留原 DIRECT 匹配回退；不提供 bridge 故障自动重试。
 默认仅 Linux 同时启用两者；Windows 拒绝 `auto_redirect: true`，但允许单独启用 bridge。
 运行时 bridge 后端支持 Linux、root Android 和需要 WinDivert/管理员权限的 Windows x86/x64；
 Android auto_redirect 需 root 服务或 root shell，普通 VPN 客户端不支持。

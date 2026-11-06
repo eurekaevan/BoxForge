@@ -7,6 +7,7 @@ using BoxForge.Parsers;
 using BoxForge.Models;
 using BoxForge.Services;
 using YamlDotNet.Core;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace BoxForge.Engine;
@@ -60,7 +61,12 @@ internal sealed class BoxForgeEngine(
             try
             {
                 ConfigurationPlan plan = ConfigurationPlanner.Plan(nodes, profiles[platform]);
-                string cacheId = configSerializer.GetContentHash(request.Name + platform.ToString().ToLowerInvariant());
+                string cacheId = configSerializer.GetContentHash(JsonSerializer.Serialize(new
+                {
+                    request.Name,
+                    Platform = platform.ToString().ToLowerInvariant(),
+                    Dns = SingboxDnsEmitter.Emit(plan.Dns)
+                }));
                 var config = configBuilder.Build(plan, cacheId);
                 configValidator.Validate(config, profiles[platform].Settings.AddressFamily);
                 string content = configSerializer.Serialize(config);

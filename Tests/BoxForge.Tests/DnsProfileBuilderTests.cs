@@ -97,6 +97,8 @@ public sealed class DnsProfileBuilderTests
             dns = new { address_family = family.ToString(), selection_mode = selectionMode.ToString() }
         })!.AsObject());
         DnsConfig dns = SingboxDnsEmitter.Emit(DnsProfileBuilder.Plan(profile));
+        Assert.That(dns.Rules.Where(rule => rule.Action == DnsRuleAction.Evaluate)
+            .All(rule => rule.DisableOptimisticCache == true), Is.True);
         var precedingEvaluations = new HashSet<string>(StringComparer.Ordinal);
         foreach (DnsRule rule in dns.Rules)
         {
@@ -686,7 +688,7 @@ public sealed class DnsProfileBuilderTests
                 [null, null, null, null]);
             AssertTerminalServfail(pool[^1], generalPrimary.RuleSet);
             Assert.That(dns.Rules.IndexOf(pool[^1]), Is.LessThan(dns.Rules.IndexOf(generalPrimary)));
-            Assert.That(generalPrimary.DisableOptimisticCache, Is.Null);
+            Assert.That(generalPrimary.DisableOptimisticCache, Is.True);
             Assert.That(dns.Timeout, Is.EqualTo("3s"));
         });
     }
@@ -789,20 +791,20 @@ public sealed class DnsProfileBuilderTests
         Assert.Multiple(() =>
         {
             Assert.That(servers.Keys, Does.Contain(SingboxTags.DirectAliDns));
-            Assert.That(servers.Keys, Does.Contain(SingboxTags.DirectTencentDns));
+            Assert.That(servers.Keys, Does.Contain(SingboxTags.DirectAliDnsSecondary));
             Assert.That(servers.Keys, Does.Contain(SingboxTags.ProxyCloudflareDns));
             Assert.That(servers.Keys, Does.Contain(SingboxTags.ProxyGoogleDns));
             Assert.That(JsonSerializer.SerializeToElement<DnsServer>(servers[SingboxTags.DirectAliDns]).GetProperty("type").GetString(), Is.EqualTo("https"));
             Assert.That(servers[SingboxTags.DirectAliDns].Server, Is.EqualTo("223.5.5.5"));
             Assert.That(servers[SingboxTags.DirectAliDns].Tls?.ServerName, Is.EqualTo("dns.alidns.com"));
-            Assert.That(servers[SingboxTags.DirectTencentDns].Server, Is.EqualTo("119.29.29.29"));
-            Assert.That(servers[SingboxTags.DirectTencentDns].Tls?.ServerName, Is.EqualTo("doh.pub"));
+            Assert.That(servers[SingboxTags.DirectAliDnsSecondary].Server, Is.EqualTo("223.6.6.6"));
+            Assert.That(servers[SingboxTags.DirectAliDnsSecondary].Tls?.ServerName, Is.EqualTo("dns.alidns.com"));
             Assert.That(servers[SingboxTags.ProxyCloudflareDns].Server, Is.EqualTo("1.1.1.1"));
             Assert.That(servers[SingboxTags.ProxyCloudflareDns].Tls?.ServerName, Is.EqualTo("cloudflare-dns.com"));
             Assert.That(servers[SingboxTags.ProxyGoogleDns].Server, Is.EqualTo("8.8.8.8"));
             Assert.That(servers[SingboxTags.ProxyGoogleDns].Tls?.ServerName, Is.EqualTo("dns.google"));
             Assert.That(servers[SingboxTags.DirectAliDns].Detour, Is.Null);
-            Assert.That(servers[SingboxTags.DirectTencentDns].Detour, Is.Null);
+            Assert.That(servers[SingboxTags.DirectAliDnsSecondary].Detour, Is.Null);
             Assert.That(servers[SingboxTags.ProxyCloudflareDns].Detour, Is.EqualTo(SingboxTags.MainProxyGroup));
             Assert.That(servers[SingboxTags.ProxyGoogleDns].Detour, Is.EqualTo(SingboxTags.MainProxyGroup));
             Assert.That(dns.CacheCapacity, Is.EqualTo(4096));
@@ -1022,7 +1024,7 @@ public sealed class DnsProfileBuilderTests
         foreach (var service in profile.Services.Where(service => service.PrecedesDomesticRoutes))
             yield return ($"service-{service.Id}", service.RuleSets,
                 SingboxTags.ServiceDns(service.Id, "cloudflare"), SingboxTags.ServiceDns(service.Id, "google"));
-        yield return ("domestic", new[] { RuleSetTags.Cn }, SingboxTags.DirectAliDns, SingboxTags.DirectTencentDns);
+        yield return ("domestic", new[] { RuleSetTags.Cn }, SingboxTags.DirectAliDns, SingboxTags.DirectAliDnsSecondary);
         foreach (var service in profile.Services.Where(service => !service.PrecedesDomesticRoutes))
             yield return ($"service-{service.Id}", service.RuleSets,
                 SingboxTags.ServiceDns(service.Id, "cloudflare"), SingboxTags.ServiceDns(service.Id, "google"));

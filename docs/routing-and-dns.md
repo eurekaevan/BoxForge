@@ -13,14 +13,14 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
 
 启用 `route.use_direct_forwarding` 时使用显式阶段扩展 `DIRECT` 规则，默认仅 Linux 启用。
 私网地址在首个 `sniff` 前加入 `bridge-out` L3 forwarding；同时启用
-`auto_redirect: true` 时，还先尝试 kernel-level `bypass`。需要嗅探或后续优先级才能判定的国内
+`auto_redirect: true` 时，同一伴随规则使用 `bypass` 动作，auto_redirect 流量从内核层直接绕过，普通 TUN 流量仍由 bridge 转发。需要嗅探或后续优先级才能判定的国内
 直连规则保持原位，只在 UDP sniff 后加入 `tun-in` + UDP 限定的 bridge/bypass
 伴随规则。每条原 `DIRECT` 都保留为回退。
 
 1. **`DnsHijack`**：以 `inbound: tun-in` 和 `port: 53` 兜底劫持 TCP/UDP DNS；主要入口是 TUN 自身的 `dns_mode: hijack`，不依赖后续 sniff 的协议识别。
 2. **`Ipv4OnlyGuard`**（在 `DnsHijack` 之后）：仅 `Ipv4Only` 生成，以全局 `ip_version: 6` 拒绝全部 IPv6，先于 Tailscale、DIRECT、bridge、bypass 和 sniff。
 3. **`Tailscale`**（在 `Ipv4OnlyGuard` 之后）：启用 Tailscale 时，路由 endpoint 声明为首选的目标，优先于私网直连。
-4. **`PreSniffDirect`**（在 `Tailscale` 之后）：直连私网地址；启用直连转发时在 DIRECT 前展开 bridge，同时启用 auto_redirect 时先加入 bypass。
+4. **`PreSniffDirect`**（在 `Tailscale` 之后）：直连私网地址；启用直连转发时在 DIRECT 前展开 bridge 伴随规则，同时启用 auto_redirect 时将其动作改为 bypass。
 5. **`InterfaceIpv6Guard`**（在 `PreSniffDirect` 之后）：仅 `Auto` 与 `DirectDualStack` 生成，在默认出口缺少公网 IPv6 地址时拒绝尚未处理的 IPv6；Tailscale 和私网 IPv6 不受此条件限制。
 6. **`Sniff`**（在 `InterfaceIpv6Guard` 之后）：依次嗅探 TCP HTTP/TLS 与 UDP QUIC/STUN；TCP 跳过 FTP、SSH、MySQL、VNC 常用端口 21/22/3306/5900，继续后续路由，8080/8443 仍嗅探。
 7. **`BlockStunAndAds`**（在 `Sniff` 之后）：依次拒绝识别出的 UDP STUN 和 ads。
@@ -33,11 +33,13 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
 14. **`FinalOutbound`**（在 `FinalIpv6Guard` 之后）：未命中规则的流量使用 route.final 的 🚀 PROXIES；不额外生成 catch-all 规则。
 
 `DomesticDirect` 阶段中的国内 `DIRECT` 在启用直连转发时会紧邻原规则之前生成 L3
-伴随规则：bridge 前仅在同时启用 auto_redirect 时加入 bypass。伴随规则仅匹配
+伴随规则：同时启用 auto_redirect 时使用 bypass，否则使用 route；两者均指定
+`preferred_by: bridge-out` 和 `outbound: bridge-out`。伴随规则仅匹配
 `tun-in` UDP，原规则的 rule-set、端口与服务顺序条件不变；TCP 在 sniff
 后不会尝试这些 L3 层，仍由原 `DIRECT` 处理。关闭或清空 auto_redirect 不会关闭 bridge，
 关闭直连转发时仅保留原 `DIRECT`。bridge 支持 Linux、root Android 和需要 WinDivert/管理员权限的
 Windows x86/x64；auto_redirect 只支持 Linux 与 root Android，普通 Android VPN 客户端不支持，Windows 启用时校验拒绝。
+DIRECT 是匹配阶段的回退，不会在 bridge 初始化或转发失败后自动重试。
 
 全平台仅生成 TUN inbound，不生成 mixed 入口及其专用的域名解析和解析后复检规则。
 
@@ -114,7 +116,7 @@ DIRECT 显式使用上述 `prefer_ipv4`／`ipv4_only` 绑定。Dashboard HTTP cl
 仅在 `DualStack` 下使用独立节点 resolver，在 `Ipv4Only`、`Auto`、`DirectDualStack` 下继承全局控制面 resolver。
 该固定 tag 的 IP 和 TLS 名称可通过 [resolver profile](configuration.md#resolver-profile)
 覆盖；连接仍使用 IPv4 字面量直连，引导不依赖系统 DNS 或代理 DNS。
-内部 AliDNS 和 Tencent DoH 由各自 dialer 直接建立连接，不经过 TUN 客户端路由链；
+内部国内 DoH 由各自 dialer 直接建立连接，不经过 TUN 客户端路由链；
 解析器地址不生成客户端直连例外，应用访问这些地址仍按普通路由规则处理。
 
 client DNS 依次分类：
@@ -137,11 +139,14 @@ DNS 与业务路由均按优先服务 → 国内 → 普通服务排序，各服
 
 ## Resolver pool 响应语义
 
-DOMESTIC 的首选为直连 AliDNS、备用为直连 Tencent；GLOBAL 的首选为经主代理
+DOMESTIC 的首选为直连 AliDNS `223.5.5.5`、备用为直连 AliDNS `223.6.6.6`，
+TLS 名称均为 `dns.alidns.com`；主备属于同一服务商，不提供跨服务商冗余。
+备用使用 resolver ID `alidns-secondary` 和 tag `dns-direct-alidns-secondary`。
+GLOBAL 的首选为经主代理
 Cloudflare、备用为经主代理 Google。每个服务也使用 Cloudflare 和 Google，
 但两者的连接出口均为该服务的选择组，跟随服务组的手动切换；选择 DIRECT 时 DNS 也直连。
-缓存策略保持不变，切换出口不会自动刷新已有答案；旧答案仍可能在 TTL 或配置的
-optimistic 缓存窗口内复用。
+运行时手动切换出口不会自动刷新已有答案，旧答案仍可能在正常 TTL 内复用；
+重新生成时 DNS 段发生变化会更换持久缓存命名空间，详见[缓存身份](generated-config.md#dns-与持久化缓存)。
 仅按 `cnip` 命中的目标无法在 DNS 查询前确定 IP 归属；DNS 按域名分类，路由还会匹配目标 IP，
 因此不保证 DNS 查询出口总与业务出口相同。
 解析出口对齐不能保证 CDN 最优；并行模式比较 DNS 响应速度，不探测答案中服务器的连接速度。
@@ -170,6 +175,11 @@ A 和允许放行的 AAAA 查询分别进入独立的地址池，两条 `NOERROR
 竞速，不要求响应含 IP；`Ipv4Only` 下 AAAA 在进入池前已返回空答，
 `Auto` 下则由前述出口条件决定是否允许进入池。
 
+通用池不限制查询类型，TXT、PTR、SRV 和其他类型也按相同规则处理。
+非地址查询的空 `NOERROR` 是有效结果，可以先于另一侧的非空答案返回；不会因此请求其他分类。
+锁定核心在 `Ipv4Only` 下会移除 HTTPS 答案中的 `ipv6hint`，保留 ALPN 和 `ipv4hint`；
+`DualStack` 下保留两类地址提示。
+
 非地址查询的 NXDOMAIN `respond` 同样不启用 race，等待未决的 NOERROR 竞速。
 每次上游查询的默认超时来自 `dns.timeout`，默认 `3s`：快负答或空答与
 另一侧不响应的组合仍可能等满该预算。这是保留有效结果优先的代价。较短预算也可能在弱网或首次 DoH 建连时增加失败；
@@ -186,11 +196,11 @@ SERVFAIL 或 REFUSED 时在本 pool 终止，服务和 CN 不会穿透到后一�
 结束。
 
 正常 TTL 缓存和 reverse mapping 保留；缓存容量来自 `dns.cache_capacity`
-（默认 4096），optimistic 超时来自 `dns.optimistic_timeout`（默认 `6h`）。
-并行模式地址池的 A/AAAA evaluate 单独设置
-`disable_optimistic_cache: true`，只使用正常 TTL 内的缓存，避免过期空答或旧
-地址抢赢新查询；它同时牺牲了地址查询过期正向缓存的立即返回能力。其他查询
-仍保留 optimistic。控制平面解析和 Tailscale split DNS 也禁用 optimistic 缓存。
+（默认 4096）。所有解析池的 evaluate 均设置 `disable_optimistic_cache: true`，
+覆盖所有查询类型以及顺序、并行两种模式，避免过期空答、NXDOMAIN 或旧地址参与响应选择。
+缓存过期后需要等待上游，无法立即使用旧答案兜底；正常 TTL 内的正答和负答仍可复用。
+全局 optimistic 超时仍来自 `dns.optimistic_timeout`（默认 `6h`），为兼容已有 profile 保留输出，
+正常客户端查询在解析池中覆盖禁用；控制平面解析和 Tailscale split DNS 也禁用 optimistic 缓存。
 
 生成校验器检查 `dns.final`、DNS 规则的 `server` 和 `rule_set` 引用。
 DNS `preferred_by` 引用 DNS server，而不是路由 outbound/endpoint；当前

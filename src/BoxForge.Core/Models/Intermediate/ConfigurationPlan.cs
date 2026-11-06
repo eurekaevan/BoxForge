@@ -104,7 +104,7 @@ internal sealed record ConfigurationPlan(
                 string primary = service ? SingboxTags.ServiceDns(serviceId ?? string.Empty, "cloudflare")
                     : domestic ? SingboxTags.DirectAliDns : SingboxTags.ProxyCloudflareDns;
                 string secondary = service ? SingboxTags.ServiceDns(serviceId ?? string.Empty, "google")
-                    : domestic ? SingboxTags.DirectTencentDns : SingboxTags.ProxyGoogleDns;
+                    : domestic ? SingboxTags.DirectAliDnsSecondary : SingboxTags.ProxyGoogleDns;
                 bool valid = pool.Kind == (service ? DnsPoolKind.Service : domestic ? DnsPoolKind.Domestic : DnsPoolKind.Global)
                     && pool.ServiceId == serviceId
                     && pool.RuleSets.IsDefault == scopeSets.IsDefault

@@ -12,7 +12,7 @@ internal static class DnsProfileBuilder
         List<DnsHttpsResolverPlan> resolvers =
         [
             CreateResolver(SingboxTags.DirectAliDns, settingsProfile.GetResolver("alidns")),
-            CreateResolver(SingboxTags.DirectTencentDns, settingsProfile.GetResolver("tencent")),
+            CreateResolver(SingboxTags.DirectAliDnsSecondary, settingsProfile.GetResolver("alidns-secondary")),
             CreateResolver(SingboxTags.ProxyCloudflareDns, settingsProfile.GetResolver("cloudflare"), SingboxTags.MainProxyGroup),
             CreateResolver(SingboxTags.ProxyGoogleDns, settingsProfile.GetResolver("google"), SingboxTags.MainProxyGroup)
         ];
@@ -27,7 +27,7 @@ internal static class DnsProfileBuilder
         }
         pools.Insert(settingsProfile.Services.Count(service => service.PrecedesDomesticRoutes),
             new DnsResolverPoolPlan(DnsPoolKind.Domestic, [RuleSetTags.Cn],
-                SingboxTags.DirectAliDns, SingboxTags.DirectTencentDns));
+                SingboxTags.DirectAliDns, SingboxTags.DirectAliDnsSecondary));
         pools.Add(new DnsResolverPoolPlan(DnsPoolKind.Global, default,
             SingboxTags.ProxyCloudflareDns, SingboxTags.ProxyGoogleDns));
         bool tailscaleEnabled = settingsProfile.Features.Tailscale.Enabled;

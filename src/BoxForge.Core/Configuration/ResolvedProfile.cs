@@ -97,7 +97,7 @@ public sealed class ResolvedProfile
                     || label.Any(c => !char.IsAsciiLetterOrDigit(c) && c != '-')))
                 throw new ProfileValidationException(resolverPath + ".server_name", "profile.resolvers.server_name: 必须为有效的 ASCII DNS 名称，不能为 IP、URL 或通配符。");
         }
-        if (!resolverIds.SetEquals(["alidns", "tencent", "cloudflare", "google"]))
+        if (!resolverIds.SetEquals(["alidns", "alidns-secondary", "cloudflare", "google"]))
             throw new ProfileValidationException("profile.dns.resolvers", "profile.resolvers: 必须保留四个固定 resolver ID。");
         var reservedTags = new HashSet<string>(StringComparer.Ordinal)
         {
@@ -107,7 +107,7 @@ public sealed class ResolvedProfile
             SingboxTags.TailscaleEndpoint,
             SingboxTags.TailscaleDns,
             SingboxTags.DirectAliDns,
-            SingboxTags.DirectTencentDns,
+            SingboxTags.DirectAliDnsSecondary,
             SingboxTags.ProxyGoogleDns,
             SingboxTags.ProxyCloudflareDns,
             SingboxTags.TunInbound,

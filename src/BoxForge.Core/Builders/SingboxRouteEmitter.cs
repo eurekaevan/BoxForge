@@ -107,21 +107,14 @@ internal static class SingboxRouteEmitter
             // Each emitted rule owns its matcher collections, including forwarding variants.
             if (plan.UseDirectForwarding)
             {
-                if (plan.AutoRedirect)
-                    rules.Add(matcher with
-                    {
-                        RuleSet = matcher.RuleSet is null ? null : [.. matcher.RuleSet],
-                        Inbound = [SingboxTags.TunInbound],
-                        Network = postSniff ? ["udp"] : null,
-                        Action = RouteRuleAction.Bypass
-                    });
                 rules.Add(matcher with
                 {
                     RuleSet = matcher.RuleSet is null ? null : [.. matcher.RuleSet],
                     Inbound = [SingboxTags.TunInbound],
                     Network = postSniff ? ["udp"] : null,
                     PreferredBy = [SingboxTags.BridgeOutbound],
-                    Action = RouteRuleAction.Route,
+                    // A bypass needs the L3 target for TUN pre-match; preferred_by skips it at L4.
+                    Action = plan.AutoRedirect ? RouteRuleAction.Bypass : RouteRuleAction.Route,
                     Outbound = SingboxTags.BridgeOutbound
                 });
             }

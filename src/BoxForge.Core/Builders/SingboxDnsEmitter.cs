@@ -131,7 +131,7 @@ internal static class SingboxDnsEmitter
         {
             RuleSet = Copy(pool.RuleSets),
             QueryType = queryType is null ? null : [queryType],
-            DisableOptimisticCache = queryType is not null ? true : null,
+            DisableOptimisticCache = true,
             Action = DnsRuleAction.Evaluate,
             Server = primary ? pool.PrimaryServer : pool.SecondaryServer,
             Tag = ResponseTag(pool, primary, queryType),

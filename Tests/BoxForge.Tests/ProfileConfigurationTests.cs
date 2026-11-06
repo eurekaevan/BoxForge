@@ -923,7 +923,7 @@ public sealed class ProfileConfigurationTests
 
     private static IEnumerable<TestCaseData> ResolverCases()
     {
-        foreach (var (id, tag) in new[] { ("alidns", SingboxTags.DirectAliDns), ("tencent", SingboxTags.DirectTencentDns),
+        foreach (var (id, tag) in new[] { ("alidns", SingboxTags.DirectAliDns), ("alidns-secondary", SingboxTags.DirectAliDnsSecondary),
                      ("cloudflare", SingboxTags.ProxyCloudflareDns), ("google", SingboxTags.ProxyGoogleDns) })
             foreach (TargetPlatform platform in Enum.GetValues<TargetPlatform>())
                 yield return new TestCaseData(id, tag, platform);
@@ -955,7 +955,7 @@ public sealed class ProfileConfigurationTests
             }
             Assert.That(root.GetProperty("route").GetRawText(), Is.EqualTo(baseline.RootElement.GetProperty("route").GetRawText()),
                 "Changing a resolver endpoint must not add a client routing exemption.");
-            Assert.That(servers.Where(server => server.GetProperty("tag").GetString() is SingboxTags.DirectAliDns or SingboxTags.DirectTencentDns)
+            Assert.That(servers.Where(server => server.GetProperty("tag").GetString() is SingboxTags.DirectAliDns or SingboxTags.DirectAliDnsSecondary)
                 .All(server => !server.TryGetProperty("detour", out _)), Is.True,
                 "Internal domestic DoH must keep using its direct dialer.");
         });
@@ -964,6 +964,7 @@ public sealed class ProfileConfigurationTests
     [TestCase("id", "null")]
     [TestCase("id", "123")]
     [TestCase("id", "\"ALIDNS\"")]
+    [TestCase("id", "\"tencent\"")]
     [TestCase("id", "\"quad9\"")]
     [TestCase("server", "null")]
     [TestCase("server", "123")]

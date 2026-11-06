@@ -86,6 +86,11 @@ public sealed class SingboxConfigBuilderTests
             Assert.That(config.Route.Rules.Count(rule => rule.Outbound == SingboxTags.BridgeOutbound), Is.EqualTo(forwarding ? 3 : 0));
             Assert.That(config.Route.Rules.Count(rule => rule.Action == RouteRuleAction.Bypass),
                 Is.EqualTo(forwarding && autoRedirect == true ? 3 : 0));
+            // The same gated target supports kernel bypass and ordinary TUN L3 forwarding,
+            // while excluding local destinations and connections already handled at L4.
+            Assert.That(config.Route.Rules.Where(rule => rule.Outbound == SingboxTags.BridgeOutbound)
+                .All(rule => rule.PreferredBy?.SequenceEqual([SingboxTags.BridgeOutbound]) == true
+                    && rule.Action == (autoRedirect == true ? RouteRuleAction.Bypass : RouteRuleAction.Route)), Is.True);
             Assert.That(config.Route.Rules.Count(rule => rule.Outbound == SingboxTags.DirectOutbound), Is.EqualTo(3));
             Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, profile.Settings.AddressFamily));
         });
@@ -236,7 +241,7 @@ public sealed class SingboxConfigBuilderTests
                 {
                     Resolvers = [.. plan.Dns.Resolvers.Skip(1)],
                     Pools = [.. plan.Dns.Pools.Select(pool => pool.PrimaryServer == SingboxTags.DirectAliDns
-                        ? pool with { PrimaryServer = SingboxTags.DirectTencentDns } : pool)]
+                        ? pool with { PrimaryServer = SingboxTags.DirectAliDnsSecondary } : pool)]
                 }
             },
             _ => plan with { Dns = plan.Dns with { SelectionMode = DnsResolverSelectionMode.SequentialFallback } }

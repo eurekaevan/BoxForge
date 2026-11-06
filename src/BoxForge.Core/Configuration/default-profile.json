@@ -55,9 +55,9 @@
         "server_name": "dns.alidns.com"
       },
       {
-        "id": "tencent",
-        "server": "119.29.29.29",
-        "server_name": "doh.pub"
+        "id": "alidns-secondary",
+        "server": "223.6.6.6",
+        "server_name": "dns.alidns.com"
       },
       {
         "id": "cloudflare",

@@ -47,7 +47,7 @@ Windows/Android 省略该字段。实际吞吐收益尚未验证，可按
 阶段生成两类 L3 forwarding 层：
 
 - 私网地址在首个 `sniff` 之前预匹配；原 `DIRECT` 前增加带
-  `preferred_by: bridge-out` 门控的 L3 route。
+  `preferred_by: bridge-out` 门控、`outbound: bridge-out` 的 L3 伴随规则。
 - 国内 `cn` 和 `cnip`
   在 UDP sniff 之后、各自原始规则所在位置增加仅匹配 `tun-in` + UDP 的 L3
   route。它们不会被搬到 sniff 之前，因此仍保留原有服务优先级和域名嗅探语义。
@@ -77,10 +77,12 @@ Android 依赖客户端提供当前默认物理接口和地址，尚未完成真
 `strategy: ipv4_only` 并禁用 optimistic cache。省略该字段的节点继承平台策略；
 `Ipv4Only`、`Auto`、`DirectDualStack` 下继承已有的全局控制面 IPv4 限制，不重复生成节点 resolver。其他 `ip-version` 值仍拒绝。
 
-同时启用 `route.auto_redirect: true` 和 `route.use_direct_forwarding: true` 时，在每条上述 L3 route 之前再生成无 `outbound` 的 `bypass` 动作，使
-`auto_redirect` 流量在相同条件下从内核层直接绕过 sing-box；该动作在其他
-上下文会被跳过。每条原 `DIRECT` 都原位保留作为 correctness fallback，覆盖
-TCP 和 UDP 无法完成 sniff 等不能使用 L3 forwarding 的情况。
+每条 L3 伴随规则均保留 `preferred_by: bridge-out` 和 `outbound: bridge-out`：
+同时启用 `route.auto_redirect: true` 时使用 `bypass` 动作，否则使用 `route`。
+同一条 `bypass` 规则使 auto_redirect 流量从内核层直接绕过 sing-box，普通 TUN 流量则使用 bridge 做 L3 转发。
+`preferred_by` 门控排除本机地址，并在进入 L4 连接处理后跳过伴随规则。
+每条原 `DIRECT` 都原位保留作为匹配回退，覆盖 TCP 和 UDP sniff 需要更多数据等不能使用
+L3 forwarding 的情况；这不是 bridge 初始化或转发失败后自动重试 DIRECT 的故障回退。
 
 `use_direct_forwarding` 独立于 `auto_redirect`：关闭或清空后者仍可生成 bridge 与原 `DIRECT` 回退，不生成 bypass。
 bridge 支持 Linux、root Android 和 Windows x86/x64；Windows 需要 WinDivert 后端及管理员权限。
@@ -103,14 +105,15 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
   `2s` 超时，失败后才查询备用；Linux/Windows 同时查询两家。A 和允许放行的
   AAAA 查询优先让含对应地址族地址的 `NOERROR` 响应竞速，双方均无地址时才依次接受
   primary、secondary 的空答或仅 CNAME 等 `NOERROR` 后备；非地址查询让最快的
-  `NOERROR` 胜出。并行模式的 A/AAAA 地址池禁用 optimistic 过期缓存，正常 TTL 缓存保留。
+  `NOERROR` 胜出。所有解析池均禁用 optimistic 过期缓存，正常 TTL 缓存保留。
   NXDOMAIN 不参与竞速，双方没有 `NOERROR` 时依次接受 primary、secondary 的
   NXDOMAIN。两家都失败时明确返回 `SERVFAIL`；详见
   [DNS 分类与回退](routing-and-dns.md)。
 - DNS 默认使用 `Ipv4Only`，设置 `dns.strategy = ipv4_only` 并让全部客户端 AAAA 查询在规则链首部返回空 `NOERROR`；
   覆盖为 `DirectDualStack` 或 `Auto` 时不强制客户端 DNS 的解析地址族，先处理 Tailscale 查询，再在出口缺少公网 IPv6 地址或接口信息未知时对其余 AAAA 返回空答，
   有公网 IPv6 出口时，各解析池均保留 AAAA，真实目标的 IPv6 转发限制由路由负责。
-  缓存容量为 `4096`，并启用超时为 `6h` 的 optimistic 缓存和 reverse mapping。
+  缓存容量为 `4096`，启用 reverse mapping；所有正常客户端解析只使用 TTL 内的缓存。
+  全局 optimistic 超时仍由 `dns.optimistic_timeout` 输出，解析池通过逐查询禁用覆盖它。
 - 代理节点和 Tailscale endpoint 继承
   `route.default_domain_resolver`：直连固定 tag `dns-direct-alidns`（默认 AliDNS，可覆盖端点）、禁用 optimistic
   过期缓存。`Ipv4Only`、`Auto` 与 `DirectDualStack` 强制该 resolver 使用 `ipv4_only`，使节点连接、
@@ -119,12 +122,14 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
 - rule-set HTTP client 显式使用代理控制面解析设置；Dashboard HTTP client 直连，按平台地址族解析（`Auto`、`DirectDualStack` 下不强制 IPv4），两者均禁用 optimistic 缓存；
   Tailscale split DNS 也禁用 optimistic 过期缓存。
 - `experimental.cache_file` 使用 `cache.db`，并通过 `store_dns` 持久化 DNS 缓存。
-- `cache_id` 是 `SHA256(配置名 + 平台小写标识)`，使用 UTF-8 编码，输出 64 位小写十六进制。
+- `cache_id` 是配置名、平台小写标识与生成 DNS 模型的结构化 JSON 经 UTF-8 编码后的 SHA-256，输出 64 位小写十六进制。
   配置名保留原样：CLI 使用输入文件名去掉扩展名，API 使用请求中的 `name`；
   平台标识为 `android`、`linux`、`windows`。
-  同名、同平台稳定复用缓存，节点增减、排序、改名或元数据变化均不改变缓存身份；
+  同名、同平台且 DNS 配置相同时稳定复用缓存，节点增减、排序、改名或元数据变化均不改变缓存身份；
   不同平台隔离。配置改名会更换身份，不同目录中的同名配置仍共享身份。
-  从旧节点哈希算法升级时会冷启动一次；已选择节点被删除或改名时，该项选择仍会失效。
+  更换 DNS 地址、TLS 名称、出口绑定或解析策略会切换命名空间，不再复用旧 DNS 答案。
+  从旧算法升级时会冷启动一次；命名空间还保存选择器状态，因此升级或 DNS 配置变化后可能恢复默认选择。
+  旧缓存数据保留；已选择节点被删除或改名时，该项选择仍会失效。
 
 ## 出站与 rule-set
 

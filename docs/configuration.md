@@ -306,6 +306,9 @@ URL 与时长文本，完整值覆盖和删除均使用这些原值，不比较�
 
 ## resolver profile
 
+所有解析池仅使用正常 TTL 内的缓存；`dns.optimistic_timeout` 仍为兼容保留，
+但不会启用解析池的过期答案兜底。更换 DNS 配置会自动更换持久缓存命名空间。
+
 `dns.resolvers` 使用完整实体 `id`、`server`、`server_name`。
 四个固定角色及 tag 如下。整体替换时须提供完整实体；局部修改使用按 `id` 选择的
 `patch`，例如 `{"id":"alidns","server":"223.6.6.6"}`。
@@ -313,9 +316,14 @@ URL 与时长文本，完整值覆盖和删除均使用这些原值，不比较�
 | 固定 ID | 固定 tag | 固定角色 |
 | --- | --- | --- |
 | `alidns` | `dns-direct-alidns` | 国内主解析器；控制面引导，直连 |
-| `tencent` | `dns-direct-tencent` | 国内备用解析器，直连 |
+| `alidns-secondary` | `dns-direct-alidns-secondary` | 国内备用解析器，默认 AliDNS `223.6.6.6`，直连 |
 | `cloudflare` | `dns-proxy-cloudflare` | GLOBAL 主解析器及 DNS final，经主代理组 |
 | `google` | `dns-proxy-google` | GLOBAL 备用解析器，经主代理组 |
+
+国内主备默认分别使用 AliDNS `223.5.5.5` 和 `223.6.6.6`，TLS 名称均为
+`dns.alidns.com`；两者属于同一服务商，不提供跨服务商冗余。
+旧 profile 中备用解析器的 `tencent` ID 须改为 `alidns-secondary`，不保留旧 ID 别名。
+显式覆盖此角色的地址和 TLS 名称仍按覆盖值执行。
 
 每个服务另生成 `dns-service-{id}-cloudflare` 和 `dns-service-{id}-google`，
 复用对应 resolver 的地址和 TLS 名称，连接出口为该服务选择组。
@@ -326,7 +334,7 @@ CIDR、非规范数字、`0.*` 或首段大于等于 224 的地址。
 1～63 字符，只允许字母、数字和内部连字符，不接受 IP、通配符、尾点或空白。
 TLS 始终启用，不开放明文回退、任意 detour 或主备角色改变。
 更换 resolver 地址或 TLS 名称只更新相应 DoH 端点，控制面及 HTTP client 仍绑定相同固定 tag；
-不为解析器地址生成客户端路由例外。内部 AliDNS、Tencent DoH 由各自 dialer 直连，不经过 TUN 客户端路由链。
+不为解析器地址生成客户端路由例外。内部国内 DoH 由各自 dialer 直连，不经过 TUN 客户端路由链。
 配置和核心检查不证明远端可达、证书匹配或实际冷启动成功。
 
 ## 生成 tag 约定
@@ -355,7 +363,7 @@ kebab-case，并按对象用途区分。默认地区组如下，地区覆盖可�
 | TUN inbound | `tun-in` |
 | L3 bridge outbound（启用 `use_direct_forwarding` 时） | `bridge-out` |
 | Tailscale endpoint / DNS | `tailscale`、`dns-tailscale` |
-| 直连 DNS | `dns-direct-alidns`、`dns-direct-tencent` |
+| 直连 DNS | `dns-direct-alidns`、`dns-direct-alidns-secondary` |
 | 代理 DNS | `dns-proxy-google`、`dns-proxy-cloudflare` |
 | 服务 DNS | `dns-service-{id}-cloudflare`、`dns-service-{id}-google` |
 | rule-set HTTP client | `http-ruleset-proxy` |

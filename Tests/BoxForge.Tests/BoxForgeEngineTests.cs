@@ -34,7 +34,7 @@ public sealed class BoxForgeEngineTests
     [TestCase("sample")]
     [TestCase("Sample")]
     [TestCase("配置名 ")]
-    public async Task CacheIdentityUsesExactRequestNameAndLowercasePlatform(string name)
+    public async Task CacheIdentityIsStableAndSeparatesRequestNamesAndPlatforms(string name)
     {
         using ServiceProvider provider = CreateProvider();
         var engine = provider.GetRequiredService<IBoxForgeEngine>();
@@ -45,31 +45,49 @@ public sealed class BoxForgeEngineTests
 
         foreach (var artifact in first.Artifacts)
         {
-            string platform = artifact.Platform switch
-            {
-                TargetPlatform.Android => "android",
-                TargetPlatform.Linux => "linux",
-                TargetPlatform.Windows => "windows",
-                _ => throw new AssertionException("Unexpected platform.")
-            };
-            string expected = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(name + platform)));
             using var document = JsonDocument.Parse(artifact.Content);
             string actual = document.RootElement.GetProperty("experimental").GetProperty("cache_file")
                 .GetProperty("cache_id").GetString()!;
             identities.Add(actual);
-            Assert.That(actual, Is.EqualTo(expected));
+            Assert.That(actual, Does.Match("^[0-9a-f]{64}$"));
             Assert.That(second.Artifacts.Single(item => item.Platform == artifact.Platform).Content,
                 Is.EqualTo(artifact.Content));
         }
 
         Assert.That(identities.Distinct().Count(), Is.EqualTo(3));
-        ConversionBundle renamed = await engine.ConvertAsync(request with { Name = name + "-other" });
-        foreach (var artifact in renamed.Artifacts)
+        foreach (string changedName in new[] { name + "-other", name.ToUpperInvariant(), name.Trim() }
+            .Where(value => value != name).Distinct())
         {
-            using var document = JsonDocument.Parse(artifact.Content);
-            Assert.That(document.RootElement.GetProperty("experimental").GetProperty("cache_file")
-                .GetProperty("cache_id").GetString(), Is.Not.AnyOf(identities.ToArray()));
+            ConversionBundle renamed = await engine.ConvertAsync(request with { Name = changedName });
+            foreach (var artifact in renamed.Artifacts)
+            {
+                using var document = JsonDocument.Parse(artifact.Content);
+                Assert.That(document.RootElement.GetProperty("experimental").GetProperty("cache_file")
+                    .GetProperty("cache_id").GetString(), Is.Not.AnyOf(identities.ToArray()));
+            }
         }
+    }
+
+    [TestCase("{\"dns\":{\"resolvers\":{\"patch\":[{\"id\":\"alidns-secondary\",\"server\":\"119.29.29.29\",\"server_name\":\"doh.pub\"}]}}}", true)]
+    [TestCase("{\"dns\":{\"resolvers\":{\"patch\":[{\"id\":\"alidns-secondary\",\"server\":\"223.5.5.5\"}]}}}", true)]
+    [TestCase("{\"dns\":{\"resolvers\":{\"patch\":[{\"id\":\"alidns\",\"server_name\":\"alternate.example\"}]}}}", true)]
+    [TestCase("{\"dns\":{\"address_family\":\"DualStack\"}}", true)]
+    [TestCase("{\"dns\":{\"selection_mode\":\"SequentialFallback\"}}", true)]
+    [TestCase("{\"dns\":{\"timeout\":\"5s\"}}", true)]
+    [TestCase("{\"tuning\":{\"connect_timeout\":\"11s\"}}", false)]
+    public async Task CacheIdentityTracksEffectiveDnsConfiguration(string overlay, bool changesIdentity)
+    {
+        using ServiceProvider provider = CreateProvider();
+        var engine = provider.GetRequiredService<IBoxForgeEngine>();
+        var request = new ConversionRequest("dns-identity", ValidYaml, [TargetPlatform.Linux]);
+        using var before = JsonDocument.Parse((await engine.ConvertAsync(request)).Artifacts.Single().Content);
+        using var after = JsonDocument.Parse((await engine.ConvertAsync(request with
+        {
+            Profile = JsonNode.Parse(overlay)!.AsObject()
+        })).Artifacts.Single().Content);
+        string? original = before.RootElement.GetProperty("experimental").GetProperty("cache_file").GetProperty("cache_id").GetString();
+        string? changed = after.RootElement.GetProperty("experimental").GetProperty("cache_file").GetProperty("cache_id").GetString();
+        Assert.That(changed == original, Is.EqualTo(!changesIdentity));
     }
 
     [Test]
