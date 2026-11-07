@@ -74,6 +74,7 @@ public sealed class BoxForgeEngineTests
     [TestCase("{\"dns\":{\"address_family\":\"DualStack\"}}", true)]
     [TestCase("{\"dns\":{\"selection_mode\":\"SequentialFallback\"}}", true)]
     [TestCase("{\"dns\":{\"timeout\":\"5s\"}}", true)]
+    [TestCase("{\"route\":{\"block\":{\"domain_suffix\":{\"append\":[\"custom.example\"]}}}}", true)]
     [TestCase("{\"tuning\":{\"connect_timeout\":\"11s\"}}", false)]
     public async Task CacheIdentityTracksEffectiveDnsConfiguration(string overlay, bool changesIdentity)
     {

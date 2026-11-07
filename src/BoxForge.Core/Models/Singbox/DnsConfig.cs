@@ -67,6 +67,7 @@ public record DnsRule
     [JsonPropertyName("rule_set")] public List<string>? RuleSet { get; init; }
     [JsonPropertyName("domain")] public List<string>? Domain { get; init; }
     [JsonPropertyName("domain_suffix")] public List<string>? DomainSuffix { get; init; }
+    [JsonPropertyName("domain_regex")] public List<string>? DomainRegex { get; init; }
     [JsonPropertyName("query_type")] public List<string>? QueryType { get; init; }
     [JsonPropertyName("preferred_by")] public List<string>? PreferredBy { get; init; }
     [JsonPropertyName("match_response")] public string? MatchResponse { get; init; }

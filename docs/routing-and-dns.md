@@ -127,7 +127,7 @@ client DNS 依次分类：
 3. `Auto` 与 `DirectDualStack` 下，出口缺少公网 IPv6 地址时，其余 AAAA 查询返回空 `NOERROR`。
    有公网 IPv6 出口时，不按 DNS 池静态过滤 AAAA；服务、国内和全局池均正常解析，避免域名不在 `cn` 但真实地址属于 `cnip` 时丢失直连 IPv6。
    IPv6 是否允许转发由路由阶段决定，DNS 查询走代理不等于业务目标走代理。
-4. `ads` 返回 `NXDOMAIN`。
+4. `ads` 返回 `NXDOMAIN`，随后 `route.block` 的自定义域名阻断也返回 `NXDOMAIN`。
 5. 从有效 profile 的 `route.services` 为每个服务生成独立 pool，先处理 `PrecedesDomesticRoutes` 为真的服务；
    该字段默认 `true`，内置 AI、Google、GitHub、Spotify 和 Games 均通过自己的服务选择组解析，优先于 `cn`。
 6. `cn` 进入 DOMESTIC pool。
@@ -135,6 +135,8 @@ client DNS 依次分类：
 8. 其余查询进入 GLOBAL pool。
 
 DNS 与业务路由均按优先服务 → 国内 → 普通服务排序，各服务阶段保留列表顺序；
+自定义域名阻断在这些分类之前执行：DNS 在广告规则之后，业务路由在嗅探和广告规则之后。
+私网与 Tailscale 的前置路径保留；没有可用域名的直连 IP 无法保证被域名阻断覆盖。
 同时命中多个同阶段服务时采用最先匹配的服务，TCP、UDP 的所有端口使用相同优先级。
 
 ## Resolver pool 响应语义

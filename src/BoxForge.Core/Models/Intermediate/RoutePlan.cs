@@ -16,6 +16,7 @@ internal sealed record RoutePlan(
     IReadOnlyList<RuleSetPlan> RuleSets,
     string SniffTimeout,
     ImmutableArray<int> SniffExcludedPorts,
+    DomainBlockProfile Block,
     ImmutableArray<ServiceRoutePlan> Services)
 {
     internal void Validate()

@@ -296,12 +296,15 @@ public sealed class ProfileHostConfigurationTests
     {
         using var provider = CreateProvider(new Dictionary<string, string?>
         {
-            ["route:sniff_excluded_ports"] = "{\"replace\":[25,465]}"
+            ["route:sniff_excluded_ports"] = "{\"replace\":[25,465]}",
+            ["route:block:domain_suffix"] = "{\"replace\":[\"custom.example\"]}"
         });
         var profile = provider.GetRequiredService<BoxForgeProfile>().Resolve(TargetPlatform.Linux);
         using var json = JsonDocument.Parse(profile.ToResolvedJson());
         Assert.That(json.RootElement.GetProperty("route").GetProperty("sniff_excluded_ports").EnumerateArray()
             .Select(port => port.GetInt32()), Is.EqualTo(new[] { 25, 465 }));
+        Assert.That(json.RootElement.GetProperty("route").GetProperty("block").GetProperty("domain_suffix")[0].GetString(),
+            Is.EqualTo("custom.example"));
     }
 
     private static ServiceProvider CreateProvider(IDictionary<string, string?> values) =>

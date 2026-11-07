@@ -27,6 +27,9 @@ public record SingboxRuleSet
 
 public record RouteRule
 {
+    [JsonPropertyName("domain")] public List<string>? Domain { get; init; }
+    [JsonPropertyName("domain_suffix")] public List<string>? DomainSuffix { get; init; }
+    [JsonPropertyName("domain_regex")] public List<string>? DomainRegex { get; init; }
     [JsonPropertyName("default_interface_address")] public List<string>? DefaultInterfaceAddress { get; init; }
     [JsonPropertyName("type")] public RouteRuleType? Type { get; init; }
     [JsonPropertyName("mode")] public RouteLogicalMode? Mode { get; init; }

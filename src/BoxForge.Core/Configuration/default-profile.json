@@ -72,6 +72,11 @@
     ]
   },
   "route": {
+    "block": {
+      "domain": [],
+      "domain_suffix": ["mcdn.bilivideo.cn", "mcdn.bilivideo.com", "szbdyd.com", "mountaintoys.cn"],
+      "domain_wildcard": ["*pcdn*.biliapi.net"]
+    },
     "regions": [
       {
         "id": "us",

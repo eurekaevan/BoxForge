@@ -3,7 +3,8 @@
 
 Usage: python3 scripts/verify-dns-races.py /path/to/sing-box /path/to/platform/config.json
 Requires generated Ipv4Only or DualStack DNS with a 3s query timeout,
-Python 3 and OpenSSL. No TUN, real upstreams, or proxy credentials are used.
+the default services/domain blocks, Python 3 and OpenSSL.
+No TUN, real upstreams, or proxy credentials are used.
 """
 
 import asyncio
@@ -204,6 +205,7 @@ async def main(core, generated):
         overlap_services = ("github", "spotify", "games")
         rule_sets = [{"type": "inline", "tag": tag,
                       "rules": [{"domain_suffix": [f"{tag}.test"]
+                                 + (["biliapi.net", "bilivideo.com", "bilivideo.cn", "szbdyd.com", "mountaintoys.cn"] if tag == "cn" else [])
                                  + (["overlap.test"] if tag in ("google", "cn") else [])
                                  + [f"{service}-overlap.test" for service in overlap_services
                                     if tag in (service, "cn")]}]}
@@ -252,6 +254,21 @@ async def main(core, generated):
         else:
             raise RuntimeError("Core did not become ready")
         results.clear()
+        blocked_names = [
+            "foo-pcdn-bar.biliapi.net", "pcdn.biliapi.net", "PCDN.BILIAPI.NET",
+            "nested.foo-pcdn.biliapi.net", "mcdn.bilivideo.com", "a.mcdn.bilivideo.com",
+            "mcdn.bilivideo.cn", "a.szbdyd.com", "mountaintoys.cn"
+        ]
+        for name in blocked_names:
+            for qt in (1, 65):
+                result = await query(f"blocked-{name}-{qt}", name, qt)
+                assert (result["rcode"], result["answers"]) == (3, 0), result
+                assert not any(event[0] == name for event in events), (name, events)
+        for name in ("normal.biliapi.net", "pcdn.biliapi.net.evil", "notmcdn.bilivideo.com", "bilivideo.com"):
+            specs[2], specs[3] = (0.03, "a", 60), (0.7, "a", 60)
+            result = await query(f"allowed-{name}", name)
+            assert (result["rcode"], result["answers"]) == (0, 1), result
+            assert any(event[0] == name for event in events), name
         # Each row uses a unique name to prevent earlier cases from warming its cache.
         cases = [
             ("fast-primary", "google", "a", "a", .03, .7, 1, 0, 1),

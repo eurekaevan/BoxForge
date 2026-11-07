@@ -115,6 +115,7 @@ public sealed class ServerApiTests
                     },
                     route = new
                     {
+                        block = new { domain = new { append = new[] { $"request-{index}.example" } } },
                         services = new { patch = new[] { new { id = "ai", default_region = enabled ? "jp" : "us" } } }
                     },
                     platforms = new Dictionary<string, object>
@@ -131,6 +132,9 @@ public sealed class ServerApiTests
             foreach (ApiArtifact artifact in result.Artifacts)
             {
                 using JsonDocument config = JsonDocument.Parse(artifact.Content);
+                Assert.That(config.RootElement.GetProperty("dns").GetProperty("rules").EnumerateArray()
+                    .Single(rule => rule.TryGetProperty("domain", out _)).GetProperty("domain")[0].GetString(),
+                    Is.EqualTo($"request-{index}.example"));
                 Assert.That(config.RootElement.TryGetProperty("services", out _), Is.EqualTo(enabled));
                 Assert.That(config.RootElement.TryGetProperty("endpoints", out _), Is.EqualTo(enabled));
                 Assert.That(config.RootElement.GetProperty("outbounds").EnumerateArray()
@@ -160,6 +164,8 @@ public sealed class ServerApiTests
     [TestCase("true")]
     [TestCase("{\"features\":{},\"features\":{}}")]
     [TestCase("{\"version\":1}")]
+    [TestCase("{\"route\":{\"block\":null}}")]
+    [TestCase("{\"route\":{\"block\":{\"domain_wildcard\":{\"append\":[\"secret-profile-value?.example\"]}}}}")]
     [TestCase("{\"features\":{\"api\":{\"enabled\":\"secret-profile-value\"}}}")]
     [TestCase("{\"platforms\":{\"Linux\":{\"route\":{\"multi_queue\":\"secret-profile-value\"}}}}")]
     [TestCase("{\"unknown-secret-profile-value\":true}")]

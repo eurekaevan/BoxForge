@@ -74,6 +74,15 @@ internal static class SingboxDnsEmitter
             Action = DnsRuleAction.Predefined,
             Rcode = DnsResponseCode.NameError
         });
+        if (!plan.Block.IsEmpty)
+            rules.Add(new DnsRule
+            {
+                Domain = plan.Block.Domain.IsEmpty ? null : [.. plan.Block.Domain.Select(domain => domain.ToLowerInvariant())],
+                DomainSuffix = plan.Block.DomainSuffix.IsEmpty ? null : [.. plan.Block.DomainSuffix.Select(domain => domain.ToLowerInvariant())],
+                DomainRegex = plan.Block.RegexPatterns(),
+                Action = DnsRuleAction.Predefined,
+                Rcode = DnsResponseCode.NameError
+            });
         foreach (DnsResolverPoolPlan pool in plan.Pools)
         {
             switch (plan.SelectionMode)

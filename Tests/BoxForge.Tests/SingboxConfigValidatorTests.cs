@@ -805,6 +805,7 @@ public sealed class SingboxConfigValidatorTests
             valid.Dns.Rules.Skip(1).ToList(),
             valid.Dns.Rules.AsEnumerable().Reverse().ToList(),
             new List<DnsRule> { valid.Dns.Rules[0] with { Domain = ["example.com"] }, valid.Dns.Rules[1] },
+            new List<DnsRule> { valid.Dns.Rules[0] with { DomainRegex = ["^example\\.com$"] }, valid.Dns.Rules[1] },
             new List<DnsRule> { valid.Dns.Rules[0] with { IpCidr = ["192.0.2.0/24"] }, valid.Dns.Rules[1] }
         })
         {
@@ -927,6 +928,7 @@ public sealed class SingboxConfigValidatorTests
             new DnsRule { QueryType = ["AAAA"], Action = DnsRuleAction.Predefined, Rcode = DnsResponseCode.NoError },
             valid.Dns.Rules[0] with { Mode = RouteLogicalMode.Or },
             valid.Dns.Rules[0] with { Domain = ["example.com"] },
+            valid.Dns.Rules[0] with { DomainRegex = ["^example\\.com$"] },
             valid.Dns.Rules[0] with
             {
                 Rules = [valid.Dns.Rules[0].Rules![0], valid.Dns.Rules[0].Rules![1] with { DefaultInterfaceAddress = ["::/0"] }]
@@ -967,6 +969,7 @@ public sealed class SingboxConfigValidatorTests
             tailscale with { QueryType = ["AAAA"] },
             tailscale with { Domain = ["example.com"] },
             tailscale with { DomainSuffix = ["example.com"] },
+            tailscale with { DomainRegex = ["^example\\.com$"] },
             tailscale with { RuleSet = ["rules"] },
             tailscale with { DefaultInterfaceAddress = ["2000::/3"] },
             tailscale with { IpCidr = ["192.0.2.0/24"] },

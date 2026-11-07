@@ -599,7 +599,8 @@ internal sealed class SingboxConfigValidator : ISingboxConfigValidator
 
     private static bool HasUnrestrictedDnsScope(DnsRule rule, bool allowPreferredBy = false) =>
         rule.RuleSet is not { Count: > 0 } && rule.Domain is not { Count: > 0 }
-        && rule.DomainSuffix is not { Count: > 0 } && (allowPreferredBy || rule.PreferredBy is not { Count: > 0 })
+        && rule.DomainSuffix is not { Count: > 0 } && rule.DomainRegex is not { Count: > 0 }
+        && (allowPreferredBy || rule.PreferredBy is not { Count: > 0 })
         && rule.MatchResponse is null && rule.ResponseRcode is null && rule.IpCidr is not { Count: > 0 };
 
     private static bool IsAutoAaaaGuard(DnsRule rule) =>

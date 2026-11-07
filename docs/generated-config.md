@@ -100,6 +100,9 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
 
 ## DNS 与持久化缓存
 
+- 默认启用 `route.block` 中的五条 B 站 PCDN 域名规则，分别生成 DNS NXDOMAIN 和嗅探后的路由 reject，
+  位于广告规则之后、服务／国内分流之前。支持精确域名、后缀与限定通配符；
+  覆盖方式及无域名／ECH 等限制见[自定义域名阻断](configuration.md#自定义域名阻断)。
 - 所有 DNS `respond` 通过唯一 `match_response` 标签继承 evaluate 范围，不重复输出 `rule_set`；evaluate 和终止 SERVFAIL 仍保留分类范围。
 - DNS 每次上游查询默认超时为 `3s`。Android 正常只查询首选 resolver，首选查询使用
   `2s` 超时，失败后才查询备用；Linux/Windows 同时查询两家。A 和允许放行的

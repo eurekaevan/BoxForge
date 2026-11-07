@@ -27,6 +27,9 @@ HTTP 错误格式保持不变。
 | `dns.cache_capacity` | `4096` | — |
 | `dns.optimistic_timeout` | `"6h"` | — |
 | `dns.resolvers` | 4 项（见内置 profile） | — |
+| `route.block.domain` | `[]` | — |
+| `route.block.domain_suffix` | `["mcdn.bilivideo.cn","mcdn.bilivideo.com","szbdyd.com","mountaintoys.cn"]` | — |
+| `route.block.domain_wildcard` | `["*pcdn*.biliapi.net"]` | — |
 | `route.regions` | 4 项（见内置 profile） | — |
 | `route.services` | 5 项（见内置 profile） | — |
 | `route.rule_sets` | 6 项（见内置 profile） | — |
@@ -303,6 +306,40 @@ URL 不得含用户信息、片段、未编码空白或控制字符，只允许�
 URL 与时长文本，完整值覆盖和删除均使用这些原值，不比较发射后的规范化形式。
 修改批量来源时应替换完整来源实体；不会自动拆组。内置广告/国内规则集以及服务
 引用必须仍有效，不能通过删除来源留下悬空引用。
+
+## 自定义域名阻断
+
+`route.block` 只提供域名阻断，不接受自定义出站或任意规则动作：
+
+- `domain`：精确域名。
+- `domain_suffix`：域名本身及其子域名，不匹配相似前缀。
+- `domain_wildcard`：完整域名通配符，`*` 匹配零个或多个字符，可跨越 `.`；大小写不敏感。
+
+默认包含 `*pcdn*.biliapi.net`，以及 `mcdn.bilivideo.cn`、`mcdn.bilivideo.com`、
+`szbdyd.com`、`mountaintoys.cn` 四个后缀。这是内置的 B 站 PCDN 阻断列表，不保证覆盖全部 PCDN，
+也不保证客户端会切回主 CDN 或改善播放速度。
+
+三个字段均沿用标量数组的 `append`、`remove`、`replace` 操作，可在文件、平台、请求和主机配置中覆盖。
+例如追加阻断：
+
+```json
+{"route":{"block":{"domain_suffix":{"append":["custom.example"]}}}}
+```
+
+关闭全部自定义阻断时，清空三个数组；现有广告规则仍生效：
+
+```json
+{"route":{"block":{"domain":{"replace":[]},"domain_suffix":{"replace":[]},"domain_wildcard":{"replace":[]}}}}
+```
+
+值必须是无前后点的 ASCII 域名，标签最多 63 字符、全长最多 253 字符，国际域名使用 punycode；
+不接受 IP、URL、空白或裸正则，只有 `domain_wildcard` 允许 `*`。通配符由程序转译为限定的 Go RE2，
+DNS 与路由使用同一组匹配条件。三组同时为空时不生成自定义阻断规则。
+
+DNS 阻断位于已有地址族／Tailscale 特殊处理和广告规则之后、各解析池之前，返回 NXDOMAIN；
+路由阻断位于嗅探和广告规则之后、服务及国内分流之前，执行 reject。私网和 Tailscale 的既有优先级保留。
+HTTPDNS 得到的 IP 只有在域名可由映射或嗅探取得时才能被域名规则匹配；ECH、缺失 SNI／Host、
+嗅探排除端口或无法识别的协议都可能限制覆盖。更改阻断配置会自动改变 DNS 缓存身份。
 
 ## resolver profile
 

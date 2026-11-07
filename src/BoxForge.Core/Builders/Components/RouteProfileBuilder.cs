@@ -22,6 +22,7 @@ internal static class RouteProfileBuilder
             new DomainResolverPlan(SingboxTags.DirectAliDns, settings.AddressFamily.ForControlPlane(), true), ruleSets,
             settingsProfile.Route.SniffTimeout,
             settingsProfile.Route.SniffExcludedPorts,
+            settingsProfile.Route.Block,
             [.. settingsProfile.Services.OrderByDescending(service => service.PrecedesDomesticRoutes)
                 .Select(service => new ServiceRoutePlan(service.Id, service.RuleSets, service.Name, service.PrecedesDomesticRoutes))]);
     }

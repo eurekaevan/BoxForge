@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Text.RegularExpressions;
 using BoxForge.Models;
 
 namespace BoxForge.Configuration;
@@ -23,11 +24,23 @@ internal sealed record RouteProfile(
     string MainDefaultRegion,
     string SniffTimeout,
     ImmutableArray<int> SniffExcludedPorts,
+    DomainBlockProfile Block,
     ImmutableArray<string> TunAddresses,
     bool? StrictRoute,
     bool? AutoRedirect,
     bool? MultiQueue,
     bool UseDirectForwarding);
+
+internal sealed record DomainBlockProfile(
+    ImmutableArray<string> Domain,
+    ImmutableArray<string> DomainSuffix,
+    ImmutableArray<string> DomainWildcard)
+{
+    internal bool IsEmpty => Domain.IsEmpty && DomainSuffix.IsEmpty && DomainWildcard.IsEmpty;
+
+    internal List<string>? RegexPatterns() => DomainWildcard.IsEmpty ? null : [.. DomainWildcard.Select(pattern =>
+        "(?i)^" + Regex.Escape(pattern).Replace("\\*", ".*", StringComparison.Ordinal) + "$")];
+}
 
 public sealed record TuningProfile(
     string ConnectTimeout,

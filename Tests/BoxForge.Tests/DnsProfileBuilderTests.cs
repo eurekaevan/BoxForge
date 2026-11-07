@@ -82,7 +82,7 @@ public sealed class DnsProfileBuilderTests
                     .Concat(profile.Services.Where(service => !service.PrecedesDomesticRoutes).Select(service => (string?)service.Id))
                     .Append(null)));
             Assert.That(emitted.Rules.Single(rule => rule.Action == DnsRuleAction.Predefined
-                && rule.Rcode == DnsResponseCode.NameError).RuleSet, Is.EqualTo(new[] { RuleSetTags.Ads }));
+                && rule.Rcode == DnsResponseCode.NameError && rule.RuleSet?.Contains(RuleSetTags.Ads) == true).RuleSet, Is.EqualTo(new[] { RuleSetTags.Ads }));
         });
     }
 
@@ -192,7 +192,7 @@ public sealed class DnsProfileBuilderTests
         var firstService = BoxForgeProfile.Default.Services
             .OrderByDescending(service => service.PrecedesDomesticRoutes).First();
         string resolverTag = $"dns-service-{firstService.Id}-cloudflare";
-        var serviceEvaluation = dns.Rules[3];
+        var serviceEvaluation = dns.Rules.First(rule => rule.Action == DnsRuleAction.Evaluate);
         Assert.Multiple(() =>
         {
             Assert.That(guard.Mode, Is.EqualTo(RouteLogicalMode.And));

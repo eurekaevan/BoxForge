@@ -80,6 +80,14 @@ internal static class SingboxRouteEmitter
             Action = RouteRuleAction.Reject
         });
         rules.Add(new RouteRule { RuleSet = [RuleSetTags.Ads], Action = RouteRuleAction.Reject });
+        if (!plan.Block.IsEmpty)
+            rules.Add(new RouteRule
+            {
+                Domain = plan.Block.Domain.IsEmpty ? null : [.. plan.Block.Domain.Select(domain => domain.ToLowerInvariant())],
+                DomainSuffix = plan.Block.DomainSuffix.IsEmpty ? null : [.. plan.Block.DomainSuffix.Select(domain => domain.ToLowerInvariant())],
+                DomainRegex = plan.Block.RegexPatterns(),
+                Action = RouteRuleAction.Reject
+            });
         AddServices(priority: true);
         foreach (string scope in new[] { RuleSetTags.Cn, RuleSetTags.CnIp })
             AddDirect(new RouteRule { RuleSet = [scope] }, postSniff: true);

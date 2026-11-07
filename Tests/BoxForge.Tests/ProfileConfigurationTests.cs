@@ -300,6 +300,80 @@ public sealed class ProfileConfigurationTests
         Assert.Throws<ProfileValidationException>(() => added.ApplyOverrides(ArrayOperation("route", "regions", "remove", changedValue)));
     }
 
+    [Test]
+    public async Task DomainBlocksAreSharedByDnsAndPostSniffRouting(
+        [Values] TargetPlatform platform, [Values] AddressFamilyPolicy family,
+        [Values] DnsResolverSelectionMode mode)
+    {
+        var profile = BoxForgeProfile.Default.ApplyOverrides(JsonSerializer.SerializeToNode(new
+        {
+            dns = new { address_family = family.ToString(), selection_mode = mode.ToString() },
+            route = new { block = new
+            {
+                domain = new { append = new[] { "EXACT.Example" } },
+                domain_suffix = new { append = new[] { "suffix.example" }, remove = new[] { "mountaintoys.cn" } }
+            } }
+        })!.AsObject());
+        using var document = await Generate(profile, platform, Yaml("US01"));
+        JsonElement root = document.RootElement;
+        var dns = root.GetProperty("dns").GetProperty("rules").EnumerateArray().ToArray();
+        var route = root.GetProperty("route").GetProperty("rules").EnumerateArray().ToArray();
+        int di = Array.FindIndex(dns, rule => rule.TryGetProperty("domain_regex", out _));
+        int ri = Array.FindIndex(route, rule => rule.TryGetProperty("domain_regex", out _));
+        Assert.Multiple(() =>
+        {
+            Assert.That(dns[di].GetProperty("domain")[0].GetString(), Is.EqualTo("exact.example"));
+            Assert.That(dns[di].GetProperty("domain_suffix").EnumerateArray().Select(item => item.GetString()),
+                Does.Contain("suffix.example").And.Not.Contain("mountaintoys.cn"));
+            foreach (string field in new[] { "domain", "domain_suffix", "domain_regex" })
+                Assert.That(route[ri].GetProperty(field).GetRawText(), Is.EqualTo(dns[di].GetProperty(field).GetRawText()));
+            Assert.That(dns[di].GetProperty("rcode").GetString(), Is.EqualTo("NXDOMAIN"));
+            Assert.That(dns[di].TryGetProperty("query_type", out _), Is.False);
+            Assert.That(route[ri].GetProperty("action").GetString(), Is.EqualTo("reject"));
+            Assert.That(di, Is.GreaterThan(Array.FindIndex(dns, rule => rule.TryGetProperty("rule_set", out var set) && set[0].GetString() == "ads")));
+            Assert.That(di, Is.LessThan(Array.FindIndex(dns, rule => rule.GetProperty("action").GetString() == "evaluate")));
+            Assert.That(ri, Is.GreaterThan(Array.FindLastIndex(route, rule => rule.GetProperty("action").GetString() == "sniff")));
+            Assert.That(ri, Is.GreaterThan(Array.FindIndex(route, rule => rule.TryGetProperty("rule_set", out var set) && set[0].GetString() == "ads")));
+            Assert.That(ri, Is.LessThan(Array.FindIndex(route, rule => rule.TryGetProperty("rule_set", out var set) && set[0].GetString() == "cn")));
+            Assert.That(ri, Is.LessThan(Array.FindIndex(route, rule => rule.TryGetProperty("rule_set", out var set) && set[0].GetString() == "ai")));
+        });
+    }
+
+    [Test]
+    public async Task ClearingAllDomainBlockArraysOmitsBothRules()
+    {
+        var profile = Load("""
+            {"route":{"block":{"domain":{"replace":[]},"domain_suffix":{"replace":[]},"domain_wildcard":{"replace":[]}}}}
+            """);
+        using var document = await Generate(profile, TargetPlatform.Linux, Yaml("US01"));
+        foreach (string section in new[] { "dns", "route" })
+            Assert.That(document.RootElement.GetProperty(section).GetProperty("rules").EnumerateArray()
+                .Any(rule => rule.TryGetProperty("domain_regex", out _) || rule.TryGetProperty("domain_suffix", out _)
+                    || rule.TryGetProperty("domain", out _)), Is.False);
+    }
+
+    [TestCase("domain", "*.example.com")]
+    [TestCase("domain", "https://secret.example")]
+    [TestCase("domain", "127.0.0.1")]
+    [TestCase("domain", "example.com.")]
+    [TestCase("domain_suffix", ".example.com")]
+    [TestCase("domain_suffix", "bad..example")]
+    [TestCase("domain_wildcard", "a?.example")]
+    [TestCase("domain_wildcard", "(?i).*example")]
+    [TestCase("domain_wildcard", "例子.com")]
+    [TestCase("domain_wildcard", "-bad.example")]
+    [TestCase("domain_wildcard", "")]
+    [TestCase("domain_regex", "^example$")]
+    public void DomainBlocksRejectInvalidNamesAndRawRegex(string field, string value)
+    {
+        var overlay = new JsonObject { ["route"] = new JsonObject { ["block"] = new JsonObject
+        {
+            [field] = new JsonObject { ["replace"] = new JsonArray(value) }
+        } } };
+        var error = Assert.Throws<ProfileValidationException>(() => BoxForgeProfile.Default.ApplyOverrides(overlay))!;
+        Assert.That(error.Diagnostics.Single().Path, Does.Contain("route.block"));
+    }
+
     [TestCase("https://rules.example.net/{tag}.srs", "1d")]
     [TestCase("https://rules.example.net/custom.srs", ".5d")]
     public async Task PlatformRuleSetRemovalMatchesRawValuesInFilesOverridesAndRequests(string url, string interval)

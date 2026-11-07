@@ -62,6 +62,9 @@ public sealed class ResolvedProfile
     internal static (ImmutableArray<RegionDefinition> Regions, ImmutableHashSet<string> ReservedTags) ValidateDefinitions(
         BuiltInProfile data, bool validateReferences)
     {
+        ValidateBlockDomains(data.Route.Block.Domain, "profile.route.block.domain", wildcard: false);
+        ValidateBlockDomains(data.Route.Block.DomainSuffix, "profile.route.block.domain_suffix", wildcard: false);
+        ValidateBlockDomains(data.Route.Block.DomainWildcard, "profile.route.block.domain_wildcard", wildcard: true);
         var ruleSetTags = new HashSet<string>(StringComparer.Ordinal);
         for (int sourceIndex = 0; sourceIndex < data.Route.RuleSets.Length; sourceIndex++)
         {
@@ -227,6 +230,20 @@ public sealed class ResolvedProfile
         if (Route.SniffExcludedPorts.Any(port => port is < 1 or > 65535)
             || Route.SniffExcludedPorts.Distinct().Count() != Route.SniffExcludedPorts.Length)
             throw new ProfileValidationException("profile.route.sniff_excluded_ports", "profile: 排除端口必须有效且唯一。");
+    }
+
+    private static void ValidateBlockDomains(ImmutableArray<string> domains, string path, bool wildcard)
+    {
+        for (int index = 0; index < domains.Length; index++)
+        {
+            string value = domains[index];
+            if (value.Length is < 1 or > 253 || IPAddress.TryParse(value, out _)
+                || value.Split('.').Any(label => label.Length is < 1 or > 63
+                    || label[0] == '-' || label[^1] == '-'
+                    || label.Any(c => !char.IsAsciiLetterOrDigit(c) && c != '-' && !(wildcard && c == '*'))))
+                throw new ProfileValidationException($"{path}[{index}]",
+                    $"{path}: 必须是无前后点的 ASCII 域名；国际域名使用 punycode，只有 domain_wildcard 允许 *。");
+        }
     }
 
     private static void Duration(string value, string path)
