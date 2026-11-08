@@ -97,8 +97,9 @@ public sealed class DnsProfileBuilderTests
             dns = new { address_family = family.ToString(), selection_mode = selectionMode.ToString() }
         })!.AsObject());
         DnsConfig dns = SingboxDnsEmitter.Emit(DnsProfileBuilder.Plan(profile));
+        Assert.That(dns.Optimistic!.Enabled, Is.False);
         Assert.That(dns.Rules.Where(rule => rule.Action == DnsRuleAction.Evaluate)
-            .All(rule => rule.DisableOptimisticCache == true), Is.True);
+            .All(rule => rule.DisableOptimisticCache is null), Is.True);
         var precedingEvaluations = new HashSet<string>(StringComparer.Ordinal);
         foreach (DnsRule rule in dns.Rules)
         {
@@ -126,7 +127,7 @@ public sealed class DnsProfileBuilderTests
     }
 
     [Test]
-    public void Ipv6AddressRacesPreserveScopeFallbackAndCachePolicyAcrossPlatforms()
+    public void Ipv6AddressRacesPreserveScopeFallbackAcrossPlatforms()
     {
         foreach (TargetPlatform platform in Enum.GetValues<TargetPlatform>())
             foreach (AddressFamilyPolicy family in new[] { AddressFamilyPolicy.DualStack, AddressFamilyPolicy.Auto, AddressFamilyPolicy.DirectDualStack })
@@ -149,7 +150,7 @@ public sealed class DnsProfileBuilderTests
                     Assert.That(pool, Has.Count.EqualTo(9));
                     Assert.That(pool.All(rule => rule.QueryType?.SequenceEqual(["AAAA"]) == true), Is.True);
                     Assert.That(pool.Take(2).Select(rule => (rule.Server, rule.DisableOptimisticCache)),
-                        Is.EqualTo(new[] { (definition.PrimaryResolver, (bool?)true), (definition.SecondaryResolver, (bool?)true) }));
+                        Is.EqualTo(new[] { (definition.PrimaryResolver, (bool?)null), (definition.SecondaryResolver, (bool?)null) }));
                     Assert.That(pool.Take(2).All(rule =>
                         rule.RuleSet?.SequenceEqual(definition.RuleSets ?? []) ?? definition.RuleSets is null), Is.True);
                     Assert.That(pool.Skip(2).Take(2).Select(rule => rule.MatchResponse), Is.EqualTo(new[] { primary, secondary }));
@@ -671,7 +672,7 @@ public sealed class DnsProfileBuilderTests
             Assert.That(pool, Has.Count.EqualTo(9));
             Assert.That(pool.All(rule => rule.QueryType?.SequenceEqual(["A"]) == true), Is.True);
             Assert.That(pool.Take(2).All(rule =>
-                rule.Action == DnsRuleAction.Evaluate && rule.DisableOptimisticCache == true), Is.True);
+                rule.Action == DnsRuleAction.Evaluate && rule.DisableOptimisticCache is null), Is.True);
             Assert.That(pool[0].Server, Is.EqualTo(generalPrimary.Server));
             Assert.That(pool[1].Tag, Is.EqualTo(secondaryTag + "-a"));
             Assert.That(pool.Skip(2).Take(2).All(rule =>
@@ -688,7 +689,8 @@ public sealed class DnsProfileBuilderTests
                 [null, null, null, null]);
             AssertTerminalServfail(pool[^1], generalPrimary.RuleSet);
             Assert.That(dns.Rules.IndexOf(pool[^1]), Is.LessThan(dns.Rules.IndexOf(generalPrimary)));
-            Assert.That(generalPrimary.DisableOptimisticCache, Is.True);
+            Assert.That(generalPrimary.DisableOptimisticCache, Is.Null);
+            Assert.That(dns.Optimistic!.Enabled, Is.False);
             Assert.That(dns.Timeout, Is.EqualTo("3s"));
         });
     }
@@ -809,8 +811,8 @@ public sealed class DnsProfileBuilderTests
             Assert.That(servers[SingboxTags.ProxyGoogleDns].Detour, Is.EqualTo(SingboxTags.MainProxyGroup));
             Assert.That(dns.CacheCapacity, Is.EqualTo(4096));
             Assert.That(dns.Final, Is.EqualTo(SingboxTags.ProxyCloudflareDns));
-            Assert.That(dns.Optimistic!.Enabled, Is.True);
-            Assert.That(dns.Optimistic!.Timeout, Is.EqualTo("6h"));
+            Assert.That(dns.Optimistic!.Enabled, Is.False);
+            Assert.That(dns.Optimistic!.Timeout, Is.Null);
             Assert.That(dns.ReverseMapping, Is.True);
         });
     }

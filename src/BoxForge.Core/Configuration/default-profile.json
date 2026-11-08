@@ -47,7 +47,6 @@
     "selection_mode": "ParallelFastest",
     "timeout": "3s",
     "cache_capacity": 4096,
-    "optimistic_timeout": "6h",
     "resolvers": [
       {
         "id": "alidns",

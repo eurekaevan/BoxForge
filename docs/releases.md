@@ -1,7 +1,7 @@
 # 版本与发布契约
 
-BoxForge 的 Core、CLI 和 Server 共用配置生成契约。CLI 提供本地批量生成，
-HTTP/Web 提供无状态的内存转换；不包含订阅抓取、账户、持久化、定时任务或配置托管。
+BoxForge 的 Core 和 CLI 共用配置生成契约。CLI 提供本地批量生成；
+不包含订阅抓取、账户、持久化、定时任务或配置托管。
 
 ## 日期版本
 
@@ -39,7 +39,7 @@ HTTP/Web 提供无状态的内存转换；不包含订阅抓取、账户、持�
 
 固定 BoxForge 版本只消除工具源码漂移。复现生成文件还需要固定输入内容、目标
 平台、profile 文件、显式 `--profile` 路径和 `BOXFORGE_` 环境配置。
-宿主的无前缀环境变量及 `appsettings*.json` 不参与 CLI、Server 的 profile 解析。
+宿主的无前缀环境变量及 `appsettings*.json` 不参与 CLI 的 profile 解析。
 不要把含凭据的 YAML、配置或环境变量值写入公共发布说明或日志。
 远程 rule-set、网络环境和 sing-box 本身影响运行行为，文件一致不等于长期网络行为一致。
 
@@ -78,7 +78,7 @@ python3 scripts/verify-generated-configs.py src/BoxForge.Cli/bin/Release/net10.0
 <!-- END GENERATED:release-gates -->
 
 发布包仅提供 Linux x64（glibc，CI 使用 Ubuntu
-24.04），不包含 Server，也不声称支持 Alpine/musl 或其他主机架构。
+24.04），不声称支持 Alpine/musl 或其他主机架构。
 包内包含 .NET runtime，无需安装 SDK；系统原生依赖仍遵循
 [.NET Linux 部署要求](https://learn.microsoft.com/en-us/dotnet/core/install/linux)。
 采用常规 self-contained 文件夹打包，不使用 NativeAOT、裁剪或单文件自解压。

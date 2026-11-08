@@ -308,11 +308,14 @@ public sealed class ProfileConfigurationTests
         var profile = BoxForgeProfile.Default.ApplyOverrides(JsonSerializer.SerializeToNode(new
         {
             dns = new { address_family = family.ToString(), selection_mode = mode.ToString() },
-            route = new { block = new
+            route = new
             {
-                domain = new { append = new[] { "EXACT.Example" } },
-                domain_suffix = new { append = new[] { "suffix.example" }, remove = new[] { "mountaintoys.cn" } }
-            } }
+                block = new
+                {
+                    domain = new { append = new[] { "EXACT.Example" } },
+                    domain_suffix = new { append = new[] { "suffix.example" }, remove = new[] { "mountaintoys.cn" } }
+                }
+            }
         })!.AsObject());
         using var document = await Generate(profile, platform, Yaml("US01"));
         JsonElement root = document.RootElement;
@@ -366,10 +369,16 @@ public sealed class ProfileConfigurationTests
     [TestCase("domain_regex", "^example$")]
     public void DomainBlocksRejectInvalidNamesAndRawRegex(string field, string value)
     {
-        var overlay = new JsonObject { ["route"] = new JsonObject { ["block"] = new JsonObject
+        var overlay = new JsonObject
         {
-            [field] = new JsonObject { ["replace"] = new JsonArray(value) }
-        } } };
+            ["route"] = new JsonObject
+            {
+                ["block"] = new JsonObject
+                {
+                    [field] = new JsonObject { ["replace"] = new JsonArray(value) }
+                }
+            }
+        };
         var error = Assert.Throws<ProfileValidationException>(() => BoxForgeProfile.Default.ApplyOverrides(overlay))!;
         Assert.That(error.Diagnostics.Single().Path, Does.Contain("route.block"));
     }

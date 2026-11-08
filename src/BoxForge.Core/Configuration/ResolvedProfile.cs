@@ -218,7 +218,6 @@ public sealed class ResolvedProfile
         Duration(Route.SniffTimeout, "profile.route.sniff_timeout");
         Duration(Tuning.UrlTestIdleTimeout, "profile.tuning.url_test_idle_timeout");
         Duration(Dns.Timeout, "profile.dns.timeout");
-        Duration(Dns.OptimisticTimeout, "profile.dns.optimistic_timeout");
         if (!Uri.TryCreate(Tuning.UrlTestUrl, UriKind.Absolute, out var probe) || probe.Scheme is not ("http" or "https")
             || string.IsNullOrEmpty(probe.Host) || !string.IsNullOrEmpty(probe.UserInfo) || !string.IsNullOrEmpty(probe.Fragment)
             || Tuning.UrlTestUrl.Any(char.IsWhiteSpace) || !probe.IsWellFormedOriginalString())

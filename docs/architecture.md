@@ -1,25 +1,21 @@
 # 架构与扩展
 
-BoxForge 由 Core 类库、CLI 可执行项目、Server 可执行项目和一个
-测试项目组成。CLI 和 Server 都通过 Core 中的 `IBoxForgeEngine`
-传入 YAML 文本、配置名、目标平台和可选的请求 profile。
+BoxForge 由 Core 类库、CLI 可执行项目以及一个测试项目组成。
+CLI 通过 Core 中的 `IBoxForgeEngine` 传入 YAML 文本、配置名和目标平台。
 
 ## 项目与依赖
 
 ```text
 BoxForge.Cli    ──→ BoxForge.Core
-BoxForge.Server ──→ BoxForge.Core
-BoxForge.Tests  ──→ BoxForge.Cli, BoxForge.Server, BoxForge.Core
+BoxForge.Tests  ──→ BoxForge.Cli, BoxForge.Core
 ```
 
 - `BoxForge.Core` 是 Class Library，不引用 CLI，也不依赖
   `Microsoft.Extensions.Hosting`。
 - `BoxForge.Cli` 是 Executable，引用 Core；它通过 `IBoxForgeEngine`
   调用转换能力。
-- `BoxForge.Server` 是 ASP.NET Core Executable，只引用 Core；它不引用
-  CLI，不使用解析器、构建器或文件工作流。
-- `BoxForge.Tests` 引用 Core、CLI 和 Server，保留核心构建、命令行、
-  本地事务工作流和 HTTP API 的回归测试。
+- `BoxForge.Tests` 引用 Core 和 CLI，保留核心构建、命令行和
+  本地事务工作流的回归测试。
 
 ## 处理流程
 
@@ -91,7 +87,7 @@ profile 根分区为 `features`、`dns`、`route`、`tuning`、`privacy`；`plat
 除引导文件路径的 `Profile` 外，`BOXFORGE_` 环境键必须映射真实配置路径；
 键名不区分大小写，`__` 分隔层级，标量与数组操作 JSON 都按目标类型严格校验。
 旧开关、未知键、重复键及不允许的 null 均拒绝。
-环境前缀校验由 CLI、Server 加载配置时执行，Core 只解析注入的 `IConfiguration`。
+环境前缀校验由 CLI 加载配置时执行，Core 只解析注入的 `IConfiguration`。
 普通宿主的同名业务节不会被当成旧 profile 数组；profile 文件和请求仍严格拒绝未知根字段。
 未提供覆盖时使用内置 profile；不提供隐私档位或 JSON Schema。
 
@@ -107,7 +103,7 @@ SHA-256：5 份 YAML × 3 个平台 × 8 种桌面 Tailscale、Android Tailscale
 （包括 alias 的每次展开，所有代理共享同一预算）。文本预算限制大型 scalar
 经重复 alias 展开后的总规模；它属于来源解析的资源约束，与缓存身份无关。
 映射和序列均按引用身份检查当前祖先链，循环引用在 schema 校验之前拒绝。
-这些失败由引擎包装为转换错误，API 返回 422；不会等待栈溢出或内存耗尽。
+这些失败由引擎包装为转换错误；不会等待栈溢出或内存耗尽。
 限制不是可配置项；预算内的 scalar 值和无循环共享引用保持来源值。
 
 ## 目录职责
@@ -116,17 +112,7 @@ SHA-256：5 份 YAML × 3 个平台 × 8 种桌面 Tailscale、Android Tailscale
 | --- | --- |
 | `src/BoxForge.Core/` | 引擎契约与实现、模型、解析、协议转换、构建、校验和序列化 |
 | `src/BoxForge.Cli/` | `Program`、命令行解析、本地文件工作流、日志、退出码和组合根 |
-| `src/BoxForge.Server/` | HTTP 端点、请求限制、Problem Details 错误映射和组合根 |
-| `Tests/BoxForge.Tests/` | 命令行、HTTP API、配置、构建器、顺序和校验器回归测试 |
-
-## HTTP API 边界
-
-Server 将 JSON 或单个 YAML 上传映射为 `ConversionRequest`，只在引擎完整返回
-`ConversionBundle` 后构建响应或 ZIP。`content` 不会再次格式化，ZIP entry
-路径由经过跨平台校验的配置名与固定平台目录组成。
-Server 不访问订阅 URL、不保存输入或结果；上传缓冲和 ZIP 构建均在内存中，
-同源页面不加载外部脚本或统计资源。当前没有鉴权和限流，不应直接公开服务。
-请求、大小限制、错误契约和安全头的完整定义见[HTTP API](http-api.md)。
+| `Tests/BoxForge.Tests/` | 命令行、配置、构建器、顺序和校验器回归测试 |
 
 ## 扩展代理协议
 
@@ -307,7 +293,7 @@ DNS server 与 outbound、endpoint、service 使用相同的 `JsonPolymorphic` /
 
 取消检查位于转换开始及各平台编译之前，不能视为解析、规划、发射全过程的有限工作预算。
 现有来源大小、展开数量和正则超时各自约束局部工作；不承诺统一的编译截止时间。
-官方 `check` 继续由验证脚本执行，不改变 CLI/Server 运行时依赖。
+官方 `check` 继续由验证脚本执行，不改变 CLI 运行时依赖。
 现有 120 份输出字节基线及协议拒绝测试共同守住兼容性。
 
 ### 诊断与校验归属
@@ -361,8 +347,7 @@ profile 的文件、宿主、直接覆盖与请求分别使用 `profile.file`、
 输入上下文，调用方应使用 `Diagnostics` 获取安全定位信息，而非公开完整异常。
 
 引擎沿用既有错误包装，不返回部分平台产物；CLI 保留整批输出丢弃行为。
-profile 无效仍按原有无效配置路径处理。HTTP 的 JSON 和 ZIP 接口继续使用通用
-`400`/`422` 响应，不公开诊断、节点名称、凭据或部分产物。
+profile 无效仍按原有无效配置路径处理。
 真正的未预期错误不通过捕获任意异常伪装成输入错误。
 完整目标 validator 独立复核标签重复、引用、字段合法性与 DNS／控制面地址族约束，不能以计划校验替代。
 计划层拒绝空或未初始化的 TUN 地址、非 Linux 的 multi_queue，以及控制面已限制 IPv4 时的冗余节点解析器；
@@ -411,7 +396,8 @@ VLESS/Trojan 只接受原生 TCP，旧传输选项作为不支持的来源语义
 
 `OutboundTuningPolicy` 在协议解析之后、目标发射之前，在节点 IR 副本中填入
 缺失的 `connect_timeout`、桌面 TCP keepalive 和 Hysteria2 hop/BBR 值。
-目标 DTO 不内置产品策略默认值。DNS 超时、容量、optimistic 超时和默认出口由 profile／计划经 emitter 显式写入；
+目标 DTO 不内置产品策略默认值。DNS 超时、容量和默认出口由 profile／计划经 emitter 显式写入，
+全局 optimistic 关闭也由 emitter 显式声明；
 反向映射、接口探测、日志和 TLS 启用等固定选择由相应构建器或 emitter 显式提供。
 可省略的目标字段使用 nullable 表示未指定，序列化不会为它们补值；显式 `false` 和 `0` 仍保留。
 `SingboxConfig` 中空的 DNS／route／log 对象及空集合初始化仅用于结构，不填充策略。
@@ -423,7 +409,7 @@ VLESS/Trojan 只接受原生 TCP，旧传输选项作为不支持的来源语义
 HY2 hop/BBR 值优先于调优。显式固定间隔不会补入调优的随机上限；显式带宽
 启用时不会注入 BBR profile（显式 profile 仍保留，核心仅在 BBR 模式使用）。
 
-协议相关职责集中在现有模块，不在 CLI 或 Server 中重复转换：
+协议相关职责集中在现有模块，不在 CLI 中重复转换：
 
 | 模块 | 职责 |
 | --- | --- |

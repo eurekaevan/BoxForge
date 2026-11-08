@@ -13,7 +13,7 @@ internal static class SingboxDnsEmitter
         {
             Timeout = plan.Timeout,
             CacheCapacity = plan.CacheCapacity,
-            Optimistic = new DnsOptimisticConfig { Enabled = true, Timeout = plan.OptimisticTimeout },
+            Optimistic = new DnsOptimisticConfig { Enabled = false },
             ReverseMapping = true,
             Strategy = plan.AddressFamily.ToDnsStrategy(),
             Final = plan.FinalResolver
@@ -140,7 +140,6 @@ internal static class SingboxDnsEmitter
         {
             RuleSet = Copy(pool.RuleSets),
             QueryType = queryType is null ? null : [queryType],
-            DisableOptimisticCache = true,
             Action = DnsRuleAction.Evaluate,
             Server = primary ? pool.PrimaryServer : pool.SecondaryServer,
             Tag = ResponseTag(pool, primary, queryType),

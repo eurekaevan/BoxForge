@@ -12,7 +12,6 @@ internal sealed record DnsPlan(
     string FinalResolver,
     string Timeout,
     uint CacheCapacity,
-    string OptimisticTimeout,
     DomainBlockProfile Block)
 {
     internal required ImmutableArray<DnsResolverPoolPlan> Pools { get; init; }

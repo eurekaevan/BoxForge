@@ -14,7 +14,6 @@ internal sealed record DnsProfile(
     DnsResolverSelectionMode SelectionMode,
     string Timeout,
     uint CacheCapacity,
-    string OptimisticTimeout,
     ImmutableArray<BuiltInProfile.Resolver> Resolvers);
 
 internal sealed record RouteProfile(

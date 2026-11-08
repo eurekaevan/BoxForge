@@ -9,8 +9,7 @@ BoxForge 不以完整复刻 Clash 配置为目标。它严格保留受支持且�
 配置不会被转换。支持范围与拒绝项见[协议验证边界](docs/protocol-validation.md)。
 
 CLI 会为 Windows、Android 和 Linux 批量生成平台化配置，并在
-整批成功后一次性替换输出目录；Server 则提供无状态的内存转换 API。
-两者共用同一个引擎与策略契约，分别服务自动化和 HTTP/Web 使用场景。
+整批成功后一次性替换输出目录，服务自动化和本地批处理场景。
 
 ## 特性
 
@@ -28,7 +27,6 @@ CLI 会为 Windows、Android 和 Linux 批量生成平台化配置，并在
 - 输入与平台按固定顺序处理，生成结果具有确定性
 - 生成内容未变时跳过；任意项失败时回滚整批输出
 - 稳定的退出码，可直接用于 CI 或其他自动化脚本
-- 提供最小化 ASP.NET Core HTTP API，请求和结果均不落盘
 
 ## 快速开始
 
@@ -70,60 +68,6 @@ BoxForge 支持 `generate` 和 `profile show --resolved`。后者可通过 `--pr
 选择覆盖文件并输出最终快照。缺少子命令、传入未知选项或重复选项时，程序会输出
 用法并立即结束，不会读取 stdin。
 
-## 无状态 HTTP API
-
-启动 Server：
-
-```bash
-dotnet run --project src/BoxForge.Server --urls http://127.0.0.1:5080
-```
-
-健康检查：
-
-```bash
-curl http://127.0.0.1:5080/healthz
-```
-
-将请求保存为 `request.json`：
-
-```json
-{
-  "name": "example",
-  "yaml": "proxies:\n  - name: test\n    type: ss\n    server: node.example.com\n    port: 443\n    cipher: aes-128-gcm\n    password: test-only",
-  "platforms": ["Android", "Linux", "Windows"]
-}
-```
-
-然后调用转换端点：
-
-```bash
-curl --request POST http://127.0.0.1:5080/api/v1/convert \
-  --header 'Content-Type: application/json' \
-  --data-binary @request.json
-```
-
-API 接收配置名、Clash YAML 原文、目标平台和可选的内联 profile，不读写本地配置
-目录，不接收订阅 URL，也不保存请求或结果。当前没有鉴权、限流
-和完整的公网部署防护，因此不应直接暴露到公网。
-
-打开 `http://127.0.0.1:5080/` 可使用 Server 自带的上传页面。页面会将
-单个 `.yaml` 或 `.yml` 文件发送到同源的
-`POST /api/v1/export`，并下载内存中生成的
-`boxforge-output.zip`。也可直接调用该端点：
-
-```bash
-curl --request POST http://127.0.0.1:5080/api/v1/export \
-  --form 'file=@clashConfigs/example.yaml' \
-  --form 'name=example' \
-  --form 'platforms=Android' \
-  --form 'platforms=Linux' \
-  --form 'platforms=Windows' \
-  --output boxforge-output.zip
-```
-
-无论选择一个还是多个平台，`/api/v1/export` 都返回 ZIP。
-上传文件上限为 2 MiB，整个请求体上限为 4 MiB。
-
 ## 输出与事务语义
 
 `--platform all` 会为每个输入生成以下结构：
@@ -136,7 +80,7 @@ singboxConfigs/
     └── Windows/config.json
 ```
 
-CLI 的配置名取输入文件名去掉扩展名，与 HTTP API 共用 Core 中的跨平台名称校验：
+CLI 的配置名取输入文件名去掉扩展名，使用 Core 中的跨平台名称校验：
 1～100 个 Unicode 标量值、最多 255 个 UTF-8 字节，拒绝 Windows 设备保留名、
 非法目录字符、控制字符和尾随空格或句点；不自动裁剪或重命名。任一名称无效时不发布整批输出。
 
@@ -170,18 +114,16 @@ SIGKILL、断电等异常中断可能留下同级 `.{输出目录名}.boxforge-{
 ## 运行时配置
 
 profile 按 `features`、`dns`、`route`、`tuning`、`privacy` 分区，
-`platforms` 为各平台的同结构稀疏覆盖。CLI 使用 `generate --profile profile.json`，
-Server 可在启动时加载同一文件，HTTP 请求也可提交内联 `profile`。
-对每个目标先合并内置、文件、统一环境的根值，再依来源顺序应用平台层，
-最后应用请求根值及请求自身的平台层；请求只影响本次转换。
+`platforms` 为各平台的同结构稀疏覆盖。CLI 使用 `generate --profile profile.json`。
+对每个目标先合并内置、文件、统一环境的根值，再依来源顺序应用各平台层。
 数组覆盖使用显式操作；整体替换、追加、完整值删除之外，支持按 `id`/`tag` 原位 `patch`、
 `set`、`remove_by_key` 和 `insert_before`，见[数组操作](docs/configuration.md#数组操作)。
 旧环境开关被拒绝。格式与合并规则见
-[统一 profile](docs/configuration.md#统一-profile)，请求格式见 [HTTP API](docs/http-api.md)。
+[统一 profile](docs/configuration.md#统一-profile)。
 `profile show --resolved` 输出各平台完整快照，供检查和追溯，不能直接作为差异覆盖重载。
 
 统一 `BOXFORGE_` 环境键与实际 profile 路径对应，`__` 分隔层级，键名不区分大小写。
-它们控制生成的 sing-box 配置，不改变 BoxForge Server 自身的监听地址。例如关闭
+它们控制生成的 sing-box 配置。例如关闭
 目标平台的 Tailscale（默认三个平台均启用 `on_demand`）：
 
 ```bash
@@ -206,7 +148,6 @@ TUN 地址、探测、连接和 DNS 参数可通过 profile 调整；字段与�
 
 - [版本与发布契约](docs/releases.md)：日期版本、兼容性与策略基线、发布和升级步骤
 - [架构与扩展](docs/architecture.md)：处理流程、目录职责、整批替换与失败回滚和校验边界
-- [HTTP API](docs/http-api.md)：JSON 转换、YAML/ZIP 导出、错误契约和安全边界
 - [配置参考](docs/configuration.md)：所有环境变量、默认值与 Tailscale 行为
 - [生成配置约定](docs/generated-config.md)：平台差异、缓存、节点和 rule-set 行为
 - [协议映射证据](docs/protocol-mappings.md)：数据表生成的来源/目标解释与固定源码证据

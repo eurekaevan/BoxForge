@@ -1,12 +1,11 @@
 # 配置参考
 
 BoxForge 使用 profile 描述功能、DNS、路由和连接调优。
-CLI 与 HTTP Server 共用配置规则；未提供覆盖时保留内置生成策略。
+CLI 使用以下配置规则；未提供覆盖时保留内置生成策略。
 旧环境开关不再兼容；不会静默忽略旧键。
 
 Core 的 profile 错误使用 `ProfileValidationException`（直接继承 `Exception`，应按具体类型捕获），
 其 `Diagnostics` 提供不含输入值的错误码和配置位置，详见[诊断与校验归属](architecture.md#诊断与校验归属)。
-HTTP 错误格式保持不变。
 
 ## 配置表
 
@@ -25,7 +24,6 @@ HTTP 错误格式保持不变。
 | `dns.selection_mode` | `"ParallelFastest"` | Android: `"SequentialFallback"` |
 | `dns.timeout` | `"3s"` | — |
 | `dns.cache_capacity` | `4096` | — |
-| `dns.optimistic_timeout` | `"6h"` | — |
 | `dns.resolvers` | 4 项（见内置 profile） | — |
 | `route.block.domain` | `[]` | — |
 | `route.block.domain_suffix` | `["mcdn.bilivideo.cn","mcdn.bilivideo.com","szbdyd.com","mountaintoys.cn"]` | — |
@@ -51,22 +49,21 @@ HTTP 错误格式保持不变。
 | `privacy` | `{}` | — |
 <!-- END GENERATED:profile-defaults -->
 
-API 启用后生成仅监听 `127.0.0.1:9090` 的 sing-box service 和 Dashboard，
-不改变 BoxForge HTTP Server 的监听地址。Dashboard 使用独立直连 HTTP client；
+sing-box API 启用后生成仅监听 `127.0.0.1:9090` 的 service 和 Dashboard。
+Dashboard 使用独立直连 HTTP client；
 远程规则集复用主组按 `route.main_default_region`（默认 `us`）规划的初始目标，
 绑定对应地区的默认 AUTO 或单个节点；无该地区节点时复用主组回退顺序。
 主组运行时切换不改变下载出口。控制面不开放远程监听或共享 secret。
 
 ## 统一 profile
 
-CLI 使用 `generate --profile profile.json`，Server 使用 `--profile profile.json`；
-也可通过 `BOXFORGE_Profile` 指定启动文件。显式参数优先，相对路径以进程工作目录为基准。
-Server 启动后使用不可变宿主快照；修改文件或环境变量需要重启。
-HTTP 请求只接受内联 JSON，不能指定服务器路径或 URL。
+CLI 使用 `generate --profile profile.json`；也可通过 `BOXFORGE_Profile` 指定启动文件。
+显式参数优先，相对路径以进程工作目录为基准。CLI 在单次进程内使用不可变宿主快照；
+修改文件或环境变量需要重新运行。
 
 Core 注册只读取传入的 `IConfiguration`，不会自行读取进程环境变量。
-CLI、Server 在宿主边界加载并校验独立的 `BOXFORGE_` 环境配置快照，直接传入 Core；
-无前缀环境变量、`appsettings*.json` 和其他 Server 启动参数不会参与 profile 解析。
+CLI 在宿主边界加载并校验独立的 `BOXFORGE_` 环境配置快照，直接传入 Core；
+无前缀环境变量和 `appsettings*.json` 不会参与 profile 解析。
 显式 `--profile` 路径仍优先于环境路径。嵌入其他宿主时，普通 `runtime`、`policies`、
 `regions`、`services`、`rule_sets`、`resolvers` 节不属于 BoxForge 配置，也不会作为遗留键拒绝；
 专用旧开关 `Tailscale`、`TailscaleEnabled`、`TailscaleAndroidEnabled`、`SingboxApi` 仍拒绝。
@@ -343,8 +340,8 @@ HTTPDNS 得到的 IP 只有在域名可由映射或嗅探取得时才能被域�
 
 ## resolver profile
 
-所有解析池仅使用正常 TTL 内的缓存；`dns.optimistic_timeout` 仍为兼容保留，
-但不会启用解析池的过期答案兜底。更换 DNS 配置会自动更换持久缓存命名空间。
+全局 `optimistic.enabled` 固定为 `false`，所有解析池仅使用正常 TTL 内的缓存，
+不保留或返回过期答案。更换 DNS 配置会自动更换持久缓存命名空间。
 
 `dns.resolvers` 使用完整实体 `id`、`server`、`server_name`。
 四个固定角色及 tag 如下。整体替换时须提供完整实体；局部修改使用按 `id` 选择的

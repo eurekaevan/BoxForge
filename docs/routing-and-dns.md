@@ -165,7 +165,7 @@ secondary `evaluate`；secondary 继承全局 `dns.timeout`（默认 `3s`）。�
 并行模式（默认 Linux/Windows）先连续执行两个 `evaluate`，让 primary 和 secondary 并行查询。
 A 和允许放行的 AAAA 查询分别进入独立的地址池，两条 `NOERROR` `respond`
 同时要求响应中有对应地址族的地址（A 为 `ip_cidr: 0.0.0.0/0`，AAAA 为 `::/0`）
-并启用 `race: true`。地址池禁用 optimistic 缓存，避免过期空答案抢赢。最快含地址的响应
+并启用 `race: true`。全局禁用 optimistic 缓存，避免过期空答案抢赢。最快含地址的响应
 立即提交，空 NOERROR、仅 CNAME 或仅附加区地址不能抢赢。所有 `respond`（包括非竞速后备）
 均通过唯一的 `match_response` 标签继承前面 evaluate 的分类范围，不重复携带 rule-set；
 地址竞速的 IP 条件也因此不会与域名 rule-set 形成 OR 组合。evaluate 和终止 SERVFAIL 仍保留范围条件。
@@ -198,11 +198,10 @@ SERVFAIL 或 REFUSED 时在本 pool 终止，服务和 CN 不会穿透到后一�
 结束。
 
 正常 TTL 缓存和 reverse mapping 保留；缓存容量来自 `dns.cache_capacity`
-（默认 4096）。所有解析池的 evaluate 均设置 `disable_optimistic_cache: true`，
-覆盖所有查询类型以及顺序、并行两种模式，避免过期空答、NXDOMAIN 或旧地址参与响应选择。
-缓存过期后需要等待上游，无法立即使用旧答案兜底；正常 TTL 内的正答和负答仍可复用。
-全局 optimistic 超时仍来自 `dns.optimistic_timeout`（默认 `6h`），为兼容已有 profile 保留输出，
-正常客户端查询在解析池中覆盖禁用；控制平面解析和 Tailscale split DNS 也禁用 optimistic 缓存。
+（默认 4096）。全局 `optimistic.enabled` 为 `false`，过期缓存不会保留或返回，
+解析池的 evaluate 不再逐查询重复该策略。缓存过期后需要等待上游，无法立即使用旧答案兜底；
+正常 TTL 内的正答和负答仍可复用。控制平面解析和 Tailscale split DNS 继续显式设置
+`disable_optimistic_cache: true`，作为防御性声明。
 
 生成校验器检查 `dns.final`、DNS 规则的 `server` 和 `rule_set` 引用。
 DNS `preferred_by` 引用 DNS server，而不是路由 outbound/endpoint；当前

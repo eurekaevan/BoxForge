@@ -35,7 +35,7 @@ internal static class DnsProfileBuilder
             resolvers, tailscaleEnabled,
             SingboxTags.ProxyCloudflareDns,
             settingsProfile.Dns.Timeout, settingsProfile.Dns.CacheCapacity,
-            settingsProfile.Dns.OptimisticTimeout, settingsProfile.Route.Block)
+            settingsProfile.Route.Block)
         {
             Pools = pools.ToImmutable()
         };

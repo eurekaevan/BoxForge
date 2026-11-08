@@ -16,8 +16,8 @@
 ## 平台差异
 
 平台默认值来自内嵌的 `Configuration/default-profile.json`，由配置文档
-`BoxForgeProfile` 叠加后解析成不可变的单平台 `ResolvedProfile`。CLI 的 `--profile`、
-`BOXFORGE_Profile` 和 HTTP 请求内联 profile 均可覆盖平台参数，具体优先级见配置参考。
+`BoxForgeProfile` 叠加后解析成不可变的单平台 `ResolvedProfile`。CLI 的 `--profile` 和
+`BOXFORGE_Profile` 均可覆盖平台参数，具体优先级见配置参考。
 用户显式提供的节点参数优先于平台调优默认值，Tailscale 启用状态仍由
 `features.tailscale.enabled` 及平台层覆盖控制；地址族使用有效 profile 的平台值。
 DNS 顺序回退的首选 `2s` 预算属于算法常量，不是 Android 的全局 DNS 超时。
@@ -108,15 +108,15 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
   `2s` 超时，失败后才查询备用；Linux/Windows 同时查询两家。A 和允许放行的
   AAAA 查询优先让含对应地址族地址的 `NOERROR` 响应竞速，双方均无地址时才依次接受
   primary、secondary 的空答或仅 CNAME 等 `NOERROR` 后备；非地址查询让最快的
-  `NOERROR` 胜出。所有解析池均禁用 optimistic 过期缓存，正常 TTL 缓存保留。
+  `NOERROR` 胜出。全局 `optimistic.enabled` 为 `false`，仅保留正常 TTL 缓存。
   NXDOMAIN 不参与竞速，双方没有 `NOERROR` 时依次接受 primary、secondary 的
   NXDOMAIN。两家都失败时明确返回 `SERVFAIL`；详见
   [DNS 分类与回退](routing-and-dns.md)。
 - DNS 默认使用 `Ipv4Only`，设置 `dns.strategy = ipv4_only` 并让全部客户端 AAAA 查询在规则链首部返回空 `NOERROR`；
   覆盖为 `DirectDualStack` 或 `Auto` 时不强制客户端 DNS 的解析地址族，先处理 Tailscale 查询，再在出口缺少公网 IPv6 地址或接口信息未知时对其余 AAAA 返回空答，
   有公网 IPv6 出口时，各解析池均保留 AAAA，真实目标的 IPv6 转发限制由路由负责。
-  缓存容量为 `4096`，启用 reverse mapping；所有正常客户端解析只使用 TTL 内的缓存。
-  全局 optimistic 超时仍由 `dns.optimistic_timeout` 输出，解析池通过逐查询禁用覆盖它。
+  缓存容量为 `4096`，启用 reverse mapping；全局 `optimistic.enabled` 为 `false`，
+  所有解析只使用 TTL 内的缓存。
 - 代理节点和 Tailscale endpoint 继承
   `route.default_domain_resolver`：直连固定 tag `dns-direct-alidns`（默认 AliDNS，可覆盖端点）、禁用 optimistic
   过期缓存。`Ipv4Only`、`Auto` 与 `DirectDualStack` 强制该 resolver 使用 `ipv4_only`，使节点连接、
@@ -126,7 +126,7 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
   Tailscale split DNS 也禁用 optimistic 过期缓存。
 - `experimental.cache_file` 使用 `cache.db`，并通过 `store_dns` 持久化 DNS 缓存。
 - `cache_id` 是配置名、平台小写标识与生成 DNS 模型的结构化 JSON 经 UTF-8 编码后的 SHA-256，输出 64 位小写十六进制。
-  配置名保留原样：CLI 使用输入文件名去掉扩展名，API 使用请求中的 `name`；
+  配置名保留原样：CLI 使用输入文件名去掉扩展名；
   平台标识为 `android`、`linux`、`windows`。
   同名、同平台且 DNS 配置相同时稳定复用缓存，节点增减、排序、改名或元数据变化均不改变缓存身份；
   不同平台隔离。配置改名会更换身份，不同目录中的同名配置仍共享身份。

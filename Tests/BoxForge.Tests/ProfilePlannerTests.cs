@@ -43,7 +43,7 @@ public sealed class ProfilePlannerTests
             {
              "route":{"main_default_region":"jp","sniff_timeout":"450ms","sniff_excluded_ports":{"replace":[25,465]}},
              "tuning":{"url_test_url":"https://probe.example.com/check","url_test_tolerance":80,"url_test_idle_timeout":"45m","url_test_interval":"2m"},
-             "dns":{"timeout":"7s","cache_capacity":8192,"optimistic_timeout":"3h"},
+             "dns":{"timeout":"7s","cache_capacity":8192},
              "platforms":{"Linux":{"tuning":{"connect_timeout":"9s","url_test_interval":"7m"},"route":{"tun_addresses":{"replace":["172.20.0.1/30","fd01::1/126"]}}}}}
             """));
         var profile = BoxForgeProfile.Load(source);
@@ -64,7 +64,6 @@ public sealed class ProfilePlannerTests
             Assert.That(groups.Probes.Select(probe => probe.Interval), Is.All.EqualTo("7m"));
             Assert.That(dns.Timeout, Is.EqualTo("7s"));
             Assert.That(dns.CacheCapacity, Is.EqualTo(8192));
-            Assert.That(dns.Optimistic!.Timeout, Is.EqualTo("3h"));
             Assert.That(route.Rules.Where(rule => rule.Action == RouteRuleAction.Sniff).Select(rule => rule.Timeout),
                 Is.All.EqualTo("450ms"));
             Assert.That(tcpSniff.Rules!.Single(rule => rule.Invert == true).Port, Is.EqualTo(new[] { 25, 465 }));
