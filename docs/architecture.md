@@ -237,7 +237,7 @@ evaluate 和终止 SERVFAIL 保留范围条件，地址正响应竞速的 IP 条
 内部 DNS 计划诊断使用 `plan.dns.pools[index]` 定位解析池；外部配置格式保持不变。
 结构与一致性校验不替代本地 DNS 行为测试，官方核心检查也仅证明目标配置的格式兼容性。
 
-`RouteProfileBuilder.Plan` 产生声明式 `RoutePlan`，保存地址族、Tailscale 和直连转发开关、
+`RouteProfileBuilder.Plan` 产生声明式 `RoutePlan`，保存地址族、Tailscale 开关、
 sniff 超时及排除端口、规则源、最终出口和控制面绑定。
 `ServiceRoutePlan` 明确保存服务 ID、规则集范围、出口及是否优先于国内路由；
 服务声明按优先服务和普通服务分组并保持各组原有顺序，不保存展开后的路由规则。
@@ -247,12 +247,10 @@ sniff 超时及排除端口、规则源、最终出口和控制面绑定。
 
 `SingboxRouteEmitter` 是唯一路由展开入口，固定生成 DNS 劫持、按地址族放置的单道守卫、
 Tailscale、私网直连、sniff、STUN/广告阻断、优先服务、国内直连、
-普通服务及最终代理侧 IPv6 守卫；TCP、UDP 的所有端口使用相同服务优先级。`use_direct_forwarding` 控制 bridge 伴随规则，
-伴随规则均指定 `preferred_by` 和 bridge 出口；同时启用 `auto_redirect` 时使用 bypass 动作，否则使用 route。
-同一规则兼顾内核 bypass 与普通 TUN 的 bridge 转发，进入 L4 后由门控跳过，保留原 DIRECT 匹配回退；不提供 bridge 故障自动重试。
-默认仅 Linux 同时启用两者；Windows 拒绝 `auto_redirect: true`，但允许单独启用 bridge。
-运行时 bridge 后端支持 Linux、root Android 和需要 WinDivert/管理员权限的 Windows x86/x64；
-Android auto_redirect 需 root 服务或 root shell，普通 VPN 客户端不支持。
+普通服务及最终代理侧 IPv6 守卫；TCP、UDP 的所有端口使用相同服务优先级。
+直连统一生成 `DIRECT` 路由，不生成额外的 L3 转发层。
+`auto_redirect` 仅影响 TUN 的内核重定向实现；Windows 拒绝 `auto_redirect: true`，
+Android 启用时需 root 服务或 root shell，普通 VPN 客户端不支持。
 必要阶段没有可关闭的独立布尔值，守卫顺序也不能通过计划字段重排。
 不再使用 `RouteRulePlan`、`HasSamePolicy` 或反射相等性测试；顺序和匹配范围直接由产物测试验证。
 DNS 与路由发射均为每次输出创建独立的规则、嵌套条件与列表；修改输出不会污染计划。
@@ -461,7 +459,7 @@ DIRECT 在 `Auto` 与 `DirectDualStack` 下仍使用 `prefer_ipv4`，Dashboard �
 `DualStack` 可显式启用，不按出口地址拒绝 IPv6。Android 不输出未实现的 strict_route；
 本地静态验证不等于真机防逃逸抓包或网络切换证明。
 
-- 路由规划器只保存高层声明，发射器按固定顺序及独立的转发/auto_redirect 开关展开 bridge/bypass 伴随规则，
+- 路由规划器只保存高层声明，发射器按固定顺序展开路由规则，
   [路由顺序](routing-and-dns.md#路由规则顺序)由产物行为测试检查。
   目标 validator 独立检查规则引用及平台字段，不重复推导计划策略。
 - 输入文件按文件名排序，平台顺序固定为 Android、Linux、Windows。

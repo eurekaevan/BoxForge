@@ -36,13 +36,6 @@ internal sealed class SingboxConfigBuilder : ISingboxConfigBuilder
                     ? SingboxResolverEmitter.Emit(resolver) : null
             })
         ];
-        if (plan.UseDirectForwarding)
-        {
-            orderedOutbounds.Add(new BridgeOutbound
-            {
-                Tag = SingboxTags.BridgeOutbound
-            });
-        }
         orderedOutbounds.Add(profiles.DirectOutbound with
         {
             DomainResolver = SingboxResolverEmitter.Emit(plan.DirectResolver)

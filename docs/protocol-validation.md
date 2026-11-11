@@ -179,7 +179,7 @@ TCP 会由 redirect 路径处理，因此需确认测试流量经过 TUN，不�
 ## 已知验证边界
 
 协议脚本仅验证 sing-box 与 sing-box 回环，配置检查不等于实时 DNS、tailnet、
-kernel bypass、Windows ZIP 解压、真实 TUN 或设备级 IPv6 防逃逸证明。
+kernel redirect、Windows ZIP 解压、真实 TUN 或设备级 IPv6 防逃逸证明。
 
 未经运行时证明的路径包括 VLESS/Trojan 原生 TCP/TLS、Reality、全部 uTLS 指纹
 和真实远程部署；TLS fixture 只提供生成配置与官方检查覆盖。

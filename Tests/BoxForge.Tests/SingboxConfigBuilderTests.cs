@@ -60,14 +60,13 @@ public sealed class SingboxConfigBuilderTests
     }
 
     [Test]
-    public void ForwardingAndAutoRedirectHaveIndependentOutputContracts(
+    public void AutoRedirectOnlyChangesTheTunOutput(
         [Values] TargetPlatform platform,
-        [Values(null, false, true)] bool? autoRedirect,
-        [Values] bool forwarding)
+        [Values(null, false, true)] bool? autoRedirect)
     {
         var overlay = JsonSerializer.SerializeToNode(new
         {
-            route = new { auto_redirect = autoRedirect, use_direct_forwarding = forwarding }
+            route = new { auto_redirect = autoRedirect }
         })!.AsObject();
         if (platform == TargetPlatform.Windows && autoRedirect == true)
         {
@@ -82,15 +81,8 @@ public sealed class SingboxConfigBuilderTests
         Assert.Multiple(() =>
         {
             Assert.That(config.Inbounds.Single().AutoRedirect, Is.EqualTo(autoRedirect));
-            Assert.That(config.Outbounds.OfType<BridgeOutbound>().Count(), Is.EqualTo(forwarding ? 1 : 0));
-            Assert.That(config.Route.Rules.Count(rule => rule.Outbound == SingboxTags.BridgeOutbound), Is.EqualTo(forwarding ? 3 : 0));
-            Assert.That(config.Route.Rules.Count(rule => rule.Action == RouteRuleAction.Bypass),
-                Is.EqualTo(forwarding && autoRedirect == true ? 3 : 0));
-            // The same gated target supports kernel bypass and ordinary TUN L3 forwarding,
-            // while excluding local destinations and connections already handled at L4.
-            Assert.That(config.Route.Rules.Where(rule => rule.Outbound == SingboxTags.BridgeOutbound)
-                .All(rule => rule.PreferredBy?.SequenceEqual([SingboxTags.BridgeOutbound]) == true
-                    && rule.Action == (autoRedirect == true ? RouteRuleAction.Bypass : RouteRuleAction.Route)), Is.True);
+            Assert.That(config.Outbounds.Any(outbound => outbound.Tag == "bridge-out"), Is.False);
+            Assert.That(config.Route.Rules.Any(rule => rule.Action == RouteRuleAction.Bypass), Is.False);
             Assert.That(config.Route.Rules.Count(rule => rule.Outbound == SingboxTags.DirectOutbound), Is.EqualTo(3));
             Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, profile.Settings.AddressFamily));
         });
@@ -196,8 +188,6 @@ public sealed class SingboxConfigBuilderTests
     [TestCase("dashboard_client", "IR007", "plan.services.dashboard.http_client")]
     [TestCase("endpoint", "IR004", "plan.dns.tailscale_enabled")]
     [TestCase("address_family", "IR001", "plan.dns.address_family")]
-    [TestCase("forwarding", "IR001", "plan.route.use_direct_forwarding")]
-    [TestCase("auto_redirect", "IR001", "plan.route.auto_redirect")]
     [TestCase("windows_auto_redirect", "IR008", "plan.tun.auto_redirect")]
     [TestCase("probe_interval", "IR001", "plan.groups.probes[0].interval")]
     [TestCase("bootstrap_resolver", "IR006", "plan.route.default_domain_resolver")]
@@ -231,8 +221,6 @@ public sealed class SingboxConfigBuilderTests
             "dashboard_client" => plan with { HttpClients = [plan.HttpClients[0]] },
             "endpoint" => plan with { TailscaleEndpointEnabled = false },
             "address_family" => plan with { Dns = plan.Dns with { AddressFamily = AddressFamilyPolicy.DualStack } },
-            "forwarding" => plan with { Route = plan.Route with { UseDirectForwarding = false } },
-            "auto_redirect" => plan with { Route = plan.Route with { AutoRedirect = false } },
             "windows_auto_redirect" => plan with { Platform = TargetPlatform.Windows },
             "probe_interval" => plan with { Groups = plan.Groups with { Probes = [plan.Groups.Probes[0] with { Interval = "9m" }] } },
             "bootstrap_resolver" => plan with
@@ -576,9 +564,6 @@ public sealed class SingboxConfigBuilderTests
 
         Inbound tunInbound = config.Inbounds.Single(inbound =>
             inbound.Tag == SingboxTags.TunInbound);
-        bool hasBridge = config.Outbounds
-            .OfType<BridgeOutbound>()
-            .Any(outbound => outbound.Tag == SingboxTags.BridgeOutbound);
         string json = new ConfigSerializer().Serialize(config);
         using JsonDocument document = JsonDocument.Parse(json);
         JsonElement serializedTun = document.RootElement.GetProperty("inbounds")
@@ -591,9 +576,6 @@ public sealed class SingboxConfigBuilderTests
             Assert.That(json, Does.Not.Contain("mixed-in"));
             Assert.That(tunInbound.Address,
                 Is.EqualTo(new[] { "172.19.0.1/30", "fd32:f937:4cd0:1::1/126" }));
-            Assert.That(
-                hasBridge,
-                Is.EqualTo(platform == TargetPlatform.Linux));
             Assert.That(json, Does.Not.Contain("\"set_system_proxy\""));
             Assert.That(json, Does.Not.Contain("\"platform\""));
             Assert.That(json, Does.Not.Contain("\"http_proxy\""));
@@ -610,9 +592,7 @@ public sealed class SingboxConfigBuilderTests
             }
             Assert.That(tunInbound.StrictRoute, Is.EqualTo(platform == TargetPlatform.Android ? (bool?)null : true));
             Assert.That(json.Contains("\"strict_route\"", StringComparison.Ordinal), Is.EqualTo(platform != TargetPlatform.Android));
-            Assert.That(
-                json.Contains("\"type\": \"bridge\"", StringComparison.Ordinal),
-                Is.EqualTo(platform == TargetPlatform.Linux));
+            Assert.That(json.Contains("\"type\": \"bridge\"", StringComparison.Ordinal), Is.False);
         });
 
         Assert.DoesNotThrow(() => new SingboxConfigValidator().Validate(config, AddressFamilyPolicy.Ipv4Only));

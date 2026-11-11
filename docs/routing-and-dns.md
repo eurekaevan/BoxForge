@@ -11,35 +11,24 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
 `DirectDualStack` 另在代理服务和最终出口之前拒绝 IPv6；Tailscale 阶段仅在
 对应平台启用 Tailscale 时生成规则；最终出口由 `route.final` 指定。
 
-启用 `route.use_direct_forwarding` 时使用显式阶段扩展 `DIRECT` 规则，默认仅 Linux 启用。
-私网地址在首个 `sniff` 前加入 `bridge-out` L3 forwarding；同时启用
-`auto_redirect: true` 时，同一伴随规则使用 `bypass` 动作，auto_redirect 流量从内核层直接绕过，普通 TUN 流量仍由 bridge 转发。需要嗅探或后续优先级才能判定的国内
-直连规则保持原位，只在 UDP sniff 后加入 `tun-in` + UDP 限定的 bridge/bypass
-伴随规则。每条原 `DIRECT` 都保留为回退。
-
 1. **`DnsHijack`**：以 `inbound: tun-in` 和 `port: 53` 兜底劫持 TCP/UDP DNS；主要入口是 TUN 自身的 `dns_mode: hijack`，不依赖后续 sniff 的协议识别。
-2. **`Ipv4OnlyGuard`**（在 `DnsHijack` 之后）：仅 `Ipv4Only` 生成，以全局 `ip_version: 6` 拒绝全部 IPv6，先于 Tailscale、DIRECT、bridge、bypass 和 sniff。
+2. **`Ipv4OnlyGuard`**（在 `DnsHijack` 之后）：仅 `Ipv4Only` 生成，以全局 `ip_version: 6` 拒绝全部 IPv6，先于 Tailscale、DIRECT 和 sniff。
 3. **`Tailscale`**（在 `Ipv4OnlyGuard` 之后）：启用 Tailscale 时，路由 endpoint 声明为首选的目标，优先于私网直连。
-4. **`PreSniffDirect`**（在 `Tailscale` 之后）：直连私网地址；启用直连转发时在 DIRECT 前展开 bridge 伴随规则，同时启用 auto_redirect 时将其动作改为 bypass。
+4. **`PreSniffDirect`**（在 `Tailscale` 之后）：直连私网地址。
 5. **`InterfaceIpv6Guard`**（在 `PreSniffDirect` 之后）：仅 `Auto` 与 `DirectDualStack` 生成，在默认出口缺少公网 IPv6 地址时拒绝尚未处理的 IPv6；Tailscale 和私网 IPv6 不受此条件限制。
 6. **`Sniff`**（在 `InterfaceIpv6Guard` 之后）：依次嗅探 TCP HTTP/TLS 与 UDP QUIC/STUN；TCP 跳过 FTP、SSH、MySQL、VNC 常用端口 21/22/3306/5900，继续后续路由，8080/8443 仍嗅探。
 7. **`BlockStunAndAds`**（在 `Sniff` 之后）：依次拒绝识别出的 UDP STUN 和 ads。
 8. **`ServiceIpv6Guard`**（在 `BlockStunAndAds` 之后）：仅 `DirectDualStack` 生成。仅对优先服务的规则集匹配 `ip_version: 6` 并拒绝。
 9. **`PriorityServices`**（在 `ServiceIpv6Guard` 之后）：按列表顺序路由 `precedes_domestic_routes: true` 的服务；该字段默认 `true`，内置 AI、Google、GitHub、Spotify、Games 均在此阶段。
-10. **`DomesticDirect`**（在 `PriorityServices` 之后）：依次按 cn、cnip 直连国内目标，TCP、UDP 的所有端口使用相同优先级；启用直连转发时的 DIRECT 伴随规则仅匹配 TUN UDP，TCP 仍由原 DIRECT 处理。
+10. **`DomesticDirect`**（在 `PriorityServices` 之后）：依次按 cn、cnip 直连国内目标，TCP、UDP 的所有端口使用相同优先级。
 11. **`OtherServiceIpv6Guard`**（在 `DomesticDirect` 之后）：仅 `DirectDualStack` 且存在 `false` 服务时生成，对未先命中国内直连的普通服务规则集拒绝 IPv6。
 12. **`OtherServices`**（在 `OtherServiceIpv6Guard` 之后）：按列表顺序路由显式设置 `precedes_domestic_routes: false` 的服务；默认没有此阶段。
 13. **`FinalIpv6Guard`**（在 `OtherServices` 之后）：仅 `DirectDualStack` 生成，以全局 `ip_version: 6` 拒绝所有未被前面规则直连的 IPv6，保证没有 IPv6 进入最终代理出口。
 14. **`FinalOutbound`**（在 `FinalIpv6Guard` 之后）：未命中规则的流量使用 route.final 的 🚀 PROXIES；不额外生成 catch-all 规则。
 
-`DomesticDirect` 阶段中的国内 `DIRECT` 在启用直连转发时会紧邻原规则之前生成 L3
-伴随规则：同时启用 auto_redirect 时使用 bypass，否则使用 route；两者均指定
-`preferred_by: bridge-out` 和 `outbound: bridge-out`。伴随规则仅匹配
-`tun-in` UDP，原规则的 rule-set、端口与服务顺序条件不变；TCP 在 sniff
-后不会尝试这些 L3 层，仍由原 `DIRECT` 处理。关闭或清空 auto_redirect 不会关闭 bridge，
-关闭直连转发时仅保留原 `DIRECT`。bridge 支持 Linux、root Android 和需要 WinDivert/管理员权限的
-Windows x86/x64；auto_redirect 只支持 Linux 与 root Android，普通 Android VPN 客户端不支持，Windows 启用时校验拒绝。
-DIRECT 是匹配阶段的回退，不会在 bridge 初始化或转发失败后自动重试。
+所有平台的直连规则统一使用 `DIRECT`，不生成额外的 L3 转发层。
+`route.auto_redirect` 仅控制 TUN 的内核重定向实现，不改变路由顺序或匹配结果；
+它支持 Linux 与 root Android，普通 Android VPN 客户端不支持，Windows 启用时校验拒绝。
 
 全平台仅生成 TUN inbound，不生成 mixed 入口及其专用的域名解析和解析后复检规则。
 

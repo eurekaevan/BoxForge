@@ -34,8 +34,8 @@ sing-box 自动修改系统 HTTP 代理设置。
 | 平台 | 默认差异 |
 | --- | --- |
 | Android | 不为代理出站写入 TCP keepalive |
-| Linux | `auto_redirect: true`、`multi_queue: true`；生成 `bridge-out` L3 直连和 kernel-level `bypass`；代理出站使用 `tcp_keep_alive: 1m` 和 `tcp_keep_alive_interval: 30s`；地区 AUTO 探测周期 `1m` |
-| Windows | 不生成 bridge 或 bypass，直连使用 `DIRECT`；代理出站使用 `tcp_keep_alive: 1m` 和 `tcp_keep_alive_interval: 30s`；地区 AUTO 探测周期 `1m` |
+| Linux | `auto_redirect: true`、`multi_queue: true`；代理出站使用 `tcp_keep_alive: 1m` 和 `tcp_keep_alive_interval: 30s`；地区 AUTO 探测周期 `1m` |
+| Windows | 直连使用 `DIRECT`；代理出站使用 `tcp_keep_alive: 1m` 和 `tcp_keep_alive_interval: 30s`；地区 AUTO 探测周期 `1m` |
 
 三个平台均不生成已弃用的 `stack`，由 sing-box 1.15 使用 sing-tun 自有 TCP/IP
 栈；也不生成 `mtu`，由 sing-box 按目标平台和运行环境采用默认值。
@@ -43,20 +43,14 @@ Linux 显式启用 `multi_queue: true`，允许自有栈通过 TUN 多队列并�
 Windows/Android 省略该字段。实际吞吐收益尚未验证，可按
 [对照实验](protocol-validation.md#linux-tun-多队列对照)方法测量。
 
-`route.use_direct_forwarding: true` 额外生成 sing-box 1.15 `bridge` outbound，默认仅 Linux 启用，并按规则可判定的
-阶段生成两类 L3 forwarding 层：
-
-- 私网地址在首个 `sniff` 之前预匹配；原 `DIRECT` 前增加带
-  `preferred_by: bridge-out` 门控、`outbound: bridge-out` 的 L3 伴随规则。
-- 国内 `cn` 和 `cnip`
-  在 UDP sniff 之后、各自原始规则所在位置增加仅匹配 `tun-in` + UDP 的 L3
-  route。它们不会被搬到 sniff 之前，因此仍保留原有服务优先级和域名嗅探语义。
+所有平台直连规则统一使用 `DIRECT`，不为私网或国内目标生成额外的 L3 转发层，
+也不生成 `bridge` outbound 或 `bypass` 规则。
 
 TUN 默认 IPv6 地址为 `fd32:f937:4cd0:1::1/126`，可通过 `route.tun_addresses` 替换。
 ULA 前缀由安全随机源一次生成并固定在内置 profile 中，三个平台共用；生成配置时不会重新随机选择。
 该默认值降低与其他软件通用前缀碰撞的概率，不保证每个部署唯一；与已有网络冲突时应在部署 profile 中覆盖。
 默认 `Ipv4Only` 为全局 IPv4：保留双栈 TUN 捕获，但 AAAA 查询无条件返回空答，
-单道 `ip_version: 6` 拒绝无条件生效，位于 DNS 劫持之后、任何 DIRECT、Tailscale、bridge、bypass 或 sniff 之前。
+单道 `ip_version: 6` 拒绝无条件生效，位于 DNS 劫持之后、任何 DIRECT、Tailscale 或 sniff 之前。
 直连和代理流量均不使用 IPv6，应用能否重试 IPv4 由应用自身决定。
 覆盖为 `DirectDualStack` 时代理流量仅 IPv4、直连流量保留 IPv6：
 先处理 Tailscale 和私网直连，再于 sniff 之前生成单道条件 IPv6 拒绝：
@@ -77,18 +71,10 @@ Android 依赖客户端提供当前默认物理接口和地址，尚未完成真
 `strategy: ipv4_only` 并禁用 optimistic cache。省略该字段的节点继承平台策略；
 `Ipv4Only`、`Auto`、`DirectDualStack` 下继承已有的全局控制面 IPv4 限制，不重复生成节点 resolver。其他 `ip-version` 值仍拒绝。
 
-每条 L3 伴随规则均保留 `preferred_by: bridge-out` 和 `outbound: bridge-out`：
-同时启用 `route.auto_redirect: true` 时使用 `bypass` 动作，否则使用 `route`。
-同一条 `bypass` 规则使 auto_redirect 流量从内核层直接绕过 sing-box，普通 TUN 流量则使用 bridge 做 L3 转发。
-`preferred_by` 门控排除本机地址，并在进入 L4 连接处理后跳过伴随规则。
-每条原 `DIRECT` 都原位保留作为匹配回退，覆盖 TCP 和 UDP sniff 需要更多数据等不能使用
-L3 forwarding 的情况；这不是 bridge 初始化或转发失败后自动重试 DIRECT 的故障回退。
-
-`use_direct_forwarding` 独立于 `auto_redirect`：关闭或清空后者仍可生成 bridge 与原 `DIRECT` 回退，不生成 bypass。
-bridge 支持 Linux、root Android 和 Windows x86/x64；Windows 需要 WinDivert 后端及管理员权限。
+`route.auto_redirect` 仅控制 TUN 的内核重定向实现，不改变路由规则或直连行为。
 `auto_redirect: true` 支持 Linux 和 root Android；Android 需要 root 服务或 root shell，普通 VPN 客户端不支持。
-Windows 的 `auto_redirect: true` 在 profile 校验时拒绝，但可单独启用 bridge。
-Windows、Android 默认不启用 bridge，且 `auto_redirect` 默认为 `null`。
+Windows 的 `auto_redirect: true` 在 profile 校验时拒绝。
+Windows、Android 默认 `auto_redirect` 为 `null`。
 
 三个平台默认生成 Tailscale endpoint，并启用 `on_demand: true`。启用时，
 `taildrop_directory` 来自有效平台 profile：默认 Android 使用

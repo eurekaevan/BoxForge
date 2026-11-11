@@ -38,7 +38,6 @@ Core 的 profile 错误使用 `ProfileValidationException`（直接继承 `Excep
 | `route.strict_route` | `true` | Android: `null` |
 | `route.auto_redirect` | `null` | Linux: `true` |
 | `route.multi_queue` | `null` | Linux: `true` |
-| `route.use_direct_forwarding` | `false` | Linux: `true` |
 | `tuning.connect_timeout` | `"5s"` | — |
 | `tuning.tcp_keep_alive` | `"1m"` | Android: `null` |
 | `tuning.tcp_keep_alive_interval` | `"30s"` | Android: `null` |
@@ -111,12 +110,9 @@ DNS 模式接受 `SequentialFallback` 或 `ParallelFastest`。超时和间隔必
 容差为 1–65535ms，默认 50ms；不接受 `0`，因为锁定核心会将它解释为默认 50ms，无法实现零容差。
 探测 URL 只接受不带用户信息和片段的 HTTP(S) URL。
 TUN 地址须包含规范格式的 IPv4 和 IPv6 CIDR，前缀长度不得包含前导零（如 `/030`）；`multi_queue: true` 仅支持 Linux。
-`route.auto_redirect: true` 支持 Linux 和 root Android，Windows 在 profile 校验时拒绝。
+`route.auto_redirect: true` 仅控制 TUN 的内核重定向实现，支持 Linux 和 root Android，Windows 在 profile 校验时拒绝。
 Android 需要 root 服务或 root shell，普通 VPN 客户端不支持该模式。
-`route.use_direct_forwarding` 独立控制 `bridge` 转发，支持 Linux、root Android，以及具备
-WinDivert 后端并以管理员权限运行的 Windows x86/x64；默认仅 Linux 启用。
-只有它与 `auto_redirect: true` 同时启用时才生成 `bypass`；关闭或清空 `auto_redirect`
-仍可保留 bridge 与原 `DIRECT` 回退。Windows、Android 的默认 `auto_redirect` 为 `null`、转发开关为 `false`。
+Windows、Android 的默认 `auto_redirect` 为 `null`。
 `route.sniff_excluded_ports` 仅排除 TCP 目标端口，不影响 UDP 的 QUIC/STUN 嗅探；
 端口为不重复的 1～65535 整数。`route.sniff_timeout` 是嗅探超时设置，不代表每条连接固定增加该时长。
 国内公网 IP（`cnip`）也在嗅探、STUN/广告拒绝和相应服务优先级之后匹配直连。
@@ -395,7 +391,6 @@ kebab-case，并按对象用途区分。默认地区组如下，地区覆盖可�
 | 类型 | 固定 tag |
 | --- | --- |
 | TUN inbound | `tun-in` |
-| L3 bridge outbound（启用 `use_direct_forwarding` 时） | `bridge-out` |
 | Tailscale endpoint / DNS | `tailscale`、`dns-tailscale` |
 | 直连 DNS | `dns-direct-alidns`、`dns-direct-alidns-secondary` |
 | 代理 DNS | `dns-proxy-google`、`dns-proxy-cloudflare` |

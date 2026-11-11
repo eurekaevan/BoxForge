@@ -18,7 +18,7 @@ internal static class RouteProfileBuilder
             return new RuleSetPlan(source.Tags, url, interval);
         }).ToArray();
         return new RoutePlan(settings.AddressFamily, settingsProfile.Features.Tailscale.Enabled,
-            settings.UseDirectForwarding, settings.AutoRedirect == true, SingboxTags.MainProxyGroup, HttpClientTags.RuleSetProxy,
+            SingboxTags.MainProxyGroup, HttpClientTags.RuleSetProxy,
             new DomainResolverPlan(SingboxTags.DirectAliDns, settings.AddressFamily.ForControlPlane(), true), ruleSets,
             settingsProfile.Route.SniffTimeout,
             settingsProfile.Route.SniffExcludedPorts,

@@ -36,7 +36,7 @@ internal static class SingboxRouteEmitter
                 Action = RouteRuleAction.Route,
                 Outbound = SingboxTags.TailscaleEndpoint
             });
-        AddDirect(new RouteRule { IpIsPrivate = true }, postSniff: false);
+        AddDirect(new RouteRule { IpIsPrivate = true });
         // Overlay and private IPv6 do not require a public IPv6 address on the default interface.
         if (plan.AddressFamily.UsesInterfaceGuard())
             rules.Add(new RouteRule
@@ -90,7 +90,7 @@ internal static class SingboxRouteEmitter
             });
         AddServices(priority: true);
         foreach (string scope in new[] { RuleSetTags.Cn, RuleSetTags.CnIp })
-            AddDirect(new RouteRule { RuleSet = [scope] }, postSniff: true);
+            AddDirect(new RouteRule { RuleSet = [scope] });
         AddServices(priority: false);
         if (plan.AddressFamily == AddressFamilyPolicy.DirectDualStack)
             rules.Add(new RouteRule { IpVersion = 6, Action = RouteRuleAction.Reject });
@@ -110,23 +110,7 @@ internal static class SingboxRouteEmitter
                 rules.Add(new RouteRule { RuleSet = [.. service.RuleSets], Action = RouteRuleAction.Route, Outbound = service.Outbound });
         }
 
-        void AddDirect(RouteRule matcher, bool postSniff)
-        {
-            // Each emitted rule owns its matcher collections, including forwarding variants.
-            if (plan.UseDirectForwarding)
-            {
-                rules.Add(matcher with
-                {
-                    RuleSet = matcher.RuleSet is null ? null : [.. matcher.RuleSet],
-                    Inbound = [SingboxTags.TunInbound],
-                    Network = postSniff ? ["udp"] : null,
-                    PreferredBy = [SingboxTags.BridgeOutbound],
-                    // A bypass needs the L3 target for TUN pre-match; preferred_by skips it at L4.
-                    Action = plan.AutoRedirect ? RouteRuleAction.Bypass : RouteRuleAction.Route,
-                    Outbound = SingboxTags.BridgeOutbound
-                });
-            }
+        void AddDirect(RouteRule matcher) =>
             rules.Add(matcher with { Action = RouteRuleAction.Route, Outbound = SingboxTags.DirectOutbound });
-        }
     }
 }

@@ -22,7 +22,7 @@ BoxForge 的 Core 和 CLI 共用配置生成契约。CLI 提供本地批量生�
 | Input | 读取 Clash/Mihomo YAML 的 `proxies`；支持 Trojan、VLESS、Hysteria2、Shadowsocks、AnyTLS 的已声明子集。任一无法安全映射的节点使引擎请求失败；不转换来源 rules/proxy-groups | [来源字段与 strict conversion](architecture.md#来源语义与调优优先级)、[字段与拒绝项](generated-config.md) |
 | Target | 最低支持与资格验证版本见下方自动生成的核心门禁；覆盖 Tailscale `on_demand` 与 Linux TUN `multi_queue`，不代表验证了所有后续版本或定制构建 | [验证边界](protocol-validation.md) |
 | CLI | `generate` 与 `profile show --resolved`；既有参数、退出码、三平台目录结构与整批事务替换语义保持稳定 | [CLI 契约](../README.md#输出与事务语义) |
-| Behavior | 默认 Ipv4Only 地址族及显式 DirectDualStack/DualStack/Auto、DNS/route 顺序、地区 selector/URLTest、平台 TUN/bridge、默认 Tailscale 与缺失字段 tuning 均是 BoxForge 策略 | [生成配置](generated-config.md)、[DNS 与路由](routing-and-dns.md)、[开关与默认值](configuration.md) |
+| Behavior | 默认 Ipv4Only 地址族及显式 DirectDualStack/DualStack/Auto、DNS/route 顺序、地区 selector/URLTest、平台 TUN、默认 Tailscale 与缺失字段 tuning 均是 BoxForge 策略 | [生成配置](generated-config.md)、[DNS 与路由](routing-and-dns.md)、[开关与默认值](configuration.md) |
 
 `ClashObject` 公开的类型化 Getter（`GetRequired*`、`GetString`、`GetRawString`、`GetInt`、
 `GetBool`、`GetNullableBool`、`GetObject`）已移除；原始容器仅提供字段存在性、原始值和只读枚举。

@@ -27,8 +27,7 @@ internal sealed record RouteProfile(
     ImmutableArray<string> TunAddresses,
     bool? StrictRoute,
     bool? AutoRedirect,
-    bool? MultiQueue,
-    bool UseDirectForwarding);
+    bool? MultiQueue);
 
 internal sealed record DomainBlockProfile(
     ImmutableArray<string> Domain,

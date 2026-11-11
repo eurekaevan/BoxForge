@@ -29,7 +29,7 @@ internal static class ConfigurationPlanner
         };
         if (apiEnabled)
             clients.Add(new HttpClientPlan(HttpClientTags.DashboardDirect, null, new DomainResolverPlan(SingboxTags.DirectAliDns, platform.AddressFamily, true)));
-        return new ConfigurationPlan(settings.Platform, platform.AddressFamily, platform.DnsSelectionMode, platform.UseDirectForwarding, platform.UrlTestInterval,
+        return new ConfigurationPlan(settings.Platform, platform.AddressFamily, platform.DnsSelectionMode, platform.UrlTestInterval,
             new TunPlan(platform.TunAddresses, platform.AutoRedirect, platform.MultiQueue, platform.StrictRoute),
             nodes.Nodes.Select(node => OutboundTuningPolicy.Apply(node, platform)).ToArray(),
             groups, dns, route, settings.Features.Tailscale.Enabled, platform.TaildropDirectory, apiEnabled, clients)

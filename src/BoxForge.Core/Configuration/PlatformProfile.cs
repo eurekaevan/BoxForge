@@ -9,7 +9,6 @@ public sealed record PlatformProfile
     public required bool? StrictRoute { get; init; }
     public required bool? AutoRedirect { get; init; }
     public required bool? MultiQueue { get; init; }
-    public required bool UseDirectForwarding { get; init; }
     public required string? TcpKeepAlive { get; init; }
     public required string? TcpKeepAliveInterval { get; init; }
     public required string ConnectTimeout { get; init; }

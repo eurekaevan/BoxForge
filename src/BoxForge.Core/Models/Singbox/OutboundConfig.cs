@@ -6,7 +6,6 @@ namespace BoxForge.Models.Singbox;
 [JsonDerivedType(typeof(SelectorOutbound), typeDiscriminator: "selector")]
 [JsonDerivedType(typeof(UrlTestOutbound), typeDiscriminator: "urltest")]
 [JsonDerivedType(typeof(DirectOutbound), typeDiscriminator: "direct")]
-[JsonDerivedType(typeof(BridgeOutbound), typeDiscriminator: "bridge")]
 [JsonDerivedType(typeof(VlessOutbound), typeDiscriminator: "vless")]
 [JsonDerivedType(typeof(TrojanOutbound), typeDiscriminator: "trojan")]
 [JsonDerivedType(typeof(Hysteria2Outbound), typeDiscriminator: "hysteria2")]
@@ -38,8 +37,6 @@ public record DirectOutbound : Outbound
 {
     [JsonPropertyName("domain_resolver")] public DnsResolverOptions? DomainResolver { get; init; }
 }
-
-public record BridgeOutbound : Outbound;
 
 public abstract record ProxyOutbound : Outbound
 {

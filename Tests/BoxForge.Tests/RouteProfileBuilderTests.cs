@@ -84,8 +84,6 @@ public sealed class RouteProfileBuilderTests
         {
             Assert.That(JsonSerializer.Serialize(SingboxRouteEmitter.Emit(plan)), Is.EqualTo(expected));
             Assert.That(plan.AddressFamily, Is.EqualTo(addressFamily));
-            Assert.That(plan.UseDirectForwarding, Is.EqualTo(settings.UseDirectForwarding));
-            Assert.That(plan.AutoRedirect, Is.EqualTo(settings.AutoRedirect == true));
             Assert.That(plan.TailscaleEnabled, Is.True);
             Assert.That(RouteProfileBuilder.Plan(profile.Resolve(platform)).TailscaleEnabled, Is.True);
             Assert.That(RouteProfileBuilder.Plan(changedProfile.Resolve(platform)).TailscaleEnabled, Is.False);
@@ -157,7 +155,7 @@ public sealed class RouteProfileBuilderTests
     }
 
     [Test]
-    public void EmissionExpandsSniffPriorityAndPlatformForwardingIntent()
+    public void EmissionExpandsSniffAndServicePriority()
     {
         RoutePlan plan = CreatePlan(TargetPlatform.Linux);
         RouteConfig route = SingboxRouteEmitter.Emit(plan);
@@ -187,11 +185,11 @@ public sealed class RouteProfileBuilderTests
             Assert.That(sniff[1].Network, Is.EqualTo(new[] { "udp" }));
             Assert.That(direct.Select(rule => rule.Action), Is.EqualTo(new RouteRuleAction?[]
             {
-                RouteRuleAction.Bypass, RouteRuleAction.Route
+                RouteRuleAction.Route
             }));
             Assert.That(direct.Select(rule => rule.Outbound), Is.EqualTo(new string?[]
             {
-                SingboxTags.BridgeOutbound, SingboxTags.DirectOutbound
+                SingboxTags.DirectOutbound
             }));
             Assert.That(plan.Services.Where(service => service.PrecedesDomesticRoutes).Select(service => service.Outbound),
                 Is.EqualTo(settings.Services.Where(service => service.PrecedesDomesticRoutes).Select(service => service.Name)));
@@ -274,9 +272,8 @@ public sealed class RouteProfileBuilderTests
             Assert.That(route.Rules[finalGuardIndex].RuleSet, Is.Null);
             Assert.That(finalGuardIndex, Is.GreaterThan(lastDirectIndex));
             Assert.That(route.Final, Is.EqualTo(SingboxTags.MainProxyGroup));
-            // Direct, bridge and bypass rules must never be narrowed to IPv4.
-            Assert.That(route.Rules.Where(rule => rule.Action == RouteRuleAction.Bypass
-                || rule.Outbound is SingboxTags.DirectOutbound or SingboxTags.BridgeOutbound)
+            // Direct rules must never be narrowed to IPv4.
+            Assert.That(route.Rules.Where(rule => rule.Outbound == SingboxTags.DirectOutbound)
                 .All(rule => rule.IpVersion is null && !ContainsIpv6Condition(rule)), Is.True);
             Assert.That(route.DefaultDomainResolver!.Strategy, Is.EqualTo(DnsStrategy.Ipv4Only));
         });
@@ -302,8 +299,7 @@ public sealed class RouteProfileBuilderTests
         RouteRule direct = rules.Single(rule => rule.Outbound == SingboxTags.DirectOutbound
             && rule.RuleSet?.SequenceEqual([scope]) == true);
         var domestic = rules.Where(rule => rule.RuleSet?.SequenceEqual([scope]) == true
-            && (rule.Action == RouteRuleAction.Bypass
-                || rule.Outbound is SingboxTags.DirectOutbound or SingboxTags.BridgeOutbound)).ToArray();
+            && rule.Outbound == SingboxTags.DirectOutbound).ToArray();
         int guard = rules.FindIndex(rule => rule.Action == RouteRuleAction.Reject
             && rule.IpVersion == 6 && rule.RuleSet?.Contains(scope) == true);
         int service = rules.FindIndex(rule => rule.Outbound == games && rule.RuleSet?.Contains(scope) == true);
@@ -375,74 +371,20 @@ public sealed class RouteProfileBuilderTests
         Assert.That(rules[^1].IpVersion, Is.Null);
     }
 
-    [Test]
-    public void DirectForwardingLayersRespectExplicitPreAndPostSniffPhases()
+    [TestCase(TargetPlatform.Android)]
+    [TestCase(TargetPlatform.Linux)]
+    [TestCase(TargetPlatform.Windows)]
+    public void EveryPlatformUsesPlainDirectRulesWithoutForwardingLayers(TargetPlatform platform)
     {
-        RouteConfig android = SingboxRouteEmitter.Emit(CreatePlan(TargetPlatform.Android));
-        RouteConfig windows = SingboxRouteEmitter.Emit(CreatePlan(TargetPlatform.Windows));
-        RouteConfig linux = SingboxRouteEmitter.Emit(CreatePlan(TargetPlatform.Linux));
-
-        List<RouteRule> androidDirect = DirectRules(android);
-        List<RouteRule> preSniffDirect = PreSniffDirectRules(android);
-        List<RouteRule> windowsBridge = BridgeRules(windows);
-        List<RouteRule> linuxBridge = BridgeRules(linux);
-        List<RouteRule> linuxBypass = linux.Rules
-            .Where(rule => rule.Action == RouteRuleAction.Bypass)
-            .ToList();
-
+        RouteConfig route = SingboxRouteEmitter.Emit(CreatePlan(platform));
+        RouteRule[] direct = [.. route.Rules.Where(rule => rule.Outbound == SingboxTags.DirectOutbound)];
         Assert.Multiple(() =>
         {
-            Assert.That(androidDirect, Has.Count.EqualTo(3));
-            Assert.That(preSniffDirect, Has.Count.EqualTo(1));
-            Assert.That(
-                preSniffDirect.Any(rule => rule.IpIsPrivate == true),
-                Is.True);
-            Assert.That(DirectRules(windows), Has.Count.EqualTo(androidDirect.Count));
-            Assert.That(DirectRules(linux), Has.Count.EqualTo(androidDirect.Count));
-            Assert.That(windowsBridge, Is.Empty);
-            Assert.That(linuxBridge, Has.Count.EqualTo(3));
-            Assert.That(linuxBypass, Has.Count.EqualTo(3));
-            Assert.That(
-                windows.Rules.Any(rule => rule.Action == RouteRuleAction.Bypass),
-                Is.False);
-            Assert.That(
-                android.Rules.Any(rule =>
-                    rule.Action == RouteRuleAction.Bypass
-                    || rule.Outbound == SingboxTags.BridgeOutbound),
-                Is.False);
-            Assert.That(windows.Rules.Any(ContainsBridgePreferenceGate), Is.False);
-            Assert.That(windows.Rules.Select(MatcherKey),
-                Is.EqualTo(android.Rules.Select(MatcherKey)));
-            Assert.That(
-                linuxBridge.All(ContainsBridgePreferenceGate),
-                Is.True);
-            Assert.That(
-                linuxBridge.All(ContainsTunPreMatchGate),
-                Is.True);
-            Assert.That(
-                linuxBypass.All(ContainsTunPreMatchGate),
-                Is.True);
-            Assert.That(linuxBypass, Is.EqualTo(linuxBridge));
-            Assert.That(
-                linuxBridge.Count(rule => linux.Rules.IndexOf(rule)
-                    < FindFirstSniffIndex(linux)),
-                Is.EqualTo(1));
-            Assert.That(
-                linuxBridge.Count(rule => linux.Rules.IndexOf(rule)
-                    > FindSniffIndex(linux, "udp")),
-                Is.EqualTo(2));
-            Assert.That(
-                linuxBypass.Count(rule => linux.Rules.IndexOf(rule)
-                    > FindSniffIndex(linux, "udp")),
-                Is.EqualTo(2));
-            Assert.That(
-                linuxBridge.Where(rule => linux.Rules.IndexOf(rule)
-                    > FindSniffIndex(linux, "udp"))
-                    .All(rule => ContainsNetwork(rule, "udp")),
-                Is.True);
+            Assert.That(direct, Has.Length.EqualTo(3));
+            Assert.That(direct.All(rule => rule.Action == RouteRuleAction.Route), Is.True);
+            Assert.That(route.Rules.Any(rule => rule.Action == RouteRuleAction.Bypass), Is.False);
+            Assert.That(route.Rules.Any(rule => rule.PreferredBy is not null), Is.False);
         });
-
-        AssertDirectLayerOrder(linux);
     }
 
     [TestCase(TargetPlatform.Android)]
@@ -840,122 +782,12 @@ public sealed class RouteProfileBuilderTests
             dns = new { address_family = addressFamily.ToString() }
         })!.AsObject()).Resolve(platform));
 
-    private static List<RouteRule> DirectRules(RouteConfig route) =>
-        route.Rules.Where(rule =>
-            rule.Action == RouteRuleAction.Route
-            && rule.Outbound == SingboxTags.DirectOutbound).ToList();
-
-    private static List<RouteRule> BridgeRules(RouteConfig route) =>
-        route.Rules.Where(rule =>
-            rule.Action is RouteRuleAction.Route or RouteRuleAction.Bypass
-            && rule.Outbound == SingboxTags.BridgeOutbound).ToList();
-
-    private static bool SupportsTunPreMatch(RouteRule rule) =>
-        rule.Inbound == null
-        || rule.Inbound.Contains(SingboxTags.TunInbound);
-
-    private static bool ContainsBridgePreferenceGate(RouteRule rule) =>
-        rule.PreferredBy?.SequenceEqual([SingboxTags.BridgeOutbound]) == true
-        || rule.Rules?.Any(ContainsBridgePreferenceGate) == true;
-
-    private static bool ContainsTunPreMatchGate(RouteRule rule) =>
-        rule.Inbound?.SequenceEqual([SingboxTags.TunInbound]) == true
-        || rule.Rules?.Any(ContainsTunPreMatchGate) == true;
-
-    private static string MatcherKey(RouteRule rule)
-    {
-        return string.Join('|',
-            rule.Type,
-            rule.Mode,
-            rule.IpVersion,
-            Join(rule.Protocol),
-            Join(rule.Port),
-            Join(rule.Network),
-            Join(rule.RuleSet),
-            Join(rule.IpCidr),
-            rule.IpIsPrivate,
-            rule.Invert,
-            string.Join(';', rule.Rules?.Select(MatcherKey) ?? []));
-    }
-
-    [Test]
-    public void BridgeOnlyForwardingPreservesMatchersAndRuleOrder()
-    {
-        RouteConfig route = SingboxRouteEmitter.Emit(CreatePlan(TargetPlatform.Linux) with { AutoRedirect = false });
-        Assert.That(route.Rules.Any(rule => rule.Action == RouteRuleAction.Bypass), Is.False);
-        AssertDirectLayerOrder(route, bypassEnabled: false);
-    }
-
-    private static void AssertDirectLayerOrder(RouteConfig route, bool bypassEnabled = true)
-    {
-        int udpSniffIndex = FindSniffIndex(route, "udp");
-        for (var index = 0; index < route.Rules.Count; index++)
-        {
-            RouteRule direct = route.Rules[index];
-            if (!IsForwardingEligibleDirect(direct))
-            {
-                continue;
-            }
-
-            bool postUdpSniff = index > udpSniffIndex;
-            RouteRule bridge = route.Rules[index - 1];
-            Assert.Multiple(() =>
-            {
-                Assert.That(bridge.Action, Is.EqualTo(bypassEnabled ? RouteRuleAction.Bypass : RouteRuleAction.Route));
-                Assert.That(
-                    bridge.Outbound,
-                    Is.EqualTo(SingboxTags.BridgeOutbound));
-                AssertForwardingMatcher(
-                    bridge,
-                    direct,
-                    postUdpSniff);
-            });
-        }
-    }
-
-    private static bool IsForwardingEligibleDirect(RouteRule rule) =>
-        rule.Action == RouteRuleAction.Route
-        && rule.Outbound == SingboxTags.DirectOutbound;
-
-    private static void AssertForwardingMatcher(
-        RouteRule forwarding,
-        RouteRule direct,
-        bool postUdpSniff)
-    {
-        Assert.That(direct.Type, Is.Null);
-        RouteRule normalized = forwarding with
-        {
-            Inbound = direct.Inbound,
-            Network = direct.Network,
-            PreferredBy = direct.PreferredBy
-        };
-        Assert.That(MatcherKey(normalized), Is.EqualTo(MatcherKey(direct)));
-
-        Assert.That(ContainsTunPreMatchGate(forwarding), Is.True);
-        Assert.That(ContainsBridgePreferenceGate(forwarding), Is.True);
-        Assert.That(
-            ContainsNetwork(forwarding, "udp"),
-            Is.EqualTo(postUdpSniff || direct.Network?.Contains("udp") == true));
-    }
-
     private static bool ContainsNetwork(RouteRule rule, string network) =>
         rule.Network?.Contains(network) == true
         || rule.Rules?.Any(child => ContainsNetwork(child, network)) == true;
 
-    private static List<RouteRule> PreSniffDirectRules(RouteConfig route) =>
-        route.Rules.TakeWhile(rule => rule.Action != RouteRuleAction.Sniff)
-            .Where(rule =>
-                rule.Type == null
-                && rule.Action == RouteRuleAction.Route
-                && rule.Outbound == SingboxTags.DirectOutbound
-                && SupportsTunPreMatch(rule))
-            .ToList();
-
     private static int FindFirstSniffIndex(RouteConfig route) =>
         route.Rules.FindIndex(rule => rule.Action == RouteRuleAction.Sniff);
-
-    private static string Join<T>(IEnumerable<T>? values) =>
-        values == null ? string.Empty : string.Join(',', values);
 
     private static int FindSniffIndex(RouteConfig route, string network) =>
         route.Rules.FindIndex(rule =>

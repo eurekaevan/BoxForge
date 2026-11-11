@@ -27,7 +27,6 @@ public sealed class ResolvedProfile
             StrictRoute = Route.StrictRoute,
             AutoRedirect = Route.AutoRedirect,
             MultiQueue = Route.MultiQueue,
-            UseDirectForwarding = Route.UseDirectForwarding,
             TunAddresses = Route.TunAddresses,
             ConnectTimeout = Tuning.ConnectTimeout,
             TcpKeepAlive = Tuning.TcpKeepAlive,
@@ -106,7 +105,6 @@ public sealed class ResolvedProfile
         {
             SingboxTags.MainProxyGroup,
             SingboxTags.DirectOutbound,
-            SingboxTags.BridgeOutbound,
             SingboxTags.TailscaleEndpoint,
             SingboxTags.TailscaleDns,
             SingboxTags.DirectAliDns,

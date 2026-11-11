@@ -8,8 +8,6 @@ namespace BoxForge.Models.Intermediate;
 internal sealed record RoutePlan(
     AddressFamilyPolicy AddressFamily,
     bool TailscaleEnabled,
-    bool UseDirectForwarding,
-    bool AutoRedirect,
     string FinalOutbound,
     string DefaultHttpClient,
     DomainResolverPlan DefaultDomainResolver,

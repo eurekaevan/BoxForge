@@ -18,8 +18,7 @@ CLI 会为 Windows、Android 和 Linux 批量生成平台化配置，并在
 - 自动生成地区 URLTest AUTO、人工 selector、DNS、路由规则和远程 rule-set
 - 默认 `Ipv4Only` 地址族策略（全局 IPv4）：AAAA 返回空答、IPv6 目标在所有 DIRECT 和代理路由之前被拒绝，TUN 仍保留双栈捕获地址
 - 可显式选择 `DirectDualStack`（代理流量仅 IPv4、直连流量保留 IPv6）、`Auto` 或 `DualStack`；`Auto` 与 `DirectDualStack` 按地址存在性判断，不探测公网可达性，Android 依赖客户端提供接口信息
-- Linux 为 sniff 前快路径及 sniff 后 UDP 国内直连提供 `bridge` L3
-  forwarding，并优先使用 `auto_redirect` kernel-level `bypass`；Windows 使用普通 DIRECT
+- Linux 默认启用 TUN `auto_redirect`；所有平台直连统一使用普通 `DIRECT`
 - 默认生成 sing-box 内置 Tailscale endpoint，支持按需连接、MagicDNS、子网路由和 Taildrop
 - 可选仅监听本机的 sing-box API 与 Dashboard，默认不生成
 - 提供不依赖文件系统的 `IBoxForgeEngine` 内存转换边界

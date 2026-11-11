@@ -258,10 +258,8 @@ public sealed class ProfileConfigurationTests
             Assert.That(tun.TryGetProperty("strict_route", out _), Is.False);
             Assert.That(tun.TryGetProperty("auto_redirect", out _), Is.False);
             Assert.That(tun.TryGetProperty("multi_queue", out _), Is.False);
-            Assert.That(document.RootElement.GetProperty("route").GetProperty("rules").EnumerateArray()
-                .Any(rule => rule.TryGetProperty("action", out var action) && action.GetString() == "bypass"), Is.False);
             Assert.That(document.RootElement.GetProperty("outbounds").EnumerateArray()
-                .Any(outbound => outbound.GetProperty("type").GetString() == "bridge"), Is.True);
+                .Any(outbound => outbound.GetProperty("type").GetString() == "bridge"), Is.False);
         });
     }
 
@@ -905,7 +903,6 @@ public sealed class ProfileConfigurationTests
     [TestCase("netflix_{tag}")]
     [TestCase("-netflix")]
     [TestCase("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
-    [TestCase("bridge-out")]
     [TestCase("tun-in")]
     [TestCase("http-ruleset-proxy")]
     [TestCase("response-global-primary-a")]
@@ -1124,7 +1121,7 @@ public sealed class ProfileConfigurationTests
                           "Windows":{"dns":{"selection_mode":"SequentialFallback"}}}}
             """);
         var patch = JsonNode.Parse("""
-            {"route":{"strict_route":false,"auto_redirect":false,"multi_queue":false,"use_direct_forwarding":false},
+            {"route":{"strict_route":false,"auto_redirect":false,"multi_queue":false},
              "features":{"tailscale":{"taildrop_directory":"CustomTaildrop"}},
              "tuning":{"tcp_keep_alive":"7m","tcp_keep_alive_interval":"17s","url_test_interval":"7m"}}
             """)!;

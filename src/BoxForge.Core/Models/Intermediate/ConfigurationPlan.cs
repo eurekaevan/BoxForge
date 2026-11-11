@@ -8,7 +8,6 @@ internal sealed record ConfigurationPlan(
     TargetPlatform Platform,
     AddressFamilyPolicy AddressFamily,
     DnsResolverSelectionMode SelectionMode,
-    bool UseDirectForwarding,
     string ProbeInterval,
     TunPlan Tun,
     IReadOnlyList<ProxyNode> Nodes,
@@ -35,10 +34,6 @@ internal sealed record ConfigurationPlan(
             diagnostics.Add(new("IR001", "plan.route.address_family", "路由地址族必须与平台策略一致。"));
         if (Dns.SelectionMode != SelectionMode)
             diagnostics.Add(new("IR001", "plan.dns.selection_mode", "DNS 选择模式必须与平台策略一致。"));
-        if (Route.UseDirectForwarding != UseDirectForwarding)
-            diagnostics.Add(new("IR001", "plan.route.use_direct_forwarding", "直连转发必须与平台策略一致。"));
-        if (Route.AutoRedirect != (Tun.AutoRedirect == true))
-            diagnostics.Add(new("IR001", "plan.route.auto_redirect", "路由重定向必须与 TUN 策略一致。"));
         if (Platform == TargetPlatform.Windows && Tun.AutoRedirect == true)
             diagnostics.Add(new("IR008", "plan.tun.auto_redirect", "auto_redirect 不支持 Windows。"));
         if (Platform != TargetPlatform.Linux && Tun.MultiQueue == true)
@@ -59,8 +54,6 @@ internal sealed record ConfigurationPlan(
         targets.UnionWith(Groups.Regions.Select(group => group.Name));
         targets.UnionWith(Groups.Probes.Select(group => group.Name));
         targets.UnionWith(Groups.Services.Select(group => group.Name));
-        if (UseDirectForwarding)
-            targets.Add(SingboxTags.BridgeOutbound);
         if (TailscaleEndpointEnabled)
             targets.Add(SingboxTags.TailscaleEndpoint);
         if (Dns.TailscaleEnabled && !TailscaleEndpointEnabled)

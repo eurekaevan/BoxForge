@@ -21,8 +21,7 @@
     "Linux": {
       "route": {
         "auto_redirect": true,
-        "multi_queue": true,
-        "use_direct_forwarding": true
+        "multi_queue": true
       }
     },
     "Windows": {
@@ -205,8 +204,7 @@
     ],
     "strict_route": true,
     "auto_redirect": null,
-    "multi_queue": null,
-    "use_direct_forwarding": false
+    "multi_queue": null
   },
   "tuning": {
     "connect_timeout": "5s",
