@@ -122,7 +122,7 @@ internal sealed class SingboxConfigValidator : ISingboxConfigValidator
             "route.default_domain_resolver.server",
             "引用了不存在的 DNS server。",
             context.Diagnostics);
-        if (context.AddressFamily.ForControlPlane() == AddressFamilyPolicy.Ipv4Only
+        if (context.AddressFamily == AddressFamilyPolicy.Ipv4Only
             && route.DefaultDomainResolver?.Strategy != DnsStrategy.Ipv4Only)
         {
             context.Diagnostics.Add(new ConfigDiagnostic(
@@ -162,10 +162,7 @@ internal sealed class SingboxConfigValidator : ISingboxConfigValidator
                 context.Diagnostics);
             if (clients[index].DomainResolver is { } resolver)
             {
-                bool controlPlane = clients[index].Tag == config.Route.DefaultHttpClient
-                    || config.Route.RuleSet.Any(ruleSet => ruleSet.HttpClient == clients[index].Tag);
-                var family = controlPlane ? context.AddressFamily.ForControlPlane() : context.AddressFamily;
-                if (family == AddressFamilyPolicy.Ipv4Only && resolver.Strategy != DnsStrategy.Ipv4Only)
+                if (context.AddressFamily == AddressFamilyPolicy.Ipv4Only && resolver.Strategy != DnsStrategy.Ipv4Only)
                     context.Diagnostics.Add(new("SB061", $"http_clients[{index}].domain_resolver.strategy", "HTTP 域名必须使用 ipv4_only 解析策略。"));
                 if (resolver.DisableOptimisticCache != true)
                     context.Diagnostics.Add(new("SB064", $"http_clients[{index}].domain_resolver.disable_optimistic_cache", "HTTP 域名解析必须禁用 optimistic 过期缓存。"));
@@ -361,12 +358,12 @@ internal sealed class SingboxConfigValidator : ISingboxConfigValidator
             context.Diagnostics);
         if (proxy.DomainResolver is { } resolver)
         {
-            if (context.AddressFamily.ForControlPlane() == AddressFamilyPolicy.Ipv4Only && resolver.Strategy != DnsStrategy.Ipv4Only)
+            if (context.AddressFamily == AddressFamilyPolicy.Ipv4Only && resolver.Strategy != DnsStrategy.Ipv4Only)
                 context.Diagnostics.Add(new("SB061", $"outbounds[{index}].domain_resolver.strategy", "代理节点域名必须使用 ipv4_only 解析策略。"));
             if (resolver.DisableOptimisticCache != true)
                 context.Diagnostics.Add(new("SB064", $"outbounds[{index}].domain_resolver.disable_optimistic_cache", "代理节点域名解析必须禁用 optimistic 过期缓存。"));
         }
-        if ((context.AddressFamily.ForControlPlane() == AddressFamilyPolicy.Ipv4Only
+        if ((context.AddressFamily == AddressFamilyPolicy.Ipv4Only
                 || proxy.DomainResolver?.Strategy == DnsStrategy.Ipv4Only)
             && IPAddress.TryParse(proxy.Server, out IPAddress? serverAddress)
             && serverAddress.AddressFamily == AddressFamily.InterNetworkV6)
@@ -570,24 +567,9 @@ internal sealed class SingboxConfigValidator : ISingboxConfigValidator
     private static void ValidateDnsAddressFamilyGuard(SingboxConfig config, ValidationContext context)
     {
         if (context.AddressFamily == AddressFamilyPolicy.DualStack) return;
-        bool automatic = context.AddressFamily.UsesInterfaceGuard();
-        DnsRule? first = config.Dns.Rules.FirstOrDefault();
-        if (automatic)
-        {
-            int guardIndex = first is { Type: null, Mode: null, Invert: not true, Action: DnsRuleAction.Route }
-                && first.QueryType is not { Count: > 0 } && first.Rules is not { Count: > 0 }
-                && first.DefaultInterfaceAddress is not { Count: > 0 }
-                && HasUnrestrictedDnsScope(first, allowPreferredBy: true)
-                && first.PreferredBy?.SequenceEqual([first.Server!]) == true
-                && config.Dns.Servers.OfType<TailscaleDnsServer>().Any(server => server.Tag == first.Server) ? 1 : 0;
-            DnsRule? guard = config.Dns.Rules.ElementAtOrDefault(guardIndex);
-            if (config.Dns.Strategy is not null || guard is null || !IsAutoAaaaGuard(guard))
-                context.Diagnostics.Add(new ConfigDiagnostic("SB092", $"dns.rules[{guardIndex}]",
-                    $"{context.AddressFamily} 必须允许双栈解析，并在可选的 Tailscale DNS 规则之后、其他规则之前，在默认出口无公网 IPv6 地址时以空 NOERROR 响应 AAAA。"));
-            return;
-        }
         if (config.Dns.Strategy != DnsStrategy.Ipv4Only)
             context.Diagnostics.Add(new("SB082", "dns.strategy", "Ipv4Only 必须使用 ipv4_only DNS 策略。"));
+        DnsRule? first = config.Dns.Rules.FirstOrDefault();
         if (first is null || first.Action != DnsRuleAction.Predefined || first.Rcode != DnsResponseCode.NoError
             || first.QueryType is not { Count: 1 } || first.QueryType[0] != "AAAA"
             || !HasUnrestrictedDnsScope(first)
@@ -597,23 +579,11 @@ internal sealed class SingboxConfigValidator : ISingboxConfigValidator
                 "Ipv4Only 必须首先无条件以空 NOERROR 响应拦截 AAAA 查询。"));
     }
 
-    private static bool HasUnrestrictedDnsScope(DnsRule rule, bool allowPreferredBy = false) =>
+    private static bool HasUnrestrictedDnsScope(DnsRule rule) =>
         rule.RuleSet is not { Count: > 0 } && rule.Domain is not { Count: > 0 }
         && rule.DomainSuffix is not { Count: > 0 } && rule.DomainRegex is not { Count: > 0 }
-        && (allowPreferredBy || rule.PreferredBy is not { Count: > 0 })
+        && rule.PreferredBy is not { Count: > 0 }
         && rule.MatchResponse is null && rule.ResponseRcode is null && rule.IpCidr is not { Count: > 0 };
-
-    private static bool IsAutoAaaaGuard(DnsRule rule) =>
-        rule.Action == DnsRuleAction.Predefined && rule.Rcode == DnsResponseCode.NoError
-        && rule.Type == RouteRuleType.Logical && rule.Mode == RouteLogicalMode.And && rule.Invert != true
-        && rule.QueryType is not { Count: > 0 } && rule.DefaultInterfaceAddress is not { Count: > 0 }
-        && HasUnrestrictedDnsScope(rule) && rule.Rules is { Count: 2 } children
-        && children.All(child => child.Action is null && child.Type is null && child.Mode is null
-            && child.Rules is not { Count: > 0 } && HasUnrestrictedDnsScope(child))
-        && children.Any(child => child.QueryType?.SequenceEqual(["AAAA"]) == true
-            && child.Invert != true && child.DefaultInterfaceAddress is not { Count: > 0 })
-        && children.Any(child => child.QueryType is not { Count: > 0 } && child.Invert == true
-            && child.DefaultInterfaceAddress?.SequenceEqual([AddressFamilyPolicies.GlobalIpv6Prefix]) == true);
 
     private sealed record ValidationContext(
         List<ConfigDiagnostic> Diagnostics,

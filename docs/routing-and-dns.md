@@ -7,24 +7,19 @@ sing-box 规则顺序会直接改变行为，因此 BoxForge 将生成顺序视�
 ## 路由规则顺序
 
 以下按 `SingboxRouteEmitter` 固定展开的阶段列出实际执行顺序。修改路由规则时，
-需同步维护本节说明。IPv6 守卫在 `Ipv4Only` 下无条件生效，在 `Auto` 与 `DirectDualStack` 下按出口接口状态生效，
-`DirectDualStack` 另在代理服务和最终出口之前拒绝 IPv6；Tailscale 阶段仅在
-对应平台启用 Tailscale 时生成规则；最终出口由 `route.final` 指定。
+需同步维护本节说明。IPv6 守卫仅在 `Ipv4Only` 下无条件生效；`DualStack` 不生成 IPv6 拒绝规则；
+Tailscale 阶段仅在对应平台启用 Tailscale 时生成规则；最终出口由 `route.final` 指定。
 
 1. **`DnsHijack`**：以 `inbound: tun-in` 和 `port: 53` 兜底劫持 TCP/UDP DNS；主要入口是 TUN 自身的 `dns_mode: hijack`，不依赖后续 sniff 的协议识别。
 2. **`Ipv4OnlyGuard`**（在 `DnsHijack` 之后）：仅 `Ipv4Only` 生成，以全局 `ip_version: 6` 拒绝全部 IPv6，先于 Tailscale、DIRECT 和 sniff。
-3. **`Tailscale`**（在 `Ipv4OnlyGuard` 之后）：启用 Tailscale 时，路由 endpoint 声明为首选的目标，优先于私网直连。
+3. **`Tailscale`**（启用 Tailscale 时，在 `Ipv4OnlyGuard` 之后）：路由 endpoint 声明为首选的目标，优先于私网直连。
 4. **`PreSniffDirect`**（在 `Tailscale` 之后）：直连私网地址。
-5. **`InterfaceIpv6Guard`**（在 `PreSniffDirect` 之后）：仅 `Auto` 与 `DirectDualStack` 生成，在默认出口缺少公网 IPv6 地址时拒绝尚未处理的 IPv6；Tailscale 和私网 IPv6 不受此条件限制。
-6. **`Sniff`**（在 `InterfaceIpv6Guard` 之后）：依次嗅探 TCP HTTP/TLS 与 UDP QUIC/STUN；TCP 跳过 FTP、SSH、MySQL、VNC 常用端口 21/22/3306/5900，继续后续路由，8080/8443 仍嗅探。
-7. **`BlockStunAndAds`**（在 `Sniff` 之后）：依次拒绝识别出的 UDP STUN 和 ads。
-8. **`ServiceIpv6Guard`**（在 `BlockStunAndAds` 之后）：仅 `DirectDualStack` 生成。仅对优先服务的规则集匹配 `ip_version: 6` 并拒绝。
-9. **`PriorityServices`**（在 `ServiceIpv6Guard` 之后）：按列表顺序路由 `precedes_domestic_routes: true` 的服务；该字段默认 `true`，内置 AI、Google、GitHub、Spotify、Games 均在此阶段。
-10. **`DomesticDirect`**（在 `PriorityServices` 之后）：依次按 cn、cnip 直连国内目标，TCP、UDP 的所有端口使用相同优先级。
-11. **`OtherServiceIpv6Guard`**（在 `DomesticDirect` 之后）：仅 `DirectDualStack` 且存在 `false` 服务时生成，对未先命中国内直连的普通服务规则集拒绝 IPv6。
-12. **`OtherServices`**（在 `OtherServiceIpv6Guard` 之后）：按列表顺序路由显式设置 `precedes_domestic_routes: false` 的服务；默认没有此阶段。
-13. **`FinalIpv6Guard`**（在 `OtherServices` 之后）：仅 `DirectDualStack` 生成，以全局 `ip_version: 6` 拒绝所有未被前面规则直连的 IPv6，保证没有 IPv6 进入最终代理出口。
-14. **`FinalOutbound`**（在 `FinalIpv6Guard` 之后）：未命中规则的流量使用 route.final 的 🚀 PROXIES；不额外生成 catch-all 规则。
+5. **`Sniff`**（在 `PreSniffDirect` 之后）：依次嗅探 TCP HTTP/TLS 与 UDP QUIC/STUN；TCP 跳过 FTP、SSH、MySQL、VNC 常用端口 21/22/3306/5900，继续后续路由，8080/8443 仍嗅探。
+6. **`BlockStunAndAds`**（在 `Sniff` 之后）：依次拒绝识别出的 UDP STUN 和 ads。
+7. **`PriorityServices`**（在 `BlockStunAndAds` 之后）：按列表顺序路由 `precedes_domestic_routes: true` 的服务；该字段默认 `true`，内置 AI、Google、GitHub、Spotify、Games 均在此阶段。
+8. **`DomesticDirect`**（在 `PriorityServices` 之后）：依次按 cn、cnip 直连国内目标，TCP、UDP 的所有端口使用相同优先级。
+9. **`OtherServices`**（在 `DomesticDirect` 之后）：按列表顺序路由显式设置 `precedes_domestic_routes: false` 的服务；默认没有此阶段。
+10. **`FinalOutbound`**（在 `OtherServices` 之后）：未命中规则的流量使用 route.final 的 🚀 PROXIES；不额外生成 catch-all 规则。
 
 所有平台的直连规则统一使用 `DIRECT`，不生成额外的 L3 转发层。
 `route.auto_redirect` 仅控制 TUN 的内核重定向实现，不改变路由顺序或匹配结果；
@@ -51,15 +46,7 @@ IPv6 早期拒绝 → 广告拒绝 → 优先服务 → 国内 IPv4 → 普通�
 ```
 
 `Ipv4Only` 下，单道 IPv6 拒绝位于 Tailscale 和全部直连及代理路由之前，确保业务流量只处理 IPv4 目标。
-`DirectDualStack` 下，各服务类别在自己的阶段拒绝 IPv6；出口条件允许且未先命中优先服务时，国内 `cn`/`cnip` 的 IPv6 直连，
-即使同时命中 `false` 服务也先直连；
-其余 IPv6 在最终出口之前被拒绝，核心优先级为：
-
-```text
-Tailscale → 私网直连 → 接口 IPv6 拒绝 → 广告拒绝 → 优先服务 IPv6 拒绝及分流 → 国内直连 → 普通服务 IPv6 拒绝及分流 → 其余 IPv6 拒绝 → 最终代理
-```
-
-地址族限制采用固定路由类别，不跟随 selector 最终叶子的运行时切换。将服务组或主组切到 DIRECT，不会解除该类别的 IPv6 限制。要放开该类别需更改 profile 策略；官方核心不提供按最终叶子匹配的路由条件。
+`DualStack` 不生成早期或按类别的 IPv6 拒绝，IPv6 目标按普通 DNS 与路由规则处理。
 
 ## DNS 分类与控制面解析
 
@@ -67,42 +54,24 @@ Tailscale → 私网直连 → 接口 IPv6 拒绝 → 广告拒绝 → 优先服
 内置 JSON 为 Linux、Windows、Android 均设置 `Ipv4Only`（全局 IPv4）。该策略生成
 `dns.strategy = ipv4_only`、最前面的全局 AAAA 空 `NOERROR`，以及 DNS 劫持之后的单道
 IPv6 reject；该守卫也覆盖字面量 IPv6 和不经 sing-box DNS 的连接，直连与代理流量都不使用 IPv6。
-通过 `platforms.<平台>.dns.address_family` 可覆盖为 `DirectDualStack`（代理仅 IPv4、直连保留 IPv6）、
-`Auto` 或 `DualStack`。`DualStack` 不生成上述
-AAAA 阻断和 IPv6 reject，DNS 与控制面解析策略也随之切换。
+通过 `platforms.<平台>.dns.address_family` 可覆盖为 `DualStack`。`DualStack` 不生成上述
+AAAA 阻断和 IPv6 reject，DNS 与控制面解析策略也随之切换，客户端 DNS、直连与代理控制面均保留双栈。
 
-`Auto` 与 `DirectDualStack` 保留 TUN 的 IPv4 和 IPv6 捕获地址，通过反转
-`default_interface_address: ["2000::/3"]` 条件判断当前默认出口接口，
-不按网络类型合并其他接口的地址。默认出口存在 `2000::/3` 公网 IPv6 地址时正常处理 AAAA 和 IPv6 业务分流；
-缺少该地址或无法取得接口信息时，非 Tailscale 查询的 AAAA 返回空 `NOERROR`，
-路由在 Tailscale 和私网直连之后、sniff 之前拒绝其余 IPv6。
-链路本地地址和 ULA 不满足公网出口条件，但私网和 Tailscale IPv6 不依赖该条件放行。
-该检查不是公网可达性探测：有地址但缺少有效路由、
-上游黑洞等情况仍可能失败。已有 DNS 缓存不会随接口变化主动清空，现有连接也不会
-因此即时切换；网络切换后的实际行为仍需在目标设备上验证。
-
-[官方字段说明](https://sing-box.sagernet.org/configuration/route/rule/#default_interface_address)
-列出 Linux、Windows 和 macOS 支持。Android 使用相同条件，但依赖客户端通过
-libbox 正确提供当前物理默认接口和接口地址；不能据此认定所有 Android 图形客户端都支持。
-已核对锁定 alpha.12 的接口监视源码并检查生成配置；无法取得默认接口或地址的客户端
-会继续拒绝未被 Tailscale 或私网直连处理的客户端 IPv6。Android 真机和网络切换行为尚未验证。
-
-DIRECT 出口显式绑定 AliDNS，并禁用 optimistic 过期缓存。Auto、DirectDualStack 和 DualStack 下，
-其域名拨号使用 `prefer_ipv4`，保留 IPv6 候选；Ipv4Only 下仍为 `ipv4_only`。
+DIRECT 出口显式绑定 AliDNS，并禁用 optimistic 过期缓存。`DualStack` 下，
+其域名拨号使用 `prefer_ipv4`，保留 IPv6 候选；`Ipv4Only` 下为 `ipv4_only`。
 此偏好不修改应用收到的 DNS 答案，也不会将已经确定的 IPv6 目标自动转换为 IPv4。
 它只在核心以域名进行直连拨号时生效，不能保证 TUN 流量的地址族回退。
 代理节点和控制面 HTTP client 的解析策略不受此偏好影响。
 
 控制平面域名由 `route.default_domain_resolver` 解析：直连
-`dns-direct-alidns`、随平台地址族选择的策略（`Ipv4Only`、`Auto` 与 `DirectDualStack` 使用 `ipv4_only`，
-仅 `DualStack` 不强制地址族）、`disable_optimistic_cache = true`。
+`dns-direct-alidns`、随平台地址族选择的策略（`Ipv4Only` 使用 `ipv4_only`，
+`DualStack` 不强制地址族）、`disable_optimistic_cache = true`。
 代理节点和 Tailscale endpoint 继承该设置；rule-set HTTP client 显式绑定相同解析策略。
 DIRECT 显式使用上述 `prefer_ipv4`／`ipv4_only` 绑定。Dashboard HTTP client 直连，按平台地址族解析，
-`Auto`、`DirectDualStack` 下不强制 IPv4；所有这些绑定均禁用 optimistic 缓存。节点域名不加入 client DNS 规则。
-`Auto` 与 `DirectDualStack` 让节点域名连接和 rule-set 下载等代理控制面不依赖 IPv6，并拒绝 IPv6 字面量代理节点。
-上述条件 AAAA 规则仍只针对 client DNS；`Auto` 在出口条件允许时可通过 IPv4 代理节点访问客户端 IPv6 目标，
-`DirectDualStack` 则额外拒绝代理类别的客户端 IPv6。来源节点显式的 `ip-version: ipv4` 约束
-仅在 `DualStack` 下使用独立节点 resolver，在 `Ipv4Only`、`Auto`、`DirectDualStack` 下继承全局控制面 resolver。
+`DualStack` 下不强制 IPv4；所有这些绑定均禁用 optimistic 缓存。节点域名不加入 client DNS 规则。
+`Ipv4Only` 让节点域名连接和 rule-set 下载等代理控制面不依赖 IPv6，并拒绝 IPv6 字面量代理节点。
+来源节点显式的 `ip-version: ipv4` 约束
+仅在 `DualStack` 下使用独立节点 resolver，在 `Ipv4Only` 下继承全局控制面 resolver。
 该固定 tag 的 IP 和 TLS 名称可通过 [resolver profile](configuration.md#resolver-profile)
 覆盖；连接仍使用 IPv4 字面量直连，引导不依赖系统 DNS 或代理 DNS。
 内部国内 DoH 由各自 dialer 直接建立连接，不经过 TUN 客户端路由链；
@@ -112,16 +81,13 @@ client DNS 依次分类：
 
 1. 仅 `Ipv4Only` 下，所有 AAAA 查询返回空 `NOERROR`，包括 Tailscale 查询。
 2. 启用 Tailscale 时，`preferred_by` 命中的 MagicDNS 和 split DNS 交给
-   `dns-tailscale`，禁用 optimistic 缓存；`Auto` 与 `DirectDualStack` 下先于条件 AAAA 空答规则。
-3. `Auto` 与 `DirectDualStack` 下，出口缺少公网 IPv6 地址时，其余 AAAA 查询返回空 `NOERROR`。
-   有公网 IPv6 出口时，不按 DNS 池静态过滤 AAAA；服务、国内和全局池均正常解析，避免域名不在 `cn` 但真实地址属于 `cnip` 时丢失直连 IPv6。
-   IPv6 是否允许转发由路由阶段决定，DNS 查询走代理不等于业务目标走代理。
-4. `ads` 返回 `NXDOMAIN`，随后 `route.block` 的自定义域名阻断也返回 `NXDOMAIN`。
-5. 从有效 profile 的 `route.services` 为每个服务生成独立 pool，先处理 `PrecedesDomesticRoutes` 为真的服务；
+   `dns-tailscale`，禁用 optimistic 缓存；`Ipv4Only` 下位于 AAAA 空答规则之后。
+3. `ads` 返回 `NXDOMAIN`，随后 `route.block` 的自定义域名阻断也返回 `NXDOMAIN`。
+4. 从有效 profile 的 `route.services` 为每个服务生成独立 pool，先处理 `PrecedesDomesticRoutes` 为真的服务；
    该字段默认 `true`，内置 AI、Google、GitHub、Spotify 和 Games 均通过自己的服务选择组解析，优先于 `cn`。
-6. `cn` 进入 DOMESTIC pool。
-7. 处理 `PrecedesDomesticRoutes` 为假的普通服务 pool；同时命中 `cn` 的域名已在前一步进入 DOMESTIC。
-8. 其余查询进入 GLOBAL pool。
+5. `cn` 进入 DOMESTIC pool。
+6. 处理 `PrecedesDomesticRoutes` 为假的普通服务 pool；同时命中 `cn` 的域名已在前一步进入 DOMESTIC。
+7. 其余查询进入 GLOBAL pool。
 
 DNS 与业务路由均按优先服务 → 国内 → 普通服务排序，各服务阶段保留列表顺序；
 自定义域名阻断在这些分类之前执行：DNS 在广告规则之后，业务路由在嗅探和广告规则之后。
@@ -164,7 +130,7 @@ A 和允许放行的 AAAA 查询分别进入独立的地址池，两条 `NOERROR
 接受 primary/secondary 的 NXDOMAIN。地址池以同 scope 的 SERVFAIL 结束，
 不会进入后续通用池重复查询。HTTPS、SVCB、MX 等非地址查询保持原有 NOERROR
 竞速，不要求响应含 IP；`Ipv4Only` 下 AAAA 在进入池前已返回空答，
-`Auto` 下则由前述出口条件决定是否允许进入池。
+`DualStack` 下正常进入地址池。
 
 通用池不限制查询类型，TXT、PTR、SRV 和其他类型也按相同规则处理。
 非地址查询的空 `NOERROR` 是有效结果，可以先于另一侧的非空答案返回；不会因此请求其他分类。

@@ -55,19 +55,6 @@ internal static class SingboxDnsEmitter
                 Server = SingboxTags.TailscaleDns,
                 DisableOptimisticCache = true
             });
-        if (plan.AddressFamily.UsesInterfaceGuard())
-            rules.Add(new DnsRule
-            {
-                Type = RouteRuleType.Logical,
-                Mode = RouteLogicalMode.And,
-                Rules =
-                [
-                    new DnsRule { QueryType = ["AAAA"] },
-                    new DnsRule { DefaultInterfaceAddress = [AddressFamilyPolicies.GlobalIpv6Prefix], Invert = true }
-                ],
-                Action = DnsRuleAction.Predefined,
-                Rcode = DnsResponseCode.NoError
-            });
         rules.Add(new DnsRule
         {
             RuleSet = [RuleSetTags.Ads],

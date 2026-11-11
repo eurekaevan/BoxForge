@@ -92,19 +92,13 @@ CLI 在宿主边界加载并校验独立的 `BOXFORGE_` 环境配置快照，直
 }
 ```
 
-地址族接受 `Ipv4Only`、`DualStack`、`Auto` 或 `DirectDualStack`，默认使用 `Ipv4Only`（全局 IPv4，直连与代理流量都拒绝 IPv6）。
-需要直连 IPv6 时可覆盖为 `DirectDualStack`：保留 TUN 双栈捕获，固定代理类别（服务分流和最终出口）仅使用 IPv4，
-私网和 Tailscale 的 IPv6 先行处理，不依赖公网出口地址；其余 IPv6（包括 `cn`、`cnip` 直连）
-按当前出口接口是否具有公网 IPv6 地址决定是否拒绝。
-限制按固定类别生效，服务组或主组切到 DIRECT 也不解除该类别的 IPv6 限制。DNS 保留 AAAA，不承诺被拒绝连接会自动回退 IPv4。
-`Auto` 同样保留 TUN 双栈捕获并按出口接口判断，但不额外拒绝代理类别的客户端 IPv6；
-出口条件允许时，可通过 IPv4 代理节点访问 IPv6 目标。
-`Auto` 与 `DirectDualStack` 的节点域名和规则集 HTTP client 均使用 `ipv4_only` 控制面解析，
-并拒绝 IPv6 字面量代理节点；仅 `DualStack` 保留完整双栈节点控制面。
-DIRECT 在这两个模式下仍使用 `prefer_ipv4`，Dashboard 直连 HTTP client 也不强制 IPv4。
-它们都不执行公网可达性探测。Android 依赖客户端提供默认物理接口信息，尚未完成真机验证；
-缺少接口信息时拒绝未被 Tailscale 或私网直连处理的客户端 IPv6。
-`Auto` 与 `DirectDualStack` 的 Tailscale DNS 也先于条件 AAAA 空答规则，保留 MagicDNS 和 split DNS 的 IPv6 答案。
+地址族接受 `Ipv4Only` 或 `DualStack`，默认使用 `Ipv4Only`（全局 IPv4，直连与代理流量都拒绝 IPv6）。
+`Ipv4Only` 使用 `dns.strategy = ipv4_only`，让全部客户端 AAAA 查询在规则链首部返回空 `NOERROR`，
+并在 DNS 劫持之后以单道 `ip_version: 6` 拒绝所有 IPv6。
+`DualStack` 保留客户端 DNS、路由与代理控制面的完整双栈，不按出口地址判断，也不探测公网可达性。
+`Ipv4Only` 的节点域名与规则集 HTTP client 均使用 `ipv4_only` 控制面解析，并拒绝 IPv6 字面量代理节点；
+`DualStack` 不强制控制面解析地址族，仅来源显式 `ip-version: ipv4` 的节点绑定 `ipv4_only` resolver。
+DIRECT 在 `Ipv4Only` 下使用 `ipv4_only`，在 `DualStack` 下使用 `prefer_ipv4`。
 详细边界见[DNS 与路由策略](routing-and-dns.md#dns-分类与控制面解析)。
 DNS 模式接受 `SequentialFallback` 或 `ParallelFastest`。超时和间隔必须是正 Go duration；DNS 缓存容量为正，URL test
 容差为 1–65535ms，默认 50ms；不接受 `0`，因为锁定核心会将它解释为默认 50ms，无法实现零容差。

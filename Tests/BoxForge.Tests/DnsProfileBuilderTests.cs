@@ -19,12 +19,6 @@ public sealed class DnsProfileBuilderTests
     [TestCase(TargetPlatform.Android, AddressFamilyPolicy.DualStack)]
     [TestCase(TargetPlatform.Linux, AddressFamilyPolicy.DualStack)]
     [TestCase(TargetPlatform.Windows, AddressFamilyPolicy.DualStack)]
-    [TestCase(TargetPlatform.Android, AddressFamilyPolicy.Auto)]
-    [TestCase(TargetPlatform.Linux, AddressFamilyPolicy.Auto)]
-    [TestCase(TargetPlatform.Windows, AddressFamilyPolicy.Auto)]
-    [TestCase(TargetPlatform.Android, AddressFamilyPolicy.DirectDualStack)]
-    [TestCase(TargetPlatform.Linux, AddressFamilyPolicy.DirectDualStack)]
-    [TestCase(TargetPlatform.Windows, AddressFamilyPolicy.DirectDualStack)]
     public void DnsPlanSnapshotsPolicyAndEmitsIndependentConfigurations(TargetPlatform platform, AddressFamilyPolicy addressFamily)
     {
         var profile = BoxForgeProfile.Default.ApplyOverrides(JsonSerializer.SerializeToNode(new
@@ -130,7 +124,7 @@ public sealed class DnsProfileBuilderTests
     public void Ipv6AddressRacesPreserveScopeFallbackAcrossPlatforms()
     {
         foreach (TargetPlatform platform in Enum.GetValues<TargetPlatform>())
-            foreach (AddressFamilyPolicy family in new[] { AddressFamilyPolicy.DualStack, AddressFamilyPolicy.Auto, AddressFamilyPolicy.DirectDualStack })
+            foreach (AddressFamilyPolicy family in new[] { AddressFamilyPolicy.DualStack })
             {
                 var profile = BoxForgeProfile.Default.ApplyOverrides(JsonSerializer.SerializeToNode(new
                 {
@@ -183,12 +177,12 @@ public sealed class DnsProfileBuilderTests
     }
 
     [Test]
-    public void DnsEmissionExpandsGuardAndServiceResolverPolicy()
+    public void DnsEmissionExpandsIpv4GuardAndServiceResolverPolicy()
     {
-        var plan = CreatePlan(TargetPlatform.Linux, tailscaleEnabled: true, AddressFamilyPolicy.Auto);
+        var plan = CreatePlan(TargetPlatform.Linux, tailscaleEnabled: true, AddressFamilyPolicy.Ipv4Only);
         DnsConfig dns = SingboxDnsEmitter.Emit(plan);
-        var tailscale = dns.Rules[0];
-        var guard = dns.Rules[1];
+        var guard = dns.Rules[0];
+        var tailscale = dns.Rules[1];
         var blocking = dns.Rules[2];
         var firstService = BoxForgeProfile.Default.Services
             .OrderByDescending(service => service.PrecedesDomesticRoutes).First();
@@ -196,11 +190,8 @@ public sealed class DnsProfileBuilderTests
         var serviceEvaluation = dns.Rules.First(rule => rule.Action == DnsRuleAction.Evaluate);
         Assert.Multiple(() =>
         {
-            Assert.That(guard.Mode, Is.EqualTo(RouteLogicalMode.And));
-            Assert.That(guard.Rules![0].QueryType, Is.EqualTo(new[] { "AAAA" }));
-            Assert.That(guard.Rules![1].DefaultInterfaceAddress,
-                Is.EqualTo(new[] { AddressFamilyPolicies.GlobalIpv6Prefix }));
-            Assert.That(guard.Rules![1].Invert, Is.True);
+            Assert.That(guard.QueryType, Is.EqualTo(new[] { "AAAA" }));
+            Assert.That(guard.Rules, Is.Null);
             Assert.That(guard.Action, Is.EqualTo(DnsRuleAction.Predefined));
             Assert.That(guard.Rcode, Is.EqualTo(DnsResponseCode.NoError));
             Assert.That(tailscale.Server, Is.EqualTo(SingboxTags.TailscaleDns));
@@ -344,11 +335,8 @@ public sealed class DnsProfileBuilderTests
     [TestCase(TargetPlatform.Linux, AddressFamilyPolicy.Ipv4Only, DnsStrategy.Ipv4Only, true)]
     [TestCase(TargetPlatform.Windows, AddressFamilyPolicy.Ipv4Only, DnsStrategy.Ipv4Only, true)]
     [TestCase(TargetPlatform.Android, AddressFamilyPolicy.DualStack, null, false)]
-    [TestCase(TargetPlatform.Android, AddressFamilyPolicy.Auto, null, false)]
     [TestCase(TargetPlatform.Linux, AddressFamilyPolicy.DualStack, null, false)]
-    [TestCase(TargetPlatform.Linux, AddressFamilyPolicy.Auto, null, false)]
     [TestCase(TargetPlatform.Windows, AddressFamilyPolicy.DualStack, null, false)]
-    [TestCase(TargetPlatform.Windows, AddressFamilyPolicy.Auto, null, false)]
     public void AddressFamilyPolicyControlsAaaaBlocking(
         TargetPlatform platform,
         AddressFamilyPolicy addressFamily,
@@ -380,46 +368,6 @@ public sealed class DnsProfileBuilderTests
         });
     }
 
-    [TestCase(TargetPlatform.Android)]
-    [TestCase(TargetPlatform.Linux)]
-    [TestCase(TargetPlatform.Windows)]
-    public void AutoBlocksAaaaOnlyWhenTheDefaultInterfaceLacksGlobalIpv6(TargetPlatform platform)
-    {
-        DnsConfig dns = SingboxDnsEmitter.Emit(CreatePlan(platform, addressFamily: AddressFamilyPolicy.Auto));
-        DnsRule guard = dns.Rules[0];
-        Assert.Multiple(() =>
-        {
-            Assert.That(dns.Strategy, Is.Null);
-            Assert.That(guard.Type, Is.EqualTo(RouteRuleType.Logical));
-            Assert.That(guard.Mode, Is.EqualTo(RouteLogicalMode.And));
-            Assert.That(guard.Action, Is.EqualTo(DnsRuleAction.Predefined));
-            Assert.That(guard.Rcode, Is.EqualTo(DnsResponseCode.NoError));
-            Assert.That(guard.Rules, Has.Count.EqualTo(2));
-            Assert.That(guard.Rules![0].QueryType, Is.EqualTo(new[] { "AAAA" }));
-            Assert.That(guard.Rules![1].DefaultInterfaceAddress, Is.EqualTo(new[] { "2000::/3" }));
-            Assert.That(guard.Rules![1].Invert, Is.True);
-            Assert.That(JsonSerializer.Serialize(guard), Does.Not.Contain("network_interface_address").And.Not.Contain("network_type"));
-        });
-
-        // Evaluate the emitted predicate against interface fixtures; this is not a live core/network test.
-        var globalPrefix = System.Net.IPNetwork.Parse(guard.Rules![1].DefaultInterfaceAddress!.Single());
-        foreach (var fixture in new (string[] Current, string[] Standby, bool Reject)[]
-        {
-            (["192.0.2.2", "2001:db8::2"], [], false),
-            (["192.0.2.2"], [], true),
-            (["192.0.2.2", "fe80::2"], [], true),
-            (["192.0.2.2", "fd00::2"], [], true),
-            ([], [], true),
-            (["192.0.2.2"], ["2001:db8::3"], true),
-            (["192.0.2.2", "2001:db8::2"], ["192.0.2.3"], false)
-        })
-        {
-            bool addressMatches = fixture.Current.Select(System.Net.IPAddress.Parse).Any(globalPrefix.Contains);
-            bool guardMatches = guard.Rules![1].Invert == true ? !addressMatches : addressMatches;
-            Assert.That(guardMatches, Is.EqualTo(fixture.Reject),
-                $"default=[{string.Join(',', fixture.Current)}], standby=[{string.Join(',', fixture.Standby)}]");
-        }
-    }
 
     [Test]
     public void TailscaleRoutePrecedesAdBlockingAndAdRuleReturnsNxDomain()
@@ -440,9 +388,9 @@ public sealed class DnsProfileBuilderTests
     }
 
     [Test]
-    public void TailscaleDnsBypassesInterfaceGuardButRespectsIpv4Only(
+    public void TailscaleDnsOrderFollowsIpv4OnlyGuard(
         [Values(TargetPlatform.Android, TargetPlatform.Linux, TargetPlatform.Windows)] TargetPlatform platform,
-        [Values(AddressFamilyPolicy.Ipv4Only, AddressFamilyPolicy.Auto, AddressFamilyPolicy.DirectDualStack)] AddressFamilyPolicy addressFamily)
+        [Values(AddressFamilyPolicy.Ipv4Only, AddressFamilyPolicy.DualStack)] AddressFamilyPolicy addressFamily)
     {
         DnsConfig dns = SingboxDnsEmitter.Emit(CreatePlan(platform, tailscaleEnabled: true, addressFamily));
         int tailscaleIndex = dns.Rules.FindIndex(rule => rule.Server == SingboxTags.TailscaleDns);
@@ -451,7 +399,7 @@ public sealed class DnsProfileBuilderTests
         Assert.Multiple(() =>
         {
             Assert.That(tailscaleIndex, Is.EqualTo(addressFamily == AddressFamilyPolicy.Ipv4Only ? 1 : 0));
-            Assert.That(guardIndex, Is.EqualTo(addressFamily == AddressFamilyPolicy.Ipv4Only ? 0 : 1));
+            Assert.That(guardIndex, Is.EqualTo(addressFamily == AddressFamilyPolicy.Ipv4Only ? 0 : -1));
             Assert.That(dns.Rules[tailscaleIndex].Action, Is.EqualTo(DnsRuleAction.Route));
             Assert.That(dns.Rules[tailscaleIndex].PreferredBy, Is.EqualTo(new[] { SingboxTags.TailscaleDns }));
             Assert.That(dns.Rules[tailscaleIndex].QueryType, Is.Null, "MagicDNS must accept AAAA as well as A queries.");
@@ -720,27 +668,23 @@ public sealed class DnsProfileBuilderTests
     [TestCase(TargetPlatform.Android, DnsResolverSelectionMode.ParallelFastest)]
     [TestCase(TargetPlatform.Linux, DnsResolverSelectionMode.ParallelFastest)]
     [TestCase(TargetPlatform.Windows, DnsResolverSelectionMode.ParallelFastest)]
-    public void DirectDualStackPreservesAaaaAcrossAllPoolsRegardlessOfSelectorDetour(
+    public void DualStackPreservesAaaaAcrossAllPoolsRegardlessOfSelectorDetour(
         TargetPlatform platform, DnsResolverSelectionMode selectionMode)
     {
         var profile = BoxForgeProfile.Default.ApplyOverrides(JsonSerializer.SerializeToNode(new
         {
             platforms = new Dictionary<string, object>
             {
-                [platform.ToString()] = new { dns = new { address_family = "DirectDualStack", selection_mode = selectionMode.ToString() } }
+                [platform.ToString()] = new { dns = new { address_family = "DualStack", selection_mode = selectionMode.ToString() } }
             }
         })!.AsObject());
         DnsPlan plan = DnsProfileBuilder.Plan(profile.Resolve(platform));
         DnsConfig dns = SingboxDnsEmitter.Emit(plan);
         Assert.DoesNotThrow(plan.Validate);
-        Assert.That(plan.AddressFamily, Is.EqualTo(AddressFamilyPolicy.DirectDualStack));
+        Assert.That(plan.AddressFamily, Is.EqualTo(AddressFamilyPolicy.DualStack));
         Assert.That(plan.SelectionMode, Is.EqualTo(selectionMode));
         Assert.That(dns.Strategy, Is.Null);
-        Assert.That(dns.Rules[0].Server, Is.EqualTo(SingboxTags.TailscaleDns));
-        Assert.That(dns.Rules[1].Rules![0].QueryType, Is.EqualTo(new[] { "AAAA" }));
-        Assert.That(dns.Rules[1].Rules![1].DefaultInterfaceAddress, Is.EqualTo(new[] { "2000::/3" }));
-        Assert.That(dns.Rules[1].Rules![1].Invert, Is.True);
-        Assert.That(dns.Rules.Skip(2).Any(rule =>
+        Assert.That(dns.Rules.Any(rule =>
             rule.Action == DnsRuleAction.Predefined && rule.Rcode == DnsResponseCode.NoError), Is.False,
             "DNS classification cannot determine whether a selector or cnip route ultimately chooses DIRECT.");
         var blocks = ResolverBlocks(dns.Rules).ToArray();

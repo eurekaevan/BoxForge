@@ -529,8 +529,6 @@ public sealed class BoxForgeEngineTests
             new ConversionRequest("empty-platforms", ValidYaml, [])));
     }
 
-    [TestCase(AddressFamilyPolicy.Auto, "ipv4")]
-    [TestCase(AddressFamilyPolicy.Auto, null)]
     [TestCase(AddressFamilyPolicy.DualStack, "ipv4")]
     [TestCase(AddressFamilyPolicy.DualStack, null)]
     public void DuplicateNodeNamesRetainTheTargetValidationErrorContract(AddressFamilyPolicy family, string? secondFamily)

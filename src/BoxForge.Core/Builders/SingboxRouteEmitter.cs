@@ -37,19 +37,6 @@ internal static class SingboxRouteEmitter
                 Outbound = SingboxTags.TailscaleEndpoint
             });
         AddDirect(new RouteRule { IpIsPrivate = true });
-        // Overlay and private IPv6 do not require a public IPv6 address on the default interface.
-        if (plan.AddressFamily.UsesInterfaceGuard())
-            rules.Add(new RouteRule
-            {
-                Type = RouteRuleType.Logical,
-                Mode = RouteLogicalMode.And,
-                Rules =
-                [
-                    new RouteRule { IpVersion = 6 },
-                    new RouteRule { DefaultInterfaceAddress = [AddressFamilyPolicies.GlobalIpv6Prefix], Invert = true }
-                ],
-                Action = RouteRuleAction.Reject
-            });
         rules.Add(new RouteRule
         {
             Type = RouteRuleType.Logical,
@@ -92,21 +79,11 @@ internal static class SingboxRouteEmitter
         foreach (string scope in new[] { RuleSetTags.Cn, RuleSetTags.CnIp })
             AddDirect(new RouteRule { RuleSet = [scope] });
         AddServices(priority: false);
-        if (plan.AddressFamily == AddressFamilyPolicy.DirectDualStack)
-            rules.Add(new RouteRule { IpVersion = 6, Action = RouteRuleAction.Reject });
         return route;
 
         void AddServices(bool priority)
         {
-            ServiceRoutePlan[] services = [.. plan.Services.Where(service => service.PrecedesDomesticRoutes == priority)];
-            if (plan.AddressFamily == AddressFamilyPolicy.DirectDualStack && services.Length > 0)
-                rules.Add(new RouteRule
-                {
-                    IpVersion = 6,
-                    RuleSet = [.. services.SelectMany(service => service.RuleSets).Distinct(StringComparer.Ordinal)],
-                    Action = RouteRuleAction.Reject
-                });
-            foreach (ServiceRoutePlan service in services)
+            foreach (ServiceRoutePlan service in plan.Services.Where(service => service.PrecedesDomesticRoutes == priority))
                 rules.Add(new RouteRule { RuleSet = [.. service.RuleSets], Action = RouteRuleAction.Route, Outbound = service.Outbound });
         }
 

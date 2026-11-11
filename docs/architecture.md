@@ -245,9 +245,8 @@ sniff 超时及排除端口、规则源、最终出口和控制面绑定。
 计划只使用 IR 类型，不引用 profile DTO 或 sing-box 模型；校验声明值、规则源引用、
 服务身份和出口唯一性及服务分组顺序。DNS 池直接与服务声明比对身份、范围、顺序和出口。
 
-`SingboxRouteEmitter` 是唯一路由展开入口，固定生成 DNS 劫持、按地址族放置的单道守卫、
-Tailscale、私网直连、sniff、STUN/广告阻断、优先服务、国内直连、
-普通服务及最终代理侧 IPv6 守卫；TCP、UDP 的所有端口使用相同服务优先级。
+`SingboxRouteEmitter` 是唯一路由展开入口，固定生成 DNS 劫持、仅 `Ipv4Only` 的单道 IPv6 守卫、
+Tailscale、私网直连、sniff、STUN/广告阻断、优先服务、国内直连及普通服务；TCP、UDP 的所有端口使用相同服务优先级。
 直连统一生成 `DIRECT` 路由，不生成额外的 L3 转发层。
 `auto_redirect` 仅影响 TUN 的内核重定向实现；Windows 拒绝 `auto_redirect: true`，
 Android 启用时需 root 服务或 root shell，普通 VPN 客户端不支持。
@@ -255,7 +254,7 @@ Android 启用时需 root 服务或 root shell，普通 VPN 客户端不支持�
 不再使用 `RouteRulePlan`、`HasSamePolicy` 或反射相等性测试；顺序和匹配范围直接由产物测试验证。
 DNS 与路由发射均为每次输出创建独立的规则、嵌套条件与列表；修改输出不会污染计划。
 同一计划可重复或并发发射。汇总计划检查跨模块绑定，目标 validator 检查产物引用及平台字段，
-不从扁平路由 AST 逆向重建路由策略；DNS 的地址族守卫检查继续独立保留。
+不从扁平路由 AST 逆向重建路由策略；`Ipv4Only` 的 DNS 地址族守卫检查继续独立保留。
 
 `ConfigurationPlan` 汇总地址族、DNS 选择模式、探测间隔等策略值、`TunPlan` 地址与开关、
 完成平台调优的节点 IR、组/DNS/路由计划、外围开关与 `HttpClientPlan` 控制面绑定。
@@ -352,7 +351,7 @@ profile 无效仍按原有无效配置路径处理。
 独立节点解析器仅用于双栈控制面下来源明确限制 IPv4 的节点。HTTP 解析器按规则集下载与 Dashboard 的角色
 分别校验控制面和平台地址族。目标层允许省略解析器以继承全局设置；显式 HTTP、代理和直连解析器均须禁用
 optimistic 过期缓存，并遵守各自角色的 IPv4 限制。Ipv4Only 同时要求全局 DNS 策略和无附加匹配范围的首条
-AAAA 空答；Auto / DirectDualStack 允许前置的 Tailscale DNS 规则仅按 preferred_by 匹配。
+AAAA 空答。
 节点 `SourceValue` 只保存值及显式标记，语义数据表继续保存来源字段及固定源码证据。
 
 ### 现有协议扩展入口
@@ -433,31 +432,16 @@ HY2 hop/BBR 值优先于调优。显式固定间隔不会补入调优的随机�
 地址族取自有效目标配置的 `dns.address_family`，完整计划统一保存该策略。
 默认三个平台均使用 `Ipv4Only`（全局 IPv4）。DNS、route、控制面 resolver 与 `BoxForgeEngine` 的
 `Validate(config, addressFamily)` 均使用同一实例中的策略，validator 不再次推导平台。
-IPv4-only 的解析策略、IPv6 节点字面量限制及首条无条件 AAAA 空 NOERROR 由目标校验器检查；
+`Ipv4Only` 的解析策略、IPv6 节点字面量限制及首条无条件 AAAA 空 NOERROR 由目标校验器检查；
 单道路由 IPv6 reject guard 的位置和范围由发射器固定生成，并由产物测试验证。
-`DualStack` 不要求上述 IPv4-only 限制。`Auto` 保留双栈 TUN 捕获，
-将 AAAA 空答与单道 IPv6 拒绝改为缺少公网 IPv6 出口地址时才生效的条件规则；
-Tailscale DNS 先于条件 AAAA 空答，Tailscale 和私网路由先于条件 IPv6 拒绝，
-使这些路径不依赖公网 IPv6 出口；条件路由守卫仍位于 sniff 和其余业务分流之前。
-各平台统一使用反转的 `default_interface_address: ["2000::/3"]` 条件，
-判定发生在核心运行时，不读取生成机器的网卡状态，也不进行主动可达性探测。
-Android 依赖客户端通过 libbox 提供默认物理接口和地址，缺少信息时拒绝未被上述路径处理的 IPv6；
-锁定核心源码与生成配置检查不代表所有 Android 客户端或真机网络切换都已验证。
-条件 AAAA 规则仅约束 client DNS；`Auto` 与 `DirectDualStack` 的 `ForControlPlane` 均映射为 `Ipv4Only`，
-节点域名继承 `route.default_domain_resolver` 的 `ipv4_only`，rule-set HTTP client 显式使用同一策略，
-并拒绝 IPv6 字面量代理节点。仅 `DualStack` 保留完整双栈节点控制面。
+`DualStack` 不要求上述 IPv4-only 限制，保留客户端 DNS、直连与代理控制面的完整双栈，
+不按出口地址判断，也不执行公网可达性探测。
+`Ipv4Only` 拒绝 IPv6 字面量代理节点，节点域名继承 `route.default_domain_resolver` 的 `ipv4_only`，
+rule-set HTTP client 显式使用同一策略。仅 `DualStack` 保留完整双栈节点控制面。
 来源节点显式 `ip-version: ipv4` 仅在 `DualStack` 下绑定独立 IPv4 resolver；
-`Ipv4Only`、`Auto`、`DirectDualStack` 下继承已有的全局控制面 IPv4 限制。
-DIRECT 在 `Auto` 与 `DirectDualStack` 下仍使用 `prefer_ipv4`，Dashboard 直连 HTTP client 也不强制 IPv4。
-`Auto` 在出口条件允许时可通过 IPv4 节点连接客户端 IPv6 目标，不增加代理类别 IPv6 拒绝。
-`DirectDualStack` 在 `Auto` 的条件守卫之上按固定路由类别限制代理侧：不按解析池类别过滤 AAAA；
-路由在优先服务、普通服务各自阶段之前拒绝对应规则集的 IPv6；国内 `cn`/`cnip` 直连位于两者之间，
-因此在接口守卫放行时，`false` 服务与国内重叠的 IPv6 先直连，`true` 服务的 IPv6 则先拒绝；
-在 `route.final` 前对全部其余流量拒绝 `ip_version: 6`，控制面 resolver 与 rule-set HTTP client 使用 `ipv4_only`。
-直连出站仍使用 `prefer_ipv4`。路由发射器固定生成最终无条件 IPv6 拒绝，
-以及每类服务之前覆盖该类完整规则集的 IPv6 拒绝，产物测试检查其位置和范围。
-`DualStack` 可显式启用，不按出口地址拒绝 IPv6。Android 不输出未实现的 strict_route；
-本地静态验证不等于真机防逃逸抓包或网络切换证明。
+`Ipv4Only` 下继承已有的全局控制面 IPv4 限制。
+`DualStack` 的 DIRECT 使用 `prefer_ipv4`，Dashboard 直连 HTTP client 不强制 IPv4。
+Android 不输出未实现的 strict_route；本地静态验证不等于真机防逃逸抓包或网络切换证明。
 
 - 路由规划器只保存高层声明，发射器按固定顺序展开路由规则，
   [路由顺序](routing-and-dns.md#路由规则顺序)由产物行为测试检查。

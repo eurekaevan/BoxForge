@@ -19,7 +19,7 @@ internal static class RouteProfileBuilder
         }).ToArray();
         return new RoutePlan(settings.AddressFamily, settingsProfile.Features.Tailscale.Enabled,
             SingboxTags.MainProxyGroup, HttpClientTags.RuleSetProxy,
-            new DomainResolverPlan(SingboxTags.DirectAliDns, settings.AddressFamily.ForControlPlane(), true), ruleSets,
+            new DomainResolverPlan(SingboxTags.DirectAliDns, settings.AddressFamily, true), ruleSets,
             settingsProfile.Route.SniffTimeout,
             settingsProfile.Route.SniffExcludedPorts,
             settingsProfile.Route.Block,

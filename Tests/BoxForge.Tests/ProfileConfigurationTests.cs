@@ -59,14 +59,14 @@ public sealed class ProfileConfigurationTests
     [TestCase(TargetPlatform.Android)]
     [TestCase(TargetPlatform.Linux)]
     [TestCase(TargetPlatform.Windows)]
-    public async Task AutoAddressFamilyWorksThroughFilesEnvironmentAndRequestsWithoutChangingDefaults(TargetPlatform platform)
+    public async Task DualStackAddressFamilyWorksThroughFilesEnvironmentAndRequestsWithoutChangingDefaults(TargetPlatform platform)
     {
-        var overlay = JsonNode.Parse("""{"dns":{"address_family":"Auto"}}""")!.AsObject();
-        string path = Path.Combine(directory, "auto.json");
+        var overlay = JsonNode.Parse("""{"dns":{"address_family":"DualStack"}}""")!.AsObject();
+        string path = Path.Combine(directory, "dualstack.json");
         File.WriteAllText(path, overlay.ToJsonString());
         var environment = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
-            ["dns:address_family"] = "Auto"
+            ["dns:address_family"] = "DualStack"
         }).Build();
         foreach (BoxForgeProfile profile in new[]
         {
@@ -79,37 +79,33 @@ public sealed class ProfileConfigurationTests
             JsonElement dns = root.GetProperty("dns");
             Assert.Multiple(() =>
             {
-                Assert.That(profile.Resolve(platform).Settings.AddressFamily, Is.EqualTo(AddressFamilyPolicy.Auto));
+                Assert.That(profile.Resolve(platform).Settings.AddressFamily, Is.EqualTo(AddressFamilyPolicy.DualStack));
                 Assert.That(dns.TryGetProperty("strategy", out _), Is.False);
                 Assert.That(dns.GetProperty("rules")[0].GetProperty("server").GetString(), Is.EqualTo("dns-tailscale"));
-                Assert.That(dns.GetProperty("rules")[1].GetProperty("rules")[1]
-                    .GetProperty("default_interface_address")[0].GetString(), Is.EqualTo("2000::/3"));
+                Assert.That(root.GetProperty("route").GetProperty("rules").EnumerateArray()
+                    .Any(rule => rule.TryGetProperty("ip_version", out var version) && version.GetInt32() == 6), Is.False);
                 Assert.That(root.GetProperty("inbounds")[0].GetProperty("address").EnumerateArray()
                     .Select(value => value.GetString()).Any(value => value!.Contains(':')), Is.True);
             });
         }
         using var provider = CreateProvider(null);
         var engine = provider.GetRequiredService<IBoxForgeEngine>();
-        var request = new ConversionRequest("auto", Yaml("US01"), [platform]);
-        var custom = await engine.ConvertAsync(request with
-        {
-            Profile = JsonNode.Parse("""{"dns":{"address_family":"DirectDualStack"}}""")!.AsObject()
-        });
-        var explicitAuto = await engine.ConvertAsync(request with { Profile = overlay });
+        var request = new ConversionRequest("dualstack", Yaml("US01"), [platform]);
+        var explicitDualStack = await engine.ConvertAsync(request with { Profile = overlay });
         var explicitDefault = await engine.ConvertAsync(request with
         {
             Profile = JsonNode.Parse("""{"dns":{"address_family":"Ipv4Only"}}""")!.AsObject()
         });
         var ordinary = await engine.ConvertAsync(request);
-        using var customJson = JsonDocument.Parse(custom.Artifacts.Single().Content);
+        using var dualStackJson = JsonDocument.Parse(explicitDualStack.Artifacts.Single().Content);
         using var ordinaryJson = JsonDocument.Parse(ordinary.Artifacts.Single().Content);
         Assert.That(explicitDefault.Artifacts.Single().Content, Is.EqualTo(ordinary.Artifacts.Single().Content));
-        Assert.That(explicitAuto.Artifacts.Single().Content, Is.Not.EqualTo(ordinary.Artifacts.Single().Content));
+        Assert.That(explicitDualStack.Artifacts.Single().Content, Is.Not.EqualTo(ordinary.Artifacts.Single().Content));
         Assert.Multiple(() =>
         {
-            Assert.That(customJson.RootElement.GetProperty("dns").TryGetProperty("strategy", out _), Is.False);
-            Assert.That(customJson.RootElement.GetProperty("dns").GetProperty("rules")[1]
-                .GetProperty("rules")[1].GetProperty("default_interface_address")[0].GetString(), Is.EqualTo("2000::/3"));
+            Assert.That(dualStackJson.RootElement.GetProperty("dns").TryGetProperty("strategy", out _), Is.False);
+            Assert.That(dualStackJson.RootElement.GetProperty("route").GetProperty("rules").EnumerateArray()
+                .Any(rule => rule.TryGetProperty("ip_version", out var version) && version.GetInt32() == 6), Is.False);
             Assert.That(ordinaryJson.RootElement.GetProperty("dns").GetProperty("strategy").GetString(), Is.EqualTo("ipv4_only"));
             Assert.That(ordinaryJson.RootElement.GetProperty("dns").GetProperty("rules")[0]
                 .GetProperty("query_type")[0].GetString(), Is.EqualTo("AAAA"));
@@ -120,9 +116,9 @@ public sealed class ProfileConfigurationTests
     [TestCase(TargetPlatform.Android)]
     [TestCase(TargetPlatform.Linux)]
     [TestCase(TargetPlatform.Windows)]
-    public async Task AutoUsesGlobalIpv4ResolutionForConstrainedAndUnconstrainedNodes(TargetPlatform platform)
+    public async Task DualStackUsesIpv4ResolverOnlyForConstrainedNodes(TargetPlatform platform)
     {
-        var profile = Load("""{"dns":{"address_family":"Auto"}}""");
+        var profile = Load("""{"dns":{"address_family":"DualStack"}}""");
         string yaml = Yaml("constrained") + "    ip-version: ipv4\n" + Yaml("unconstrained")["proxies:\n".Length..];
         using var document = await Generate(profile, platform, yaml);
         JsonElement[] proxies = document.RootElement.GetProperty("outbounds").EnumerateArray()
@@ -132,8 +128,9 @@ public sealed class ProfileConfigurationTests
         Assert.Multiple(() =>
         {
             Assert.That(document.RootElement.GetProperty("route").GetProperty("default_domain_resolver")
-                .GetProperty("strategy").GetString(), Is.EqualTo("ipv4_only"));
-            Assert.That(constrained.TryGetProperty("domain_resolver", out _), Is.False);
+                .TryGetProperty("strategy", out _), Is.False);
+            Assert.That(constrained.GetProperty("domain_resolver").GetProperty("strategy").GetString(),
+                Is.EqualTo("ipv4_only"));
             Assert.That(unconstrained.TryGetProperty("domain_resolver", out _), Is.False);
         });
     }

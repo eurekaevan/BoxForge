@@ -112,7 +112,7 @@ public sealed class ProfileHostConfigurationTests
             [prefix + "features:tailscale:enabled"] = " FALSE ",
             [prefix + "route:strict_route"] = strictRoute,
             [prefix + "route:sniff_excluded_ports"] = "{\"replace\":[22,3306]}",
-            [prefix + "dns:address_family"] = "Auto",
+            [prefix + "dns:address_family"] = "DualStack",
             [prefix + "dns:cache_capacity"] = "1234",
             [prefix + "tuning:url_test_tolerance"] = "123"
         }).Build();
@@ -124,7 +124,7 @@ public sealed class ProfileHostConfigurationTests
             Assert.That(profile.Features.Api.Enabled, Is.True);
             Assert.That(profile.Features.Tailscale.Enabled, Is.False);
             Assert.That(profile.Settings.StrictRoute, Is.EqualTo(strictRoute == "null" ? (bool?)null : true));
-            Assert.That(profile.Settings.AddressFamily, Is.EqualTo(AddressFamilyPolicy.Auto));
+            Assert.That(profile.Settings.AddressFamily, Is.EqualTo(AddressFamilyPolicy.DualStack));
             Assert.That(snapshot.GetProperty("dns").GetProperty("cache_capacity").GetUInt32(), Is.EqualTo(1234));
             Assert.That(profile.Tuning.UrlTestTolerance, Is.EqualTo(123));
             Assert.That(snapshot.GetProperty("route").GetProperty("sniff_excluded_ports").EnumerateArray().Select(item => item.GetInt32()),

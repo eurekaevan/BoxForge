@@ -125,19 +125,19 @@ internal sealed record ConfigurationPlan(
             ValidateResolver(resolver, path);
             var matchingNodes = nodesByName[node];
             // Duplicate names retain the target validator's SB009 diagnostic.
-            if (matchingNodes.Count() == 1 && (AddressFamily.ForControlPlane() == AddressFamilyPolicy.Ipv4Only
+            if (matchingNodes.Count() == 1 && (AddressFamily == AddressFamilyPolicy.Ipv4Only
                 || matchingNodes.First().AddressFamily != AddressFamilyPolicy.Ipv4Only))
                 diagnostics.Add(new("IR011", path, "独立节点解析器仅用于双栈控制面下来源声明 IPv4 限制的节点。"));
         }
         for (int index = 0; index < Nodes.Count; index++)
         {
             ProxyNode node = Nodes[index];
-            if (AddressFamily.ForControlPlane() != AddressFamilyPolicy.Ipv4Only && node.AddressFamily == AddressFamilyPolicy.Ipv4Only
+            if (AddressFamily == AddressFamilyPolicy.DualStack && node.AddressFamily == AddressFamilyPolicy.Ipv4Only
                 && (!NodeResolvers.TryGetValue(node.Name, out var binding)
                     || binding != new DomainResolverPlan(SingboxTags.DirectAliDns, AddressFamilyPolicy.Ipv4Only, true)))
                 diagnostics.Add(new("IR011", $"plan.nodes[{index}].domain_resolver", "来源 IPv4 限制必须绑定独立的 IPv4 解析器。"));
         }
-        if (Route.DefaultDomainResolver != new DomainResolverPlan(SingboxTags.DirectAliDns, AddressFamily.ForControlPlane(), true))
+        if (Route.DefaultDomainResolver != new DomainResolverPlan(SingboxTags.DirectAliDns, AddressFamily, true))
             diagnostics.Add(new("IR011", "plan.route.default_domain_resolver", "默认解析器绑定必须符合平台地址族和控制面策略。"));
         for (int index = 0; index < HttpClients.Count; index++)
         {
@@ -146,9 +146,7 @@ internal sealed record ConfigurationPlan(
                 Require(targets, detour, "IR003", $"plan.http_clients[{index}].detour");
             ValidateResolver(client.Resolver, $"plan.http_clients[{index}].resolver");
             Require(resolvers, client.Resolver.Server, "IR006", $"plan.http_clients[{index}].resolver");
-            var family = client.Name == HttpClientTags.DashboardDirect && client.Name != Route.DefaultHttpClient
-                ? AddressFamily : AddressFamily.ForControlPlane();
-            if (client.Resolver != new DomainResolverPlan(SingboxTags.DirectAliDns, family, true))
+            if (client.Resolver != new DomainResolverPlan(SingboxTags.DirectAliDns, AddressFamily, true))
                 diagnostics.Add(new("IR011", $"plan.http_clients[{index}].resolver", "HTTP 解析器必须符合客户端角色的地址族策略并禁用 optimistic 过期缓存。"));
         }
         var clients = HttpClients.Select(client => client.Name).ToHashSet(StringComparer.Ordinal);

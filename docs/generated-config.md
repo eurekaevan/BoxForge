@@ -52,24 +52,14 @@ ULA 前缀由安全随机源一次生成并固定在内置 profile 中，三个�
 默认 `Ipv4Only` 为全局 IPv4：保留双栈 TUN 捕获，但 AAAA 查询无条件返回空答，
 单道 `ip_version: 6` 拒绝无条件生效，位于 DNS 劫持之后、任何 DIRECT、Tailscale 或 sniff 之前。
 直连和代理流量均不使用 IPv6，应用能否重试 IPv4 由应用自身决定。
-覆盖为 `DirectDualStack` 时代理流量仅 IPv4、直连流量保留 IPv6：
-先处理 Tailscale 和私网直连，再于 sniff 之前生成单道条件 IPv6 拒绝：
-出口接口缺少 `2000::/3` 公网 IPv6 地址或无法取得接口信息时，拒绝其余 IPv6；
-DNS 同样先处理 Tailscale 查询，再在上述出口条件下对其余 AAAA 返回空答。此外，代理服务的规则集在服务分流之前、全部规则之后的最终出口之前
-按各自优先级设置 `ip_version: 6` 拒绝；DNS 不按解析池类别过滤 AAAA。
-因此只有 `cn`、`cnip`、私网和 Tailscale 的 IPv6 可以离开 TUN，其余 IPv6 一律拒绝；应用能否重试 IPv4 由应用自身决定。
-有地址不保证公网可达，该策略不探测链路质量，也不主动刷新已有 DNS 缓存。
-Android 依赖客户端提供当前默认物理接口和地址，尚未完成真机验证；
-未提供信息时拒绝未被 Tailscale 或私网直连处理的客户端 IPv6。
-覆盖为 `Auto` 时客户端只保留上述出口条件守卫，代理类别不额外拒绝客户端 IPv6，
-出口条件允许时可通过 IPv4 代理节点访问 IPv6 目标；节点连接及规则集下载控制面固定使用 IPv4。
-覆盖为 `DualStack` 时不生成这些拒绝规则。TUN 捕获地址本身不代表 IPv6 连通能力。
+覆盖为 `DualStack` 时不生成 AAAA 空答或 IPv6 拒绝规则，客户端 DNS、路由与代理控制面均保留双栈。
+TUN 捕获地址本身不代表 IPv6 连通能力。
 详见[地址族策略](routing-and-dns.md#dns-分类与控制面解析)。
 
 源节点显式提供 `ip-version: ipv4` 时，仍保留该节点的 IPv4 解析约束：
 仅 `DualStack` 下为该节点设置独立的 `domain_resolver`，绑定 `dns-direct-alidns`、
 `strategy: ipv4_only` 并禁用 optimistic cache。省略该字段的节点继承平台策略；
-`Ipv4Only`、`Auto`、`DirectDualStack` 下继承已有的全局控制面 IPv4 限制，不重复生成节点 resolver。其他 `ip-version` 值仍拒绝。
+`Ipv4Only` 下继承已有的全局控制面 IPv4 限制，不重复生成节点 resolver。其他 `ip-version` 值仍拒绝。
 
 `route.auto_redirect` 仅控制 TUN 的内核重定向实现，不改变路由规则或直连行为。
 `auto_redirect: true` 支持 Linux 和 root Android；Android 需要 root 服务或 root shell，普通 VPN 客户端不支持。
@@ -99,16 +89,15 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
   NXDOMAIN。两家都失败时明确返回 `SERVFAIL`；详见
   [DNS 分类与回退](routing-and-dns.md)。
 - DNS 默认使用 `Ipv4Only`，设置 `dns.strategy = ipv4_only` 并让全部客户端 AAAA 查询在规则链首部返回空 `NOERROR`；
-  覆盖为 `DirectDualStack` 或 `Auto` 时不强制客户端 DNS 的解析地址族，先处理 Tailscale 查询，再在出口缺少公网 IPv6 地址或接口信息未知时对其余 AAAA 返回空答，
-  有公网 IPv6 出口时，各解析池均保留 AAAA，真实目标的 IPv6 转发限制由路由负责。
+  覆盖为 `DualStack` 时不强制客户端 DNS 的解析地址族，各解析池均保留 AAAA，也不生成 AAAA 空答规则。
   缓存容量为 `4096`，启用 reverse mapping；全局 `optimistic.enabled` 为 `false`，
   所有解析只使用 TTL 内的缓存。
 - 代理节点和 Tailscale endpoint 继承
   `route.default_domain_resolver`：直连固定 tag `dns-direct-alidns`（默认 AliDNS，可覆盖端点）、禁用 optimistic
-  过期缓存。`Ipv4Only`、`Auto` 与 `DirectDualStack` 强制该 resolver 使用 `ipv4_only`，使节点连接、
+  过期缓存。`Ipv4Only` 强制该 resolver 使用 `ipv4_only`，使节点连接、
   rule-set 下载等代理控制面不依赖 IPv6，其域名解析不进入 client DNS 分类规则；仅 `DualStack` 不强制。
-  `Ipv4Only`、`Auto` 与 `DirectDualStack` 均在生成时拒绝 IPv6 字面量代理节点；DIRECT 显式绑定同一 DNS tag，`Auto`、`DualStack`、`DirectDualStack` 使用 `prefer_ipv4`，`Ipv4Only` 保持 `ipv4_only`。
-- rule-set HTTP client 显式使用代理控制面解析设置；Dashboard HTTP client 直连，按平台地址族解析（`Auto`、`DirectDualStack` 下不强制 IPv4），两者均禁用 optimistic 缓存；
+  `Ipv4Only` 在生成时拒绝 IPv6 字面量代理节点；DIRECT 显式绑定同一 DNS tag，`DualStack` 使用 `prefer_ipv4`，`Ipv4Only` 保持 `ipv4_only`。
+- rule-set HTTP client 显式使用代理控制面解析设置；Dashboard HTTP client 直连，按平台地址族解析（`DualStack` 下不强制 IPv4），两者均禁用 optimistic 缓存；
   Tailscale split DNS 也禁用 optimistic 过期缓存。
 - `experimental.cache_file` 使用 `cache.db`，并通过 `store_dns` 持久化 DNS 缓存。
 - `cache_id` 是配置名、平台小写标识与生成 DNS 模型的结构化 JSON 经 UTF-8 编码后的 SHA-256，输出 64 位小写十六进制。
@@ -181,7 +170,7 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
   复用主组的回退顺序。下载出口固定绑定该 AUTO 或节点，即使主组被手动切到
   `DIRECT`，rule-set 下载也不会随之改走直连。下载域名仍由
   `dns-direct-alidns` 直连解析，以免代理 DNS 成为冷启动依赖；
-  `Ipv4Only`、`Auto` 与 `DirectDualStack` 设置 `ipv4_only`，仅 `DualStack` 不强制解析地址族。
+  `Ipv4Only` 设置 `ipv4_only`，`DualStack` 不强制解析地址族。
 - 规则集来源与内部 tag 的映射如下；代码中的 DNS/route 引用只使用内部 tag，
   不依赖上游文件名。八个 tag 均唯一声明，默认按 `1d` 更新；可通过
   [profile 显式数组操作](configuration.md#数组操作)替换完整来源实体，不自动拆分批量来源。
@@ -205,10 +194,6 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
   `games-cn`；具体覆盖范围由上游规则维护。
 - `Ipv4Only` 下，全部 IPv6 使用原生 `ip_version: 6` 匹配，并在 DIRECT、Tailscale 和所有
   代理业务路由之前被拒绝。不生成仅供 mixed 域名目标使用的 `resolve` 和复检规则。
-- `DirectDualStack` 先处理私网和 Tailscale 的 IPv6，不要求公网 IPv6 出口；`cn`、`cnip` 直连路径的 IPv6 仍要求出口条件允许且未先命中优先服务拒绝规则。
-  `true` 服务的 IPv6 在国内直连之前被拒绝；`false` 服务与国内规则重叠时先直连，否则在该服务阶段被拒绝。
-  未命中任何规则的 IPv6 在 `route.final` 之前被最终拒绝。
-  地址族限制按固定路由类别生效；即使用户把服务组或最终出口组手动切到 `DIRECT`，该类别的 IPv6 仍会被拒绝，不能保证应用自动回退 IPv4。
 - TCP HTTP/TLS 嗅探排除 `21/22/3306/5900`，避免这些端口上客户端等待服务器
   先发数据时产生嗅探超时等待；排除只作用于 sniff，不跳过任何后续分流或拒绝规则。
   其他端口继续使用 `300ms` 嗅探预算，保留 `8080/8443` 等非标准 Web 端口的
@@ -218,7 +203,7 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
   QUIC 和 STUN，并拒绝识别出的 STUN 协议；不根据 3478、3479、19302 或
   19303 等固定端口拒绝普通 UDP 流量。
 - TCP、UDP 的所有端口均按优先服务 → 国内直连 → 普通服务 → 最终出口分流。
-  UDP/443 不因端口统一拒绝，也不强制 QUIC 回退 TCP；STUN、广告以及 `Ipv4Only`、`DirectDualStack` 的 IPv6 拒绝仍生效。
+  UDP/443 不因端口统一拒绝，也不强制 QUIC 回退 TCP；STUN、广告以及 `Ipv4Only` 的 IPv6 拒绝仍生效。
   实际 QUIC/HTTP/3 可用性取决于所选代理和网络的 UDP 支持。
 
 ## TCP、TLS 与 Reality

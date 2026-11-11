@@ -22,10 +22,9 @@ internal static class ConfigurationPlanner
         bool apiEnabled = settings.Features.Api.Enabled;
         string ruleSetDetour = groups.Regions.FirstOrDefault(region => region.Name == groups.Main.Preferred)?.Preferred
             ?? groups.Main.Preferred;
-        AddressFamilyPolicy controlPlaneFamily = platform.AddressFamily.ForControlPlane();
         var clients = new List<HttpClientPlan>
         {
-            new(HttpClientTags.RuleSetProxy, ruleSetDetour, new DomainResolverPlan(SingboxTags.DirectAliDns, controlPlaneFamily, true))
+            new(HttpClientTags.RuleSetProxy, ruleSetDetour, new DomainResolverPlan(SingboxTags.DirectAliDns, platform.AddressFamily, true))
         };
         if (apiEnabled)
             clients.Add(new HttpClientPlan(HttpClientTags.DashboardDirect, null, new DomainResolverPlan(SingboxTags.DirectAliDns, platform.AddressFamily, true)));
@@ -36,7 +35,7 @@ internal static class ConfigurationPlanner
         {
             DirectResolver = new DomainResolverPlan(SingboxTags.DirectAliDns, platform.AddressFamily, true, true),
             NodeResolvers = nodes.Nodes.Where(node => node.AddressFamily == AddressFamilyPolicy.Ipv4Only
-                    && controlPlaneFamily != AddressFamilyPolicy.Ipv4Only)
+                    && platform.AddressFamily == AddressFamilyPolicy.DualStack)
                 .DistinctBy(node => node.Name, StringComparer.Ordinal)
                 .ToImmutableDictionary(node => node.Name,
                     _ => new DomainResolverPlan(SingboxTags.DirectAliDns, AddressFamilyPolicy.Ipv4Only, true), StringComparer.Ordinal)
