@@ -4,6 +4,9 @@
 Usage: python3 scripts/verify-dns-races.py /path/to/sing-box /path/to/platform/config.json
 Requires generated Ipv4Only or DualStack DNS with a 3s query timeout,
 the default services/domain blocks, Python 3 and OpenSSL.
+FakeIp configurations additionally exercise synthetic answers, domestic RealIP
+fallback, exceptions and non-address queries; RealIP configurations exercise the
+full resolver race and cache matrix.
 No TUN, real upstreams, or proxy credentials are used.
 """
 
@@ -124,6 +127,10 @@ async def main(core, generated):
     dns = generated["dns"]
     parallel = any(rule.get("race") is True for rule in dns.get("rules", []))
     ipv4_only = dns.get("strategy") == "ipv4_only"
+    fakeip_servers = [server for server in dns.get("servers", []) if server.get("type") == "fakeip"]
+    if len(fakeip_servers) > 1:
+        raise ValueError("DNS verification supports at most one FakeIP server")
+    fakeip_mode = bool(fakeip_servers)
     address_queries = [("A", "0.0.0.0/0")] + ([] if ipv4_only else [("AAAA", "::/0")])
     if (dns.get("strategy") not in ("ipv4_only", None)
             or dns.get("timeout") != "3s"
@@ -182,6 +189,9 @@ async def main(core, generated):
         servers = []
         for server in dns["servers"]:
             if server["type"] == "tailscale":
+                continue
+            if server["type"] == "fakeip":
+                servers.append(copy.deepcopy(server))
                 continue
             tag = server["tag"]
             if tag == "dns-direct-alidns":
@@ -268,7 +278,89 @@ async def main(core, generated):
             specs[2], specs[3] = (0.03, "a", 60), (0.7, "a", 60)
             result = await query(f"allowed-{name}", name)
             assert (result["rcode"], result["answers"]) == (0, 1), result
-            assert any(event[0] == name for event in events), name
+            if fakeip_mode and name == "pcdn.biliapi.net.evil":
+                assert ipaddress.ip_address(result["ipv4"][0]) in ipaddress.ip_network(fakeip_servers[0]["inet4_range"]), result
+                assert not any(event[0] == name for event in events), name
+            else:
+                assert any(event[0] == name for event in events), name
+
+        if fakeip_mode:
+            fakeip = fakeip_servers[0]
+            if fakeip.get("tag") != "dns-fakeip":
+                raise ValueError(f"Unexpected FakeIP server tag: {fakeip.get('tag')}")
+            inet4 = ipaddress.ip_network(fakeip["inet4_range"])
+            inet6 = ipaddress.ip_network(fakeip["inet6_range"]) if fakeip.get("inet6_range") else None
+            if ipv4_only and inet6 is not None:
+                raise ValueError("Ipv4Only FakeIP config must omit inet6_range")
+            if not ipv4_only and inet6 is None:
+                raise ValueError("DualStack FakeIP config must include inet6_range")
+            rules = [rule for rule in dns["rules"] if rule.get("server") == "dns-fakeip"]
+            if not rules or any(rule.get("action") != "route" for rule in rules):
+                raise ValueError("FakeIP server must be reached through DNS route rules")
+            for rule in rules:
+                if any("cn" in child.get("rule_set", []) for child in rule.get("rules", [])):
+                    raise ValueError("FakeIP rules must not override the domestic cn pool")
+                if not any(child.get("query_type") for child in rule.get("rules", [])):
+                    raise ValueError("FakeIP rules must be limited to address queries")
+            if generated.get("experimental", {}).get("cache_file", {}).get("store_fakeip") is not True:
+                raise ValueError("FakeIP mode must enable experimental.cache_file.store_fakeip")
+
+            results.clear()
+            service = await query("fakeip-service", "google.test", 1)
+            assert service["rcode"] == 0 and len(service["ipv4"]) == 1, service
+            assert ipaddress.ip_address(service["ipv4"][0]) in inet4, service
+            assert not any(event[0] == "google.test" for event in events), "FakeIP queries must not reach DoH upstreams"
+
+            service_aaaa = await query("fakeip-service-aaaa", "google.test", 28)
+            if ipv4_only:
+                assert (service_aaaa["rcode"], service_aaaa["answers"]) == (0, 0), service_aaaa
+            else:
+                assert service_aaaa["rcode"] == 0 and len(service_aaaa["ipv6"]) == 1, service_aaaa
+                assert ipaddress.ip_address(service_aaaa["ipv6"][0]) in inet6, service_aaaa
+
+            specs[0], specs[1] = (0.03, "a", 60), (0.7, "a", 60)
+            domestic = await query("fakeip-domestic", "domestic.cn.test", 1)
+            assert (domestic["rcode"], domestic["answers"]) == (0, 1), domestic
+            assert domestic["ipv4"] and ipaddress.ip_address(domestic["ipv4"][0]) not in inet4, domestic
+            observed = {event[1] for event in events if event[0] == "domestic.cn.test"}
+            assert observed and observed <= {0, 1}, observed
+
+            global_name = "global-only.test"
+            global_result = await query("fakeip-global", global_name, 1)
+            assert global_result["rcode"] == 0 and len(global_result["ipv4"]) == 1, global_result
+            assert ipaddress.ip_address(global_result["ipv4"][0]) in inet4, global_result
+            assert not any(event[0] == global_name for event in events), "Global FakeIP queries must not reach DoH upstreams"
+
+            overlap = await query("fakeip-service-overlap", "google-overlap.test", 1)
+            assert overlap["rcode"] == 0 and len(overlap["ipv4"]) == 1, overlap
+            assert ipaddress.ip_address(overlap["ipv4"][0]) in inet4, overlap
+            assert not any(event[0] == "google-overlap.test" for event in events), "Priority services must stay ahead of domestic"
+
+            specs[2], specs[3] = (0.03, "record", 60), (0.05, "record", 60)
+            non_address = await query("fakeip-non-address", "records.google.test", 16)
+            assert (non_address["rcode"], non_address["answers"]) == (0, 1), non_address
+            assert non_address["records"] == [NON_ADDRESS_RECORDS[16].hex()], non_address
+            observed = {event[1] for event in events if event[0] == "records.google.test"}
+            assert observed and observed <= {2, 3}, observed
+
+            exception_names = []
+            for rule in rules:
+                for child in rule.get("rules", []):
+                    if child.get("invert") is not True:
+                        continue
+                    exception_names.extend(child.get("domain", []))
+                    exception_names.extend(f"probe.{suffix}" for suffix in child.get("domain_suffix", []))
+            if exception_names:
+                exception_name = exception_names[0]
+                specs[:] = [(0.01, "a", 60)] * 4
+                exception = await query("fakeip-exception", exception_name, 1)
+                assert (exception["rcode"], exception["answers"]) == (0, 1), exception
+                assert exception["ipv4"] and ipaddress.ip_address(exception["ipv4"][0]) not in inet4, exception
+                assert any(event[0] == exception_name for event in events), "RealIP exceptions must reach a real resolver"
+
+            print(f"PASS: {len(results)} FakeIP DNS scenarios", flush=True)
+            return
+
         # Each row uses a unique name to prevent earlier cases from warming its cache.
         cases = [
             ("fast-primary", "google", "a", "a", .03, .7, 1, 0, 1),

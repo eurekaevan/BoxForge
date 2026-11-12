@@ -31,12 +31,19 @@ internal static class DnsProfileBuilder
         pools.Add(new DnsResolverPoolPlan(DnsPoolKind.Global, default,
             SingboxTags.ProxyCloudflareDns, SingboxTags.ProxyGoogleDns));
         bool tailscaleEnabled = settingsProfile.Features.Tailscale.Enabled;
+        FakeIpProfile fakeIp = settingsProfile.Dns.FakeIp;
         return new DnsPlan(settings.AddressFamily, settings.DnsSelectionMode,
             resolvers, tailscaleEnabled,
             SingboxTags.ProxyCloudflareDns,
             settingsProfile.Dns.Timeout, settingsProfile.Dns.CacheCapacity,
             settingsProfile.Route.Block)
         {
+            AddressMode = settings.DnsAddressMode,
+            FakeIp = settings.DnsAddressMode == DnsAddressMode.FakeIp
+                ? new FakeIpPlan(fakeIp.Inet4Range, fakeIp.Inet6Range,
+                    [.. fakeIp.RealIpDomains.Select(domain => domain.ToLowerInvariant())],
+                    [.. fakeIp.RealIpDomainSuffixes.Select(domain => domain.ToLowerInvariant())])
+                : null,
             Pools = pools.ToImmutable()
         };
     }

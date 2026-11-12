@@ -1,6 +1,8 @@
 using BoxForge.Exceptions;
 using System.Collections.Immutable;
+using System.Net;
 using BoxForge.Configuration;
+using BoxForge.Helpers;
 
 namespace BoxForge.Models.Intermediate;
 
@@ -14,6 +16,8 @@ internal sealed record DnsPlan(
     uint CacheCapacity,
     DomainBlockProfile Block)
 {
+    internal DnsAddressMode AddressMode { get; init; } = DnsAddressMode.RealIp;
+    internal FakeIpPlan? FakeIp { get; init; }
     internal required ImmutableArray<DnsResolverPoolPlan> Pools { get; init; }
 
     internal void Validate()
@@ -29,6 +33,7 @@ internal sealed record DnsPlan(
             diagnostics.Add(new("IR008", "plan.dns.address_family", "DNS 地址族无效。"));
         if (!Enum.IsDefined(SelectionMode))
             diagnostics.Add(new("IR008", "plan.dns.selection_mode", "DNS 选择模式无效。"));
+        ValidateFakeIp(diagnostics);
         var resolvers = new HashSet<string>(StringComparer.Ordinal);
         for (int index = 0; index < Resolvers.Count; index++)
         {
@@ -82,7 +87,62 @@ internal sealed record DnsPlan(
         if (Pools.Count(pool => pool?.Kind == DnsPoolKind.Domestic) != 1)
             diagnostics.Add(new("IR011", "plan.dns.pools", "DNS 必须包含唯一的国内解析池。"));
     }
+
+    private void ValidateFakeIp(List<ConfigDiagnostic> diagnostics)
+    {
+        if (!Enum.IsDefined(AddressMode))
+        {
+            diagnostics.Add(new("IR008", "plan.dns.address_mode", "DNS 地址模式无效。"));
+            return;
+        }
+        if (AddressMode != DnsAddressMode.FakeIp)
+        {
+            if (FakeIp is not null)
+                diagnostics.Add(new("IR008", "plan.dns.fakeip", "RealIp 模式不能包含 FakeIP 计划。"));
+            return;
+        }
+        if (FakeIp is not { } fakeIp)
+        {
+            diagnostics.Add(new("IR008", "plan.dns.fakeip", "FakeIp 模式必须包含 FakeIP 计划。"));
+            return;
+        }
+        if (!CidrHelper.TryParseCanonical(fakeIp.Inet4Range, out Cidr inet4)
+            || inet4.Family != System.Net.Sockets.AddressFamily.InterNetwork)
+            diagnostics.Add(new("IR008", "plan.dns.fakeip.inet4_range", "FakeIP IPv4 范围无效。"));
+        if (fakeIp.Inet6Range is { } inet6Range)
+        {
+            if (!CidrHelper.TryParseCanonical(inet6Range, out Cidr inet6)
+                || inet6.Family != System.Net.Sockets.AddressFamily.InterNetworkV6)
+                diagnostics.Add(new("IR008", "plan.dns.fakeip.inet6_range", "FakeIP IPv6 范围无效。"));
+        }
+        else if (AddressFamily == AddressFamilyPolicy.DualStack)
+            diagnostics.Add(new("IR008", "plan.dns.fakeip.inet6_range", "DualStack 的 FakeIP 必须提供 IPv6 范围。"));
+        ValidateDomainList(fakeIp.RealIpDomains, "plan.dns.fakeip.realip_domains", diagnostics);
+        ValidateDomainList(fakeIp.RealIpDomainSuffixes, "plan.dns.fakeip.realip_domain_suffixes", diagnostics);
+    }
+
+    private static void ValidateDomainList(ImmutableArray<string> domains, string path, List<ConfigDiagnostic> diagnostics)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (int index = 0; index < domains.Length; index++)
+        {
+            string value = domains[index];
+            if (string.IsNullOrEmpty(value) || value.Length > 253 || IPAddress.TryParse(value, out _)
+                || value.Split('.').Any(label => label.Length is < 1 or > 63
+                    || label[0] == '-' || label[^1] == '-'
+                    || label.Any(c => !char.IsAsciiLetterOrDigit(c) && c != '-')))
+                diagnostics.Add(new("IR008", $"{path}[{index}]", "FakeIP 例外必须为 ASCII 域名。"));
+            else if (!seen.Add(value))
+                diagnostics.Add(new("IR011", $"{path}[{index}]", "FakeIP 例外域名不能重复。"));
+        }
+    }
 }
+
+internal sealed record FakeIpPlan(
+    string Inet4Range,
+    string? Inet6Range,
+    ImmutableArray<string> RealIpDomains,
+    ImmutableArray<string> RealIpDomainSuffixes);
 
 internal sealed record DnsHttpsResolverPlan(string Name, string Address, string ServerName, string? Detour);
 

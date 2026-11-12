@@ -51,7 +51,7 @@ internal sealed class SingboxConfigBuilder : ISingboxConfigBuilder
             Outbounds = orderedOutbounds,
             Route = SingboxRouteEmitter.Emit(plan.Route),
             Services = services.Count > 0 ? services : null,
-            Experimental = ExperimentalBuilder.Build(cacheId)
+            Experimental = ExperimentalBuilder.Build(cacheId, plan.Dns.AddressMode)
         };
     }
 }

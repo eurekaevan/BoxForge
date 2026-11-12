@@ -207,6 +207,155 @@ public sealed class DnsProfileBuilderTests
         });
     }
 
+    [TestCase(AddressFamilyPolicy.Ipv4Only)]
+    [TestCase(AddressFamilyPolicy.DualStack)]
+    public void FakeIpModeEmitsServerAndScopedRulesWithoutReplacingDomesticResolution(AddressFamilyPolicy family)
+    {
+        var profile = BoxForgeProfile.Default.Resolve(TargetPlatform.Linux, JsonSerializer.SerializeToNode(new
+        {
+            features = new { tailscale = new { enabled = false } },
+            dns = new { address_family = family.ToString(), address_mode = "FakeIp" }
+        })!.AsObject());
+        DnsPlan plan = DnsProfileBuilder.Plan(profile);
+        Assert.DoesNotThrow(plan.Validate);
+        DnsConfig dns = SingboxDnsEmitter.Emit(plan);
+        FakeIpDnsServer fakeIp = dns.Servers.OfType<FakeIpDnsServer>().Single();
+        DnsRule[] fakeIpRules = dns.Rules
+            .Where(rule => rule.Action == DnsRuleAction.Route && rule.Server == SingboxTags.FakeIpDns)
+            .ToArray();
+        int domesticStart = dns.Rules.FindIndex(rule => rule.Action == DnsRuleAction.Evaluate
+            && rule.RuleSet?.SequenceEqual([RuleSetTags.Cn]) == true);
+        int servicePoolCount = plan.Pools.Count(pool => pool.Kind == DnsPoolKind.Service);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(fakeIp.Tag, Is.EqualTo(SingboxTags.FakeIpDns));
+            Assert.That(fakeIp.Inet4Range, Is.EqualTo("198.18.0.0/15"));
+            Assert.That(fakeIp.Inet6Range, Is.EqualTo(family == AddressFamilyPolicy.DualStack ? "2001:2::/48" : null));
+            Assert.That(dns.Servers[plan.Resolvers.Count], Is.SameAs(fakeIp));
+            Assert.That(dns.Rules[0].QueryType,
+                family == AddressFamilyPolicy.Ipv4Only ? Is.EqualTo(new[] { "AAAA" }) : Is.Null);
+            Assert.That(fakeIpRules, Has.Length.EqualTo(plan.Pools.Count(pool => pool.Kind != DnsPoolKind.Domestic)));
+            Assert.That(fakeIpRules.All(rule => rule.Type == RouteRuleType.Logical
+                && rule.Mode == RouteLogicalMode.And
+                && rule.Action == DnsRuleAction.Route
+                && rule.Rules is not null), Is.True);
+            Assert.That(fakeIpRules.Count(rule => rule.Rules!.Any(child => child.RuleSet is not null)),
+                Is.EqualTo(servicePoolCount));
+            Assert.That(fakeIpRules.Single(rule => rule.Rules!.All(child => child.RuleSet is null)).Rules, Has.Count.EqualTo(1));
+            Assert.That(fakeIpRules.All(rule =>
+            {
+                DnsRule query = rule.Rules!.Single(child => child.QueryType is not null);
+                return query.QueryType!.SequenceEqual(family == AddressFamilyPolicy.Ipv4Only ? ["A"] : ["A", "AAAA"]);
+            }), Is.True);
+            Assert.That(fakeIpRules.SelectMany(rule => rule.Rules!.SelectMany(child => child.RuleSet ?? []))
+                .Contains(RuleSetTags.Cn), Is.False);
+            Assert.That(domesticStart, Is.GreaterThan(0));
+            Assert.That(dns.Rules[domesticStart - 1].Server, Is.Not.EqualTo(SingboxTags.FakeIpDns));
+            Assert.That(fakeIpRules.All(rule =>
+                dns.Rules[dns.Rules.IndexOf(rule) + 1].Action == DnsRuleAction.Evaluate), Is.True);
+        });
+    }
+
+    [Test]
+    public void FakeIpRulesFollowServicePriorityAndKeepExceptionsInsideTheirPool()
+    {
+        var profile = BoxForgeProfile.Default.Resolve(TargetPlatform.Linux, JsonSerializer.SerializeToNode(new
+        {
+            dns = new
+            {
+                address_mode = "FakeIp",
+                fakeip = new
+                {
+                    realip_domains = new { replace = new[] { "Example.COM" } },
+                    realip_domain_suffixes = new { replace = new[] { "Internal.Example" } }
+                }
+            },
+            route = new
+            {
+                services = new
+                {
+                    patch = new[] { new { id = "games", precedes_domestic_routes = false } }
+                }
+            }
+        })!.AsObject());
+        DnsPlan plan = DnsProfileBuilder.Plan(profile);
+        Assert.DoesNotThrow(plan.Validate);
+        Assert.That(plan.FakeIp!.RealIpDomains, Is.EqualTo(new[] { "example.com" }));
+        Assert.That(plan.FakeIp.RealIpDomainSuffixes, Is.EqualTo(new[] { "internal.example" }));
+
+        DnsConfig dns = SingboxDnsEmitter.Emit(plan);
+        List<DnsRule> fakeIpRules = dns.Rules
+            .Where(rule => rule.Action == DnsRuleAction.Route && rule.Server == SingboxTags.FakeIpDns)
+            .ToList();
+        Assert.That(fakeIpRules, Has.Count.EqualTo(plan.Pools.Count(pool => pool.Kind != DnsPoolKind.Domestic)));
+        foreach (DnsRule rule in fakeIpRules)
+        {
+            DnsRule exception = rule.Rules![^1];
+            Assert.Multiple(() =>
+            {
+                Assert.That(exception.Invert, Is.True);
+                Assert.That(exception.Domain, Is.EqualTo(new[] { "example.com" }));
+                Assert.That(exception.DomainSuffix, Is.EqualTo(new[] { "internal.example" }));
+            });
+        }
+
+        int priorityStart = fakeIpRules.FindIndex(rule =>
+            rule.Rules!.Any(child => child.RuleSet?.Contains("ai") == true));
+        int gamesStart = fakeIpRules.FindIndex(rule =>
+            rule.Rules!.Any(child => child.RuleSet?.Contains("games") == true));
+        int domesticStart = dns.Rules.FindIndex(rule => rule.Action == DnsRuleAction.Evaluate
+            && rule.RuleSet?.SequenceEqual([RuleSetTags.Cn]) == true);
+        Assert.Multiple(() =>
+        {
+            Assert.That(priorityStart, Is.GreaterThanOrEqualTo(0).And.LessThan(gamesStart));
+            Assert.That(dns.Rules.IndexOf(fakeIpRules[priorityStart]), Is.LessThan(domesticStart));
+            Assert.That(dns.Rules.IndexOf(fakeIpRules[gamesStart]), Is.GreaterThan(domesticStart));
+            Assert.That(dns.Rules[domesticStart - 1].Server, Is.Not.EqualTo(SingboxTags.FakeIpDns));
+            Assert.That(fakeIpRules.SelectMany(rule => rule.Rules!.SelectMany(child => child.RuleSet ?? []))
+                .Contains(RuleSetTags.Cn), Is.False);
+        });
+    }
+
+    [Test]
+    public void FakeIpPlanDiagnosticsRejectInconsistentModesRangesAndExceptions()
+    {
+        DnsPlan real = CreatePlan(TargetPlatform.Linux);
+        var withPlan = real with
+        {
+            FakeIp = new FakeIpPlan("198.18.0.0/15", "2001:2::/48", [], [])
+        };
+        var error = Assert.Throws<ConfigValidationException>(() => withPlan.Validate())!;
+        Assert.That(error.Diagnostics.Select(item => (item.Code, item.Path)),
+            Is.EqualTo(new[] { ("IR008", "plan.dns.fakeip") }));
+
+        DnsPlan fake = real with { AddressMode = DnsAddressMode.FakeIp };
+        error = Assert.Throws<ConfigValidationException>(() => fake.Validate())!;
+        Assert.That(error.Diagnostics.Select(item => (item.Code, item.Path)),
+            Is.EqualTo(new[] { ("IR008", "plan.dns.fakeip") }));
+
+        DnsPlan invalidRanges = fake with
+        {
+            FakeIp = new FakeIpPlan("198.18.1.0/15", null, ["not a domain"], ["internal.example"])
+        };
+        error = Assert.Throws<ConfigValidationException>(() => invalidRanges.Validate())!;
+        Assert.That(error.Diagnostics.Select(item => (item.Code, item.Path)), Is.EqualTo(new[]
+        {
+            ("IR008", "plan.dns.fakeip.inet4_range"),
+            ("IR008", "plan.dns.fakeip.realip_domains[0]")
+        }));
+
+        DnsPlan dualStack = real with
+        {
+            AddressFamily = AddressFamilyPolicy.DualStack,
+            AddressMode = DnsAddressMode.FakeIp,
+            FakeIp = new FakeIpPlan("198.18.0.0/15", null, [], [])
+        };
+        error = Assert.Throws<ConfigValidationException>(() => dualStack.Validate())!;
+        Assert.That(error.Diagnostics.Select(item => (item.Code, item.Path)),
+            Is.EqualTo(new[] { ("IR008", "plan.dns.fakeip.inet6_range") }));
+    }
+
     [Test]
     public void DnsDiagnosticsCollectPoolDependenciesInStableOrderWithoutDisclosingValues()
     {

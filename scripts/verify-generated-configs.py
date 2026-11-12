@@ -166,6 +166,26 @@ def verify(cli, supplied_core):
                     run_command([str(core), "check", "-c", str(config)], root,
                                 f"Official core positive case {config.relative_to(output)}")
                     count += 1
+        output = root / "fakeip"
+        environment = {key: value for key, value in os.environ.items()
+                       if not key.upper().startswith("BOXFORGE_")}
+        environment["BOXFORGE_dns__address_mode"] = "FakeIp"
+        run_command([
+            "dotnet", str(cli), "generate", "--input-dir", str(fixtures),
+            "--output-dir", str(output), "--platform", "all",
+        ], root, "CLI FakeIp generation", timeout=GENERATION_TIMEOUT, environment=environment)
+        configs = sorted(output.glob("*/*/config.json"))
+        if len(configs) != 15:
+            raise RuntimeError(f"Expected 15 FakeIp configurations, found {len(configs)} in {output}")
+        for config in configs:
+            payload = json.loads(config.read_text())
+            if not any(server.get("type") == "fakeip" for server in payload["dns"]["servers"]):
+                raise RuntimeError(f"FakeIp generation omitted the FakeIP DNS server: {config}")
+            if payload["experimental"]["cache_file"].get("store_fakeip") is not True:
+                raise RuntimeError(f"FakeIp generation omitted store_fakeip: {config}")
+            run_command([str(core), "check", "-c", str(config)], root,
+                        f"Official core FakeIp positive case {config.relative_to(output)}")
+            count += 1
         rejected = verify_rejections(core, root, output)
         print(f"Official sing-box {VERSION} check passed: {count} generated configurations, {rejected} invalid configurations rejected.")
 

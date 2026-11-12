@@ -31,6 +31,7 @@ public record DnsResolverOptions
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
 [JsonDerivedType(typeof(HttpsDnsServer), typeDiscriminator: "https")]
 [JsonDerivedType(typeof(TailscaleDnsServer), typeDiscriminator: "tailscale")]
+[JsonDerivedType(typeof(FakeIpDnsServer), typeDiscriminator: "fakeip")]
 public abstract record DnsServer
 {
     [JsonPropertyOrder(-100)]
@@ -42,6 +43,12 @@ public record HttpsDnsServer : DnsServer
     [JsonPropertyName("server")] public required string Server { get; init; }
     [JsonPropertyName("detour")] public string? Detour { get; init; }
     [JsonPropertyName("tls")] public required DnsTlsConfig Tls { get; init; }
+}
+
+public record FakeIpDnsServer : DnsServer
+{
+    [JsonPropertyName("inet4_range")] public required string Inet4Range { get; init; }
+    [JsonPropertyName("inet6_range")] public string? Inet6Range { get; init; }
 }
 
 public record DnsTlsConfig

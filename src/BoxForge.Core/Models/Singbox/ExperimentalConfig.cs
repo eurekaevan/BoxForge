@@ -12,6 +12,7 @@ public record CacheFileConfig
     [JsonPropertyName("enabled")] public bool Enabled { get; init; }
     [JsonPropertyName("path")] public string? Path { get; init; }
     [JsonPropertyName("store_dns")] public bool StoreDns { get; init; }
+    [JsonPropertyName("store_fakeip")] public bool? StoreFakeIp { get; init; }
 
     // 由配置名、平台和有效 DNS 配置确定的持久缓存身份，节点变更不改变此值。
     [JsonPropertyName("cache_id")] public string? CacheId { get; init; }

@@ -18,6 +18,7 @@ CLI 会为 Windows、Android 和 Linux 批量生成平台化配置，并在
 - 自动生成地区 URLTest AUTO、人工 selector、DNS、路由规则和远程 rule-set
 - 默认 `Ipv4Only` 地址族策略（全局 IPv4）：AAAA 返回空答、IPv6 目标在所有 DIRECT 和代理路由之前被拒绝，TUN 仍保留双栈捕获地址
 - 可显式选择 `DualStack`，保留客户端 DNS、路由与代理控制面的完整双栈；不探测公网可达性
+- DNS 默认 `RealIp`；可切换混合 `FakeIp`，仅代理域名返回合成地址，国内域名保持真实解析
 - Linux 默认启用 TUN `auto_redirect`；所有平台直连统一使用普通 `DIRECT`
 - 默认生成 sing-box 内置 Tailscale endpoint，支持按需连接、MagicDNS、子网路由和 Taildrop
 - 可选仅监听本机的 sing-box API 与 Dashboard，默认不生成

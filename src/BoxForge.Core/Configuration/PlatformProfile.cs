@@ -6,6 +6,7 @@ public sealed record PlatformProfile
 {
     public required ImmutableArray<string> TunAddresses { get; init; }
     public required AddressFamilyPolicy AddressFamily { get; init; }
+    public required DnsAddressMode DnsAddressMode { get; init; }
     public required bool? StrictRoute { get; init; }
     public required bool? AutoRedirect { get; init; }
     public required bool? MultiQueue { get; init; }

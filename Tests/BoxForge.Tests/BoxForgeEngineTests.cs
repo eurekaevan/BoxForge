@@ -73,6 +73,11 @@ public sealed class BoxForgeEngineTests
     [TestCase("{\"dns\":{\"resolvers\":{\"patch\":[{\"id\":\"alidns\",\"server_name\":\"alternate.example\"}]}}}", true)]
     [TestCase("{\"dns\":{\"address_family\":\"DualStack\"}}", true)]
     [TestCase("{\"dns\":{\"selection_mode\":\"SequentialFallback\"}}", true)]
+    [TestCase("{\"dns\":{\"address_mode\":\"FakeIp\"}}", true)]
+    [TestCase("{\"dns\":{\"address_mode\":\"FakeIp\",\"fakeip\":{\"inet4_range\":\"198.18.0.0/16\"}}}", true)]
+    [TestCase("{\"dns\":{\"address_mode\":\"FakeIp\",\"fakeip\":{\"realip_domains\":{\"replace\":[\"example.com\"]}}}}", true)]
+    [TestCase("{\"dns\":{\"fakeip\":{\"realip_domains\":{\"replace\":[\"example.com\"]}}}}", false)]
+    [TestCase("{\"dns\":{\"fakeip\":{\"inet6_range\":\"2001:3::/48\"}}}", false)]
     [TestCase("{\"dns\":{\"timeout\":\"5s\"}}", true)]
     [TestCase("{\"route\":{\"block\":{\"domain_suffix\":{\"append\":[\"custom.example\"]}}}}", true)]
     [TestCase("{\"tuning\":{\"connect_timeout\":\"11s\"}}", false)]
@@ -89,6 +94,47 @@ public sealed class BoxForgeEngineTests
         string? original = before.RootElement.GetProperty("experimental").GetProperty("cache_file").GetProperty("cache_id").GetString();
         string? changed = after.RootElement.GetProperty("experimental").GetProperty("cache_file").GetProperty("cache_id").GetString();
         Assert.That(changed == original, Is.EqualTo(!changesIdentity));
+    }
+
+    [Test]
+    public async Task FakeIpModeEmitsSyntheticDnsAndPersistsMappings()
+    {
+        using ServiceProvider provider = CreateProvider();
+        var engine = provider.GetRequiredService<IBoxForgeEngine>();
+        var request = new ConversionRequest("fakeip", ValidYaml, [TargetPlatform.Linux]);
+        using var fakeIp = JsonDocument.Parse((await engine.ConvertAsync(request with
+        {
+            Profile = JsonNode.Parse("""{"dns":{"address_mode":"FakeIp"}}""")!.AsObject()
+        })).Artifacts.Single().Content);
+        JsonElement fakeIpDns = fakeIp.RootElement.GetProperty("dns");
+        JsonElement fakeIpServers = fakeIpDns.GetProperty("servers");
+        JsonElement fakeIpCache = fakeIp.RootElement.GetProperty("experimental").GetProperty("cache_file");
+        Assert.Multiple(() =>
+        {
+            Assert.That(fakeIpServers.EnumerateArray().Any(server =>
+                server.GetProperty("type").GetString() == "fakeip"
+                && server.GetProperty("tag").GetString() == SingboxTags.FakeIpDns
+                && server.GetProperty("inet4_range").GetString() == "198.18.0.0/15"
+                && !server.TryGetProperty("inet6_range", out _)), Is.True);
+            Assert.That(fakeIpDns.GetProperty("rules").EnumerateArray().Any(rule =>
+                rule.TryGetProperty("server", out JsonElement server)
+                && server.GetString() == SingboxTags.FakeIpDns
+                && rule.GetProperty("action").GetString() == "route"), Is.True);
+            Assert.That(fakeIpCache.GetProperty("store_fakeip").GetBoolean(), Is.True);
+        });
+
+        using var realIp = JsonDocument.Parse((await engine.ConvertAsync(request)).Artifacts.Single().Content);
+        JsonElement realIpDns = realIp.RootElement.GetProperty("dns");
+        Assert.Multiple(() =>
+        {
+            Assert.That(realIpDns.GetProperty("servers").EnumerateArray().Any(server =>
+                server.GetProperty("type").GetString() == "fakeip"), Is.False);
+            Assert.That(realIpDns.GetProperty("rules").EnumerateArray().Any(rule =>
+                rule.TryGetProperty("server", out JsonElement server)
+                && server.GetString() == SingboxTags.FakeIpDns), Is.False);
+            Assert.That(realIp.RootElement.GetProperty("experimental").GetProperty("cache_file")
+                .TryGetProperty("store_fakeip", out _), Is.False);
+        });
     }
 
     [Test]

@@ -68,7 +68,8 @@ internal sealed class BoxForgeEngine(
                     Dns = SingboxDnsEmitter.Emit(plan.Dns)
                 }));
                 var config = configBuilder.Build(plan, cacheId);
-                configValidator.Validate(config, profiles[platform].Settings.AddressFamily);
+                configValidator.Validate(config, profiles[platform].Settings.AddressFamily,
+                    profiles[platform].Settings.DnsAddressMode);
                 string content = configSerializer.Serialize(config);
                 artifacts.Add(new ConversionArtifact(
                     platform,

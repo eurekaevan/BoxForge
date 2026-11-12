@@ -493,6 +493,19 @@ public sealed class ProfileConfigurationTests
     [TestCase("{\"tuning\":{\"url_test_url\":\"file:///tmp/probe\"}}")]
     [TestCase("{\"route\":{\"main_default_region\":\"missing\"}}")]
     [TestCase("{\"dns\":{\"cache_capacity\":0}}")]
+    [TestCase("{\"dns\":{\"address_mode\":\"FakeIp2\"}}")]
+    [TestCase("{\"dns\":{\"address_mode\":1}}")]
+    [TestCase("{\"dns\":{\"fakeip\":null}}")]
+    [TestCase("{\"dns\":{\"fakeip\":{\"inet4_range\":\"198.18.1.0/15\"}}}")]
+    [TestCase("{\"dns\":{\"fakeip\":{\"inet4_range\":\"2001:2::/48\"}}}")]
+    [TestCase("{\"dns\":{\"fakeip\":{\"inet6_range\":\"198.18.0.0/15\"}}}")]
+    [TestCase("{\"dns\":{\"fakeip\":{\"inet6_range\":\"2001:2::1/48\"}}}")]
+    [TestCase("{\"dns\":{\"fakeip\":{\"realip_domains\":{\"replace\":[\"http://example.com\"]}}}}")]
+    [TestCase("{\"dns\":{\"fakeip\":{\"realip_domains\":{\"replace\":[\"example.com\",\"EXAMPLE.COM\"]}}}}")]
+    [TestCase("{\"dns\":{\"fakeip\":{\"realip_domain_suffixes\":{\"replace\":[\"*.example.com\"]}}}}")]
+    [TestCase("{\"dns\":{\"address_mode\":\"FakeIp\",\"fakeip\":{\"inet4_range\":\"172.19.0.0/30\"}}}")]
+    [TestCase("{\"dns\":{\"address_mode\":\"FakeIp\",\"fakeip\":{\"inet6_range\":\"fd32:f937:4cd0:1::/126\"}}}")]
+    [TestCase("{\"dns\":{\"address_mode\":\"FakeIp\",\"fakeip\":{\"inet4_range\":\"223.5.5.0/24\"}}}")]
     [TestCase("{\"tuning\":{\"url_test_tolerance\":-1}}")]
     [TestCase("{\"tuning\":{\"url_test_tolerance\":65536}}")]
     [TestCase("{\"platforms\":{\"Linux\":{\"tuning\":{\"url_test_tolerance\":65536}}}}")]
@@ -502,6 +515,37 @@ public sealed class ProfileConfigurationTests
     {
         var overlay = JsonNode.Parse(fields)!.AsObject();
         Assert.Throws<ProfileValidationException>(() => Load(overlay.ToJsonString()));
+    }
+
+    [Test]
+    public void FakeIpProfileResolvesCustomModeRangesAndExceptions()
+    {
+        var profile = Load("""
+            {"dns":{"address_mode":"FakeIp","fakeip":{
+              "inet4_range":"198.19.0.0/16","inet6_range":"2001:3::/48",
+              "realip_domains":{"replace":["Example.COM"]},"realip_domain_suffixes":{"replace":["Internal.Example"]}}}}
+            """);
+        var dns = profile.Resolve(TargetPlatform.Linux).Dns;
+        Assert.Multiple(() =>
+        {
+            Assert.That(profile.Resolve(TargetPlatform.Linux).Settings.DnsAddressMode,
+                Is.EqualTo(DnsAddressMode.FakeIp));
+            Assert.That(dns.FakeIp.Inet4Range, Is.EqualTo("198.19.0.0/16"));
+            Assert.That(dns.FakeIp.Inet6Range, Is.EqualTo("2001:3::/48"));
+            Assert.That(dns.FakeIp.RealIpDomains, Is.EqualTo(new[] { "Example.COM" }));
+            Assert.That(dns.FakeIp.RealIpDomainSuffixes, Is.EqualTo(new[] { "Internal.Example" }));
+        });
+    }
+
+    [Test]
+    public void RealIpModeAllowsUnusedFakeIpRangesThatOverlapTun()
+    {
+        var profile = Load("""
+            {"dns":{"address_mode":"RealIp","fakeip":{
+              "inet4_range":"172.19.0.0/30","inet6_range":"fd32:f937:4cd0:1::/126"}}}
+            """);
+        Assert.That(profile.Resolve(TargetPlatform.Linux).Settings.DnsAddressMode,
+            Is.EqualTo(DnsAddressMode.RealIp));
     }
 
     [Test]

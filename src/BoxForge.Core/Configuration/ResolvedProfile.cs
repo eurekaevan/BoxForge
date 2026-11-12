@@ -23,6 +23,7 @@ public sealed class ResolvedProfile
         Settings = new PlatformProfile
         {
             AddressFamily = Dns.AddressFamily,
+            DnsAddressMode = Dns.AddressMode,
             DnsSelectionMode = Dns.SelectionMode,
             StrictRoute = Route.StrictRoute,
             AutoRedirect = Route.AutoRedirect,
@@ -109,6 +110,7 @@ public sealed class ResolvedProfile
             SingboxTags.TailscaleDns,
             SingboxTags.DirectAliDns,
             SingboxTags.DirectAliDnsSecondary,
+            SingboxTags.FakeIpDns,
             SingboxTags.ProxyGoogleDns,
             SingboxTags.ProxyCloudflareDns,
             SingboxTags.TunInbound,
@@ -187,8 +189,9 @@ public sealed class ResolvedProfile
         TargetPlatform platform = Platform;
         var settings = Settings;
         string path = $"profile.platforms.{platform}";
-        if (!Enum.IsDefined(settings.AddressFamily) || !Enum.IsDefined(settings.DnsSelectionMode))
-            throw new ProfileValidationException("profile.dns", $"{path}: 无效的地址族或 DNS 模式。");
+        if (!Enum.IsDefined(settings.AddressFamily) || !Enum.IsDefined(settings.DnsSelectionMode)
+            || !Enum.IsDefined(settings.DnsAddressMode))
+            throw new ProfileValidationException("profile.dns", $"{path}: 无效的地址族、DNS 地址模式或 DNS 选择模式。");
         if (platform != TargetPlatform.Linux && settings.MultiQueue == true)
             throw new ProfileValidationException("profile.route.multi_queue", $"{path}.multi_queue: 仅支持 Linux。");
         if (platform == TargetPlatform.Windows && settings.AutoRedirect == true)
@@ -200,6 +203,7 @@ public sealed class ResolvedProfile
         if (string.IsNullOrWhiteSpace(settings.TaildropDirectory) || settings.TaildropDirectory.Any(char.IsControl))
             throw new ProfileValidationException("profile.features.tailscale.taildrop_directory", $"{path}.taildrop_directory: 不能为空或包含控制字符。");
         var families = new HashSet<AddressFamily>();
+        var tunCidrs = new List<Cidr>();
         foreach (string address in settings.TunAddresses)
         {
             if (address is null) throw new ProfileValidationException("profile.route.tun_addresses", $"{path}.tun_addresses: 元素必须为 CIDR 字符串。");
@@ -210,9 +214,11 @@ public sealed class ResolvedProfile
                 || prefix < 1 || prefix > (ip.AddressFamily == AddressFamily.InterNetwork ? 32 : 128)
                 || ip.IsIPv4MappedToIPv6 || !families.Add(ip.AddressFamily))
                 throw new ProfileValidationException("profile.route.tun_addresses", $"{path}.tun_addresses: 必须是规范且不重复地址族的 CIDR 地址。");
+            tunCidrs.Add(new Cidr(ip.AddressFamily, ip.GetAddressBytes(), prefix));
         }
         if (!families.SetEquals([AddressFamily.InterNetwork, AddressFamily.InterNetworkV6]))
             throw new ProfileValidationException("profile.route.tun_addresses", $"{path}.tun_addresses: 必须同时提供 IPv4 与 IPv6 捕获地址。");
+        ValidateFakeIp(Dns.FakeIp, tunCidrs, settings.DnsAddressMode);
         Duration(Route.SniffTimeout, "profile.route.sniff_timeout");
         Duration(Tuning.UrlTestIdleTimeout, "profile.tuning.url_test_idle_timeout");
         Duration(Dns.Timeout, "profile.dns.timeout");
@@ -227,6 +233,48 @@ public sealed class ResolvedProfile
         if (Route.SniffExcludedPorts.Any(port => port is < 1 or > 65535)
             || Route.SniffExcludedPorts.Distinct().Count() != Route.SniffExcludedPorts.Length)
             throw new ProfileValidationException("profile.route.sniff_excluded_ports", "profile: 排除端口必须有效且唯一。");
+    }
+
+    private void ValidateFakeIp(FakeIpProfile fakeIp, List<Cidr> tunCidrs, DnsAddressMode addressMode)
+    {
+        if (fakeIp is null)
+            throw new ProfileValidationException("profile.dns.fakeip", "profile.dns.fakeip: 必须为对象。");
+        if (!CidrHelper.TryParseCanonical(fakeIp.Inet4Range, out Cidr inet4) || inet4.Family != AddressFamily.InterNetwork)
+            throw new ProfileValidationException("profile.dns.fakeip.inet4_range",
+                "profile.dns.fakeip.inet4_range: 必须为规范的 IPv4 CIDR 网络地址。");
+        if (!CidrHelper.TryParseCanonical(fakeIp.Inet6Range, out Cidr inet6) || inet6.Family != AddressFamily.InterNetworkV6)
+            throw new ProfileValidationException("profile.dns.fakeip.inet6_range",
+                "profile.dns.fakeip.inet6_range: 必须为规范的 IPv6 CIDR 网络地址。");
+        if (addressMode == DnsAddressMode.FakeIp)
+        {
+            foreach (Cidr tun in tunCidrs)
+            {
+                if (CidrHelper.Overlaps(inet4, tun) || CidrHelper.Overlaps(inet6, tun))
+                    throw new ProfileValidationException("profile.dns.fakeip",
+                        "profile.dns.fakeip: FakeIP 地址范围不能与 TUN 捕获地址重叠。");
+            }
+            foreach (var resolver in Dns.Resolvers)
+            {
+                IPAddress address = IPAddress.Parse(resolver.Server);
+                if (inet4.Contains(address) || inet6.Contains(address))
+                    throw new ProfileValidationException("profile.dns.fakeip",
+                        "profile.dns.fakeip: FakeIP 地址范围不能包含 DNS resolver 地址。");
+            }
+        }
+        ValidateFakeIpDomains(fakeIp.RealIpDomains, "profile.dns.fakeip.realip_domains");
+        ValidateFakeIpDomains(fakeIp.RealIpDomainSuffixes, "profile.dns.fakeip.realip_domain_suffixes");
+    }
+
+    private static void ValidateFakeIpDomains(ImmutableArray<string> domains, string path)
+    {
+        ValidateBlockDomains(domains, path, wildcard: false);
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (int index = 0; index < domains.Length; index++)
+        {
+            if (!seen.Add(domains[index]))
+                throw new ProfileValidationException($"{path}[{index}]",
+                    $"{path}: 不能包含重复域名。");
+        }
     }
 
     private static void ValidateBlockDomains(ImmutableArray<string> domains, string path, bool wildcard)

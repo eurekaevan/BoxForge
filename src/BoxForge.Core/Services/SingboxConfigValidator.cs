@@ -10,7 +10,8 @@ namespace BoxForge.Services;
 
 internal interface ISingboxConfigValidator
 {
-    void Validate(SingboxConfig config, AddressFamilyPolicy addressFamily);
+    void Validate(SingboxConfig config, AddressFamilyPolicy addressFamily,
+        DnsAddressMode addressMode = DnsAddressMode.RealIp);
 }
 
 /// <summary>
@@ -20,16 +21,18 @@ internal interface ISingboxConfigValidator
 /// </summary>
 internal sealed class SingboxConfigValidator : ISingboxConfigValidator
 {
-    public void Validate(SingboxConfig config, AddressFamilyPolicy addressFamily)
+    public void Validate(SingboxConfig config, AddressFamilyPolicy addressFamily,
+        DnsAddressMode addressMode = DnsAddressMode.RealIp)
     {
         _ = addressFamily.ToDnsStrategy(); // Reject unknown policies, never silently use DualStack.
-        ValidationContext context = CreateValidationContext(config, addressFamily);
+        ValidationContext context = CreateValidationContext(config, addressFamily, addressMode);
         ValidateTopLevelReferences(config.Route, context);
         ValidateHttpClients(config, context);
         ValidateServices(config.Services ?? [], context);
         ValidateOutbounds(config.Outbounds, context);
         ValidateDnsServers(config.Dns.Servers, context);
         ValidateDnsRules(config.Dns, context);
+        ValidateDnsAddressMode(config, context);
         ValidateRuleSetHttpClients(config.Route.RuleSet, context);
         ValidateCacheFile(config.Experimental?.CacheFile, context.Diagnostics);
         ValidateRouteRules(config.Route.Rules, context);
@@ -38,7 +41,8 @@ internal sealed class SingboxConfigValidator : ISingboxConfigValidator
             throw new ConfigValidationException(context.Diagnostics);
     }
 
-    private static ValidationContext CreateValidationContext(SingboxConfig config, AddressFamilyPolicy addressFamily)
+    private static ValidationContext CreateValidationContext(SingboxConfig config, AddressFamilyPolicy addressFamily,
+        DnsAddressMode addressMode)
     {
         var diagnostics = new List<ConfigDiagnostic>();
 
@@ -94,7 +98,8 @@ internal sealed class SingboxConfigValidator : ISingboxConfigValidator
             ruleSetTags,
             inboundTags,
             config.Inbounds.Any(inbound => inbound.Type == "tun" && inbound.AutoRedirect == true),
-            addressFamily);
+            addressFamily,
+            addressMode);
     }
 
     private static void ValidateTopLevelReferences(
@@ -443,6 +448,21 @@ internal sealed class SingboxConfigValidator : ISingboxConfigValidator
                     "引用了不存在的 Tailscale endpoint。",
                     context.Diagnostics);
             }
+            else if (server is FakeIpDnsServer fakeIpServer)
+            {
+                if (fakeIpServer.Tag != SingboxTags.FakeIpDns)
+                    context.Diagnostics.Add(new ConfigDiagnostic("SB094", $"dns.servers[{index}].tag",
+                        "FakeIP DNS server 必须使用固定 tag。"));
+                if (!CidrHelper.TryParseCanonical(fakeIpServer.Inet4Range, out Cidr inet4)
+                    || inet4.Family != System.Net.Sockets.AddressFamily.InterNetwork)
+                    context.Diagnostics.Add(new ConfigDiagnostic("SB098", $"dns.servers[{index}].inet4_range",
+                        "FakeIP IPv4 范围必须是规范 CIDR。"));
+                if (fakeIpServer.Inet6Range is { } inet6Range
+                    && (!CidrHelper.TryParseCanonical(inet6Range, out Cidr inet6)
+                        || inet6.Family != System.Net.Sockets.AddressFamily.InterNetworkV6))
+                    context.Diagnostics.Add(new ConfigDiagnostic("SB098", $"dns.servers[{index}].inet6_range",
+                        "FakeIP IPv6 范围必须是规范 CIDR。"));
+            }
         }
     }
 
@@ -524,6 +544,77 @@ internal sealed class SingboxConfigValidator : ISingboxConfigValidator
         }
     }
 
+    private static void ValidateDnsAddressMode(SingboxConfig config, ValidationContext context)
+    {
+        FakeIpDnsServer[] fakeIpServers = config.Dns.Servers.OfType<FakeIpDnsServer>().ToArray();
+        bool storesFakeIp = config.Experimental?.CacheFile?.StoreFakeIp == true;
+        bool referencesFakeIp = config.Dns.Rules.Any(rule => ReferencesDnsServer(rule, SingboxTags.FakeIpDns));
+        if (context.AddressMode == DnsAddressMode.RealIp)
+        {
+            if (fakeIpServers.Length > 0)
+                context.Diagnostics.Add(new("SB094", "dns.servers",
+                    "RealIp 模式不得声明 FakeIP DNS server。"));
+            if (storesFakeIp)
+                context.Diagnostics.Add(new("SB095", "experimental.cache_file.store_fakeip",
+                    "RealIp 模式不得启用 store_fakeip。"));
+            if (referencesFakeIp)
+                context.Diagnostics.Add(new("SB096", "dns.rules",
+                    "RealIp 模式不得引用 FakeIP DNS server。"));
+            return;
+        }
+
+        if (fakeIpServers.Length != 1)
+            context.Diagnostics.Add(new("SB094", "dns.servers",
+                "FakeIp 模式必须声明唯一的 FakeIP DNS server。"));
+        if (!storesFakeIp)
+            context.Diagnostics.Add(new("SB095", "experimental.cache_file.store_fakeip",
+                "FakeIp 模式必须启用 store_fakeip。"));
+        if (!referencesFakeIp)
+            context.Diagnostics.Add(new("SB096", "dns.rules",
+                "FakeIp 模式必须生成指向 FakeIP server 的 DNS route 规则。"));
+        if (config.Dns.Final == SingboxTags.FakeIpDns)
+            context.Diagnostics.Add(new("SB096", "dns.final",
+                "FakeIP DNS server 不能作为 dns.final。"));
+        if (fakeIpServers.Length == 1 && context.AddressFamily == AddressFamilyPolicy.Ipv4Only
+            && fakeIpServers[0].Inet6Range is not null)
+            context.Diagnostics.Add(new("SB098", "dns.servers",
+                "Ipv4Only 的 FakeIP server 不得声明 inet6_range。"));
+        if (fakeIpServers.Length == 1 && context.AddressFamily == AddressFamilyPolicy.DualStack
+            && fakeIpServers[0].Inet6Range is null)
+            context.Diagnostics.Add(new("SB098", "dns.servers",
+                "DualStack 的 FakeIP server 必须声明 inet6_range。"));
+
+        for (var index = 0; index < config.Dns.Rules.Count; index++)
+        {
+            DnsRule rule = config.Dns.Rules[index];
+            string path = $"dns.rules[{index}]";
+            if (rule.Server == SingboxTags.FakeIpDns && rule.Action is not (null or DnsRuleAction.Route))
+                context.Diagnostics.Add(new("SB097", $"{path}.action",
+                    "FakeIP DNS server 只能用于 route 动作。"));
+            if (rule.Server == SingboxTags.FakeIpDns && rule.Action is null or DnsRuleAction.Route)
+            {
+                var queryTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                CollectQueryTypes(rule, queryTypes);
+                if (queryTypes.Count == 0 || queryTypes.Any(type => type is not ("A" or "AAAA")))
+                    context.Diagnostics.Add(new("SB096", path,
+                        "FakeIP 规则只能匹配 A 或 AAAA 查询。"));
+            }
+        }
+    }
+
+    private static bool ReferencesDnsServer(DnsRule rule, string tag) =>
+        rule.Server == tag || (rule.Rules?.Any(child => ReferencesDnsServer(child, tag)) ?? false);
+
+    private static void CollectQueryTypes(DnsRule rule, HashSet<string> queryTypes)
+    {
+        if (rule.QueryType is { } types)
+            foreach (string type in types)
+                queryTypes.Add(type);
+        if (rule.Rules is { } children)
+            foreach (DnsRule child in children)
+                CollectQueryTypes(child, queryTypes);
+    }
+
     private static void ValidateRuleSetHttpClients(
         List<SingboxRuleSet> ruleSets,
         ValidationContext context)
@@ -595,7 +686,8 @@ internal sealed class SingboxConfigValidator : ISingboxConfigValidator
         HashSet<string> RuleSetTags,
         HashSet<string> InboundTags,
         bool AutoRedirectEnabled,
-        AddressFamilyPolicy AddressFamily);
+        AddressFamilyPolicy AddressFamily,
+        DnsAddressMode AddressMode);
 
     private static HashSet<string> CollectRuleSetTags(
         List<SingboxRuleSet> ruleSets,

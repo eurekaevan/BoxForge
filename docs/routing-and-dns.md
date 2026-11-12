@@ -77,6 +77,19 @@ DIRECT 显式使用上述 `prefer_ipv4`／`ipv4_only` 绑定。Dashboard HTTP cl
 内部国内 DoH 由各自 dialer 直接建立连接，不经过 TUN 客户端路由链；
 解析器地址不生成客户端直连例外，应用访问这些地址仍按普通路由规则处理。
 
+`dns.address_mode` 默认为 `RealIp`，此时 DNS 分类只使用真实解析池。选择 `FakeIp` 时，
+非 DOMESTIC 的每个解析池会在原有 `evaluate` 规则前增加一条逻辑 `and` 的 `route` 动作规则：
+解析池范围 AND A/AAAA AND NOT RealIP 例外 → `dns-fakeip`。因此优先服务仍先于 `cn`，
+普通服务和全局池位于 `cn` 之后，DOMESTIC 永不生成 FakeIP 规则。
+命中该规则的查询直接获得合成地址，不再发起真实 DNS 查询；例外域名和非 A/AAAA 查询
+跳过 FakeIP 规则，继续进入同一解析池原有的真实主备解析。例外只排除 FakeIP，
+不会把服务域名改交给 AliDNS，也不改变服务优先级。
+`FakeIp` 下 FakeIP DNS server 位于 HTTPS resolver 之后、Tailscale DNS 之前；
+`inet6_range` 仅在 `DualStack` 输出，`Ipv4Only` 的 AAAA 空 `NOERROR` 仍是首条规则，
+FakeIP 查询条件仅为 A。`experimental.cache_file.store_fakeip` 只在 `FakeIp` 模式启用。
+已获得合成地址、尚未由核心还原域名的连接可能失去 `cnip` 的纯 IP 判断依据；
+BoxForge 首版保留 `cnip` 规则且不增加无条件 `resolve`，因此 `cnip` 分流不作为 FakeIP 模式的完整保证。
+
 client DNS 依次分类：
 
 1. 仅 `Ipv4Only` 下，所有 AAAA 查询返回空 `NOERROR`，包括 Tailscale 查询。

@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using BoxForge.Models;
 
@@ -11,10 +12,18 @@ public sealed record PrivacyProfile;
 
 internal sealed record DnsProfile(
     AddressFamilyPolicy AddressFamily,
+    DnsAddressMode AddressMode,
+    [property: JsonPropertyName("fakeip")] FakeIpProfile FakeIp,
     DnsResolverSelectionMode SelectionMode,
     string Timeout,
     uint CacheCapacity,
     ImmutableArray<BuiltInProfile.Resolver> Resolvers);
+
+internal sealed record FakeIpProfile(
+    string Inet4Range,
+    string Inet6Range,
+    [property: JsonPropertyName("realip_domains")] ImmutableArray<string> RealIpDomains,
+    [property: JsonPropertyName("realip_domain_suffixes")] ImmutableArray<string> RealIpDomainSuffixes);
 
 internal sealed record RouteProfile(
     ImmutableArray<BuiltInProfile.Region> Regions,

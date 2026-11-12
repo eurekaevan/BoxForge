@@ -21,6 +21,11 @@ Core 的 profile 错误使用 `ProfileValidationException`（直接继承 `Excep
 | `features.tailscale.taildrop_directory` | `"$HOME/Downloads/Taildrop"` | Android: `"Taildrop"`；Windows: `"$USERPROFILE\\Downloads\\Taildrop"` |
 | `features.api.enabled` | `false` | — |
 | `dns.address_family` | `"Ipv4Only"` | — |
+| `dns.address_mode` | `"RealIp"` | — |
+| `dns.fakeip.inet4_range` | `"198.18.0.0/15"` | — |
+| `dns.fakeip.inet6_range` | `"2001:2::/48"` | — |
+| `dns.fakeip.realip_domains` | `[]` | — |
+| `dns.fakeip.realip_domain_suffixes` | `[]` | — |
 | `dns.selection_mode` | `"ParallelFastest"` | Android: `"SequentialFallback"` |
 | `dns.timeout` | `"3s"` | — |
 | `dns.cache_capacity` | `4096` | — |
@@ -100,6 +105,15 @@ CLI 在宿主边界加载并校验独立的 `BOXFORGE_` 环境配置快照，直
 `DualStack` 不强制控制面解析地址族，仅来源显式 `ip-version: ipv4` 的节点绑定 `ipv4_only` resolver。
 DIRECT 在 `Ipv4Only` 下使用 `ipv4_only`，在 `DualStack` 下使用 `prefer_ipv4`。
 详细边界见[DNS 与路由策略](routing-and-dns.md#dns-分类与控制面解析)。
+`dns.address_mode` 接受 `RealIp`（默认）或 `FakeIp`。`RealIp` 不生成 FakeIP server、
+FakeIP DNS 规则或 `store_fakeip`；`FakeIp` 仅让非国内解析池的 A/AAAA 查询返回合成地址，
+国内 `cn` 域名始终进入真实解析池。非地址查询、广告与自定义阻断、Tailscale DNS、
+主备回退和并行竞速语义保持不变。
+`dns.fakeip.inet4_range`（默认 `198.18.0.0/15`）必须为规范 IPv4 CIDR；
+`inet6_range`（默认 `2001:2::/48`）仅在 `DualStack` 输出，`Ipv4Only` 仍保留最前面的
+AAAA 空 `NOERROR`。两组范围在 `FakeIp` 模式下不得与 TUN 捕获地址或 resolver 地址重叠。
+`realip_domains`、`realip_domain_suffixes` 是禁止生成 FakeIP 的例外域名，按小写下发；
+它们只排除对应解析池的 FakeIP 规则，仍使用该池原有的真实 DNS 主备解析，不会强制切换到 AliDNS。
 DNS 模式接受 `SequentialFallback` 或 `ParallelFastest`。超时和间隔必须是正 Go duration；DNS 缓存容量为正，URL test
 容差为 1–65535ms，默认 50ms；不接受 `0`，因为锁定核心会将它解释为默认 50ms，无法实现零容差。
 探测 URL 只接受不带用户信息和片段的 HTTP(S) URL。

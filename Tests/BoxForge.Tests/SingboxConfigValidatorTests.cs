@@ -790,6 +790,101 @@ public sealed class SingboxConfigValidatorTests
     }
 
     [Test]
+    public void FakeIpModeRequiresConsistentServerRulesRangesAndCachePersistence()
+    {
+        SingboxConfig valid = CreateValidConfig();
+        var fakeIpServer = new FakeIpDnsServer
+        {
+            Tag = SingboxTags.FakeIpDns,
+            Inet4Range = "198.18.0.0/15",
+            Inet6Range = "2001:2::/48"
+        };
+        var fakeIpRule = new DnsRule
+        {
+            Type = RouteRuleType.Logical,
+            Mode = RouteLogicalMode.And,
+            Action = DnsRuleAction.Route,
+            Server = SingboxTags.FakeIpDns,
+            Rules = [new DnsRule { QueryType = ["A", "AAAA"] }]
+        };
+        var cache = new CacheFileConfig
+        {
+            Enabled = true, Path = "cache.db", StoreDns = true, StoreFakeIp = true,
+            CacheId = new string('a', 64)
+        };
+        SingboxConfig config = valid with
+        {
+            Dns = valid.Dns with
+            {
+                Servers = [.. valid.Dns.Servers, fakeIpServer],
+                Rules = [.. valid.Dns.Rules, fakeIpRule]
+            },
+            Experimental = new ExperimentalConfig { CacheFile = cache }
+        };
+        Assert.DoesNotThrow(() => validator.Validate(config, AddressFamilyPolicy.DualStack, DnsAddressMode.FakeIp));
+
+        AssertDiagnostic(config with { Experimental = null }, DnsAddressMode.FakeIp, "SB095");
+        AssertDiagnostic(config with
+        {
+            Dns = config.Dns with { Rules = [config.Dns.Rules[0]] }
+        }, DnsAddressMode.FakeIp, "SB096");
+        AssertDiagnostic(config with
+        {
+            Dns = config.Dns with { Final = SingboxTags.FakeIpDns }
+        }, DnsAddressMode.FakeIp, "SB096");
+        AssertDiagnostic(config with
+        {
+            Dns = config.Dns with
+            {
+                Rules = [config.Dns.Rules[0], fakeIpRule with { Rules = [new DnsRule { QueryType = ["TXT"] }] }]
+            }
+        }, DnsAddressMode.FakeIp, "SB096");
+        AssertDiagnostic(config with
+        {
+            Dns = config.Dns with
+            {
+                Rules = [config.Dns.Rules[0], fakeIpRule with { Action = DnsRuleAction.Respond, ResponseRcode = DnsResponseCode.NoError }]
+            }
+        }, DnsAddressMode.FakeIp, "SB097");
+        AssertDiagnostic(config with { Dns = config.Dns with { Servers = valid.Dns.Servers } },
+            DnsAddressMode.FakeIp, "SB094");
+        AssertDiagnostic(config, DnsAddressMode.RealIp, "SB094", "SB095", "SB096");
+
+        SingboxConfig ipv4 = CreateValidIpv4Config() with
+        {
+            Dns = CreateValidIpv4Config().Dns with
+            {
+                Servers = [.. CreateValidIpv4Config().Dns.Servers, fakeIpServer],
+                Rules = [.. CreateValidIpv4Config().Dns.Rules,
+                    fakeIpRule with { Rules = [new DnsRule { QueryType = ["A"] }] }]
+            },
+            Experimental = new ExperimentalConfig { CacheFile = cache }
+        };
+        var rangeError = Assert.Throws<ConfigValidationException>(() =>
+            validator.Validate(ipv4, AddressFamilyPolicy.Ipv4Only, DnsAddressMode.FakeIp))!;
+        Assert.That(rangeError.Diagnostics.Select(item => item.Code), Does.Contain("SB098"));
+
+        var validIpv4 = ipv4 with
+        {
+            Dns = ipv4.Dns with
+            {
+                Servers = [.. ipv4.Dns.Servers.OfType<DnsServer>().Select(server =>
+                    server == fakeIpServer ? fakeIpServer with { Inet6Range = null } : server)]
+            }
+        };
+        Assert.DoesNotThrow(() => validator.Validate(validIpv4, AddressFamilyPolicy.Ipv4Only, DnsAddressMode.FakeIp));
+
+        void AssertDiagnostic(SingboxConfig candidate, DnsAddressMode mode, params string[] codes)
+        {
+            var error = Assert.Throws<ConfigValidationException>(() =>
+                validator.Validate(candidate, AddressFamilyPolicy.DualStack, mode))!;
+            Assert.That(error.Diagnostics.Select(item => item.Code), Does.Contain(codes[0]));
+            foreach (string code in codes.Skip(1))
+                Assert.That(error.Diagnostics.Select(item => item.Code), Does.Contain(code));
+        }
+    }
+
+    [Test]
     public void Ipv4OnlyRequiresUnconditionalAaaaBlockBeforeOtherDnsRules()
     {
         SingboxConfig valid = CreateValidIpv4Config();

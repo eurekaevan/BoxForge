@@ -50,6 +50,68 @@ public sealed class ConfigSerializerDefaultsTests
         });
     }
 
+    [TestCase(null)]
+    [TestCase("2001:2::/48")]
+    public void FakeIpServersSerializeAndRoundTripThroughTheirPolymorphicBase(string? inet6Range)
+    {
+        var config = new SingboxConfig
+        {
+            Dns = new DnsConfig
+            {
+                Servers =
+                [
+                    new FakeIpDnsServer
+                    {
+                        Tag = "dns-fakeip", Inet4Range = "198.18.0.0/15", Inet6Range = inet6Range
+                    }
+                ]
+            }
+        };
+        using var document = JsonDocument.Parse(new ConfigSerializer().Serialize(config));
+        JsonElement dns = document.RootElement.GetProperty("dns");
+        JsonElement server = dns.GetProperty("servers")[0];
+        var restored = JsonSerializer.Deserialize<DnsConfig>(dns.GetRawText())!;
+        Assert.Multiple(() =>
+        {
+            Assert.That(server.GetProperty("type").GetString(), Is.EqualTo("fakeip"));
+            Assert.That(server.EnumerateObject().Select(property => property.Name),
+                Is.EqualTo(inet6Range is null
+                    ? new[] { "type", "tag", "inet4_range" }
+                    : new[] { "type", "tag", "inet4_range", "inet6_range" }));
+            Assert.That(server.GetProperty("inet4_range").GetString(), Is.EqualTo("198.18.0.0/15"));
+            Assert.That(restored.Servers[0], Is.EqualTo(config.Dns.Servers[0]));
+        });
+    }
+
+    [TestCase(null, false)]
+    [TestCase(false, true)]
+    [TestCase(true, true)]
+    public void FakeIpCachePersistenceIsExplicitOnly(bool? storeFakeIp, bool expectedPresence)
+    {
+        var config = new SingboxConfig
+        {
+            Experimental = new ExperimentalConfig
+            {
+                CacheFile = new CacheFileConfig
+                {
+                    Enabled = true,
+                    Path = "cache.db",
+                    StoreDns = true,
+                    StoreFakeIp = storeFakeIp,
+                    CacheId = "identity"
+                }
+            }
+        };
+        using var document = JsonDocument.Parse(new ConfigSerializer().Serialize(config));
+        JsonElement cache = document.RootElement.GetProperty("experimental").GetProperty("cache_file");
+        Assert.Multiple(() =>
+        {
+            Assert.That(cache.TryGetProperty("store_fakeip", out JsonElement value), Is.EqualTo(expectedPresence));
+            if (expectedPresence)
+                Assert.That(value.GetBoolean(), Is.EqualTo(storeFakeIp));
+        });
+    }
+
     [Test]
     public void TargetModelsDoNotInventProductPolicyWhenFieldsAreOmitted()
     {

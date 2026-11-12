@@ -92,6 +92,13 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
   覆盖为 `DualStack` 时不强制客户端 DNS 的解析地址族，各解析池均保留 AAAA，也不生成 AAAA 空答规则。
   缓存容量为 `4096`，启用 reverse mapping；全局 `optimistic.enabled` 为 `false`，
   所有解析只使用 TTL 内的缓存。
+- `dns.address_mode` 默认 `RealIp`，生成内容与既有真实解析完全一致。
+  设为 `FakeIp` 时增加 `type: fakeip` 的 `dns-fakeip` server，并在每个非国内解析池的
+  `evaluate` 前生成 scoped 逻辑规则：仅 A/AAAA 且排除 `realip_domains`／
+  `realip_domain_suffixes` 后路由到 FakeIP；`cn` 解析池保持真实 DNS。
+  `Ipv4Only` 只下发 `inet4_range` 且 FakeIP 仅匹配 A，`DualStack` 同时下发
+  `inet6_range` 并匹配 A/AAAA。已获得合成地址的连接可能降低 `cnip` 纯 IP 规则的覆盖，
+  详见[DNS 分类与回退](routing-and-dns.md#dns-分类与控制面解析)。
 - 代理节点和 Tailscale endpoint 继承
   `route.default_domain_resolver`：直连固定 tag `dns-direct-alidns`（默认 AliDNS，可覆盖端点）、禁用 optimistic
   过期缓存。`Ipv4Only` 强制该 resolver 使用 `ipv4_only`，使节点连接、
@@ -99,13 +106,15 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
   `Ipv4Only` 在生成时拒绝 IPv6 字面量代理节点；DIRECT 显式绑定同一 DNS tag，`DualStack` 使用 `prefer_ipv4`，`Ipv4Only` 保持 `ipv4_only`。
 - rule-set HTTP client 显式使用代理控制面解析设置；Dashboard HTTP client 直连，按平台地址族解析（`DualStack` 下不强制 IPv4），两者均禁用 optimistic 缓存；
   Tailscale split DNS 也禁用 optimistic 过期缓存。
-- `experimental.cache_file` 使用 `cache.db`，并通过 `store_dns` 持久化 DNS 缓存。
+- `experimental.cache_file` 使用 `cache.db`，并通过 `store_dns` 持久化 DNS 缓存；
+  `FakeIp` 模式同时设置 `store_fakeip`，`RealIp` 模式省略该字段。
 - `cache_id` 是配置名、平台小写标识与生成 DNS 模型的结构化 JSON 经 UTF-8 编码后的 SHA-256，输出 64 位小写十六进制。
   配置名保留原样：CLI 使用输入文件名去掉扩展名；
   平台标识为 `android`、`linux`、`windows`。
   同名、同平台且 DNS 配置相同时稳定复用缓存，节点增减、排序、改名或元数据变化均不改变缓存身份；
   不同平台隔离。配置改名会更换身份，不同目录中的同名配置仍共享身份。
-  更换 DNS 地址、TLS 名称、出口绑定或解析策略会切换命名空间，不再复用旧 DNS 答案。
+  更换 DNS 地址、TLS 名称、出口绑定、解析策略、`dns.address_mode`、FakeIP 地址池
+  或 RealIP 例外域名会切换命名空间，不再复用旧 DNS 答案。
   从旧算法升级时会冷启动一次；命名空间还保存选择器状态，因此升级或 DNS 配置变化后可能恢复默认选择。
   旧缓存数据保留；已选择节点被删除或改名时，该项选择仍会失效。
 

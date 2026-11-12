@@ -25,6 +25,19 @@ internal static class SingboxDnsEmitter
             Detour = resolver.Detour,
             Tls = new DnsTlsConfig { Enabled = true, ServerName = resolver.ServerName }
         }));
+        if (plan.AddressMode == DnsAddressMode.FakeIp)
+        {
+            FakeIpPlan fakeIp = plan.FakeIp
+                ?? throw new InvalidOperationException("FakeIp DNS mode requires a FakeIP plan.");
+            dns.Servers.Add(new FakeIpDnsServer
+            {
+                Tag = SingboxTags.FakeIpDns,
+                Inet4Range = fakeIp.Inet4Range,
+                Inet6Range = plan.AddressFamily == AddressFamilyPolicy.DualStack
+                    ? fakeIp.Inet6Range
+                    : null
+            });
+        }
         if (plan.TailscaleEnabled)
         {
             dns.Servers.Add(new TailscaleDnsServer
@@ -72,6 +85,8 @@ internal static class SingboxDnsEmitter
             });
         foreach (DnsResolverPoolPlan pool in plan.Pools)
         {
+            if (plan.AddressMode == DnsAddressMode.FakeIp && pool.Kind != DnsPoolKind.Domestic)
+                AddFakeIpRule(rules, pool, plan);
             switch (plan.SelectionMode)
             {
                 case DnsResolverSelectionMode.SequentialFallback:
@@ -110,6 +125,34 @@ internal static class SingboxDnsEmitter
             }
             AddTerminalServfail(rules, pool);
         }
+    }
+
+    private static void AddFakeIpRule(List<DnsRule> rules, DnsResolverPoolPlan pool, DnsPlan plan)
+    {
+        FakeIpPlan fakeIp = plan.FakeIp
+            ?? throw new InvalidOperationException("FakeIp DNS mode requires a FakeIP plan.");
+        var conditions = new List<DnsRule>();
+        if (!pool.RuleSets.IsDefault)
+            conditions.Add(new DnsRule { RuleSet = Copy(pool.RuleSets) });
+        conditions.Add(new DnsRule
+        {
+            QueryType = plan.AddressFamily == AddressFamilyPolicy.Ipv4Only ? ["A"] : ["A", "AAAA"]
+        });
+        if (!fakeIp.RealIpDomains.IsDefaultOrEmpty || !fakeIp.RealIpDomainSuffixes.IsDefaultOrEmpty)
+            conditions.Add(new DnsRule
+            {
+                Invert = true,
+                Domain = fakeIp.RealIpDomains.IsDefaultOrEmpty ? null : [.. fakeIp.RealIpDomains],
+                DomainSuffix = fakeIp.RealIpDomainSuffixes.IsDefaultOrEmpty ? null : [.. fakeIp.RealIpDomainSuffixes]
+            });
+        rules.Add(new DnsRule
+        {
+            Type = RouteRuleType.Logical,
+            Mode = RouteLogicalMode.And,
+            Rules = conditions,
+            Action = DnsRuleAction.Route,
+            Server = SingboxTags.FakeIpDns
+        });
     }
 
     private static void AddTerminalServfail(List<DnsRule> rules, DnsResolverPoolPlan pool, string? queryType = null) =>
