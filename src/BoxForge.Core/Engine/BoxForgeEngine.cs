@@ -61,13 +61,14 @@ internal sealed class BoxForgeEngine(
             try
             {
                 ConfigurationPlan plan = ConfigurationPlanner.Plan(nodes, profiles[platform]);
+                var config = configBuilder.Build(plan, cacheId: null);
                 string cacheId = configSerializer.GetContentHash(JsonSerializer.Serialize(new
                 {
                     request.Name,
                     Platform = platform.ToString().ToLowerInvariant(),
-                    Dns = SingboxDnsEmitter.Emit(plan.Dns)
+                    config.Dns
                 }));
-                var config = configBuilder.Build(plan, cacheId);
+                config = config with { Experimental = ExperimentalBuilder.Build(cacheId, plan.Dns.AddressMode) };
                 configValidator.Validate(config, profiles[platform].Settings.AddressFamily,
                     profiles[platform].Settings.DnsAddressMode);
                 string content = configSerializer.Serialize(config);

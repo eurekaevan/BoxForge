@@ -1,6 +1,7 @@
 using BoxForge.Configuration;
 using System.Collections.Immutable;
 using BoxForge.Exceptions;
+using BoxForge.Helpers;
 
 namespace BoxForge.Models.Intermediate;
 
@@ -28,6 +29,14 @@ internal sealed record ConfigurationPlan(
         Groups.CollectDiagnostics(diagnostics);
         Dns.CollectDiagnostics(diagnostics);
         Route.CollectDiagnostics(diagnostics);
+        if (Dns.AddressMode == DnsAddressMode.FakeIp && Dns.FakeIp is { } fakeIp && !Tun.Addresses.IsDefault)
+            foreach (string? value in new[] { fakeIp.Inet4Range, fakeIp.Inet6Range })
+                if (CidrHelper.TryParseCanonical(value, out Cidr range))
+                    for (int index = 0; index < Tun.Addresses.Length; index++)
+                        if (CidrHelper.TryParseAddressPrefix(Tun.Addresses[index], out Cidr tun)
+                            && CidrHelper.Overlaps(range, tun))
+                            diagnostics.Add(new("IR008", $"plan.tun.addresses[{index}]",
+                                "TUN 地址不能与 FakeIP 范围重叠。"));
         if (Dns.AddressFamily != AddressFamily)
             diagnostics.Add(new("IR001", "plan.dns.address_family", "DNS 地址族必须与平台策略一致。"));
         if (Route.AddressFamily != AddressFamily)

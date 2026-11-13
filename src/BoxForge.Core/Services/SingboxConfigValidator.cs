@@ -592,20 +592,46 @@ internal sealed class SingboxConfigValidator : ISingboxConfigValidator
             context.Diagnostics.Add(new("SB098", "dns.servers",
                 "DualStack 的 FakeIP server 必须声明 inet6_range。"));
 
+        foreach (FakeIpDnsServer server in fakeIpServers)
+            foreach (string? value in new[] { server.Inet4Range, server.Inet6Range })
+                if (CidrHelper.TryParseCanonical(value, out Cidr range))
+                {
+                    for (int index = 0; index < config.Inbounds.Count; index++)
+                        if (config.Inbounds[index].Type == "tun" && config.Inbounds[index].Address is { } addresses
+                            && addresses.Any(address => CidrHelper.TryParseAddressPrefix(address, out Cidr tun)
+                                && CidrHelper.Overlaps(range, tun)))
+                            context.Diagnostics.Add(new("SB098", $"inbounds[{index}].address",
+                                "TUN 地址不能与 FakeIP 范围重叠。"));
+                    for (int index = 0; index < config.Dns.Servers.Count; index++)
+                        if (config.Dns.Servers[index] is HttpsDnsServer resolver
+                            && IPAddress.TryParse(resolver.Server, out var address) && range.Contains(address))
+                            context.Diagnostics.Add(new("SB098", $"dns.servers[{index}].server",
+                                "DNS resolver 地址不能位于 FakeIP 范围内。"));
+                }
+
+        bool domesticTerminalSeen = false;
         for (var index = 0; index < config.Dns.Rules.Count; index++)
         {
             DnsRule rule = config.Dns.Rules[index];
             string path = $"dns.rules[{index}]";
+            if (rule.RuleSet is { Count: 1 } && rule.RuleSet[0] == RuleSetTags.Cn && rule.Invert != true
+                && rule.Action == DnsRuleAction.Predefined && rule.Rcode == DnsResponseCode.ServerFailure
+                && rule.QueryType is null && rule.Type is null && rule.Rules is not { Count: > 0 }
+                && HasUnrestrictedDnsScope(rule with { RuleSet = null }))
+                domesticTerminalSeen = true;
             if (rule.Server == SingboxTags.FakeIpDns && rule.Action is not (null or DnsRuleAction.Route))
                 context.Diagnostics.Add(new("SB097", $"{path}.action",
                     "FakeIP DNS server 只能用于 route 动作。"));
             if (rule.Server == SingboxTags.FakeIpDns && rule.Action is null or DnsRuleAction.Route)
             {
-                var queryTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                CollectQueryTypes(rule, queryTypes);
-                if (queryTypes.Count == 0 || queryTypes.Any(type => type is not ("A" or "AAAA")))
+                int permittedTypes = context.AddressFamily == AddressFamilyPolicy.Ipv4Only ? 1 : 3;
+                if ((PossibleQueryTypes(rule) & ~permittedTypes) != 0)
                     context.Diagnostics.Add(new("SB096", path,
-                        "FakeIP 规则只能匹配 A 或 AAAA 查询。"));
+                        "FakeIP 规则必须限定为当前地址族的 A/AAAA 查询。"));
+                if (ReferencesRuleSet(rule, RuleSetTags.Cn)
+                    || (!HasRuleSetScope(rule) && context.RuleSetTags.Contains(RuleSetTags.Cn) && !domesticTerminalSeen))
+                    context.Diagnostics.Add(new("SB096", path,
+                        "FakeIP 规则不得匹配 cn，且全局 FakeIP 必须位于国内解析池终止规则之后。"));
             }
         }
     }
@@ -613,15 +639,31 @@ internal sealed class SingboxConfigValidator : ISingboxConfigValidator
     private static bool ReferencesDnsServer(DnsRule rule, string tag) =>
         rule.Server == tag || (rule.Rules?.Any(child => ReferencesDnsServer(child, tag)) ?? false);
 
-    private static void CollectQueryTypes(DnsRule rule, HashSet<string> queryTypes)
+    // Bit sets represent A, AAAA and every other query type. Non-query predicates
+    // cannot narrow these sets. An inverted compound predicate may match any type.
+    private static int PossibleQueryTypes(DnsRule rule)
     {
-        if (rule.QueryType is { } types)
-            foreach (string type in types)
-                queryTypes.Add(type);
-        if (rule.Rules is { } children)
-            foreach (DnsRule child in children)
-                CollectQueryTypes(child, queryTypes);
+        if (rule.Invert == true) return 7;
+        if (rule.Type == RouteRuleType.Logical)
+        {
+            if (rule.Rules is not { Count: > 0 } children) return 7;
+            return rule.Mode == RouteLogicalMode.And
+                ? children.Aggregate(7, (types, child) => types & PossibleQueryTypes(child))
+                : children.Aggregate(0, (types, child) => types | PossibleQueryTypes(child));
+        }
+        return rule.QueryType is { Count: > 0 } queries
+            ? queries.Aggregate(0, (types, query) => types | (query.ToUpperInvariant() switch { "A" => 1, "AAAA" => 2, _ => 4 }))
+            : 7;
     }
+
+    private static bool ReferencesRuleSet(DnsRule rule, string tag) =>
+        rule.RuleSet?.Contains(tag) == true || (rule.Rules?.Any(child => ReferencesRuleSet(child, tag)) ?? false);
+
+    private static bool HasRuleSetScope(DnsRule rule) =>
+        rule.Invert != true && (rule.Type == RouteRuleType.Logical
+            ? rule.Rules is { Count: > 0 } children && (rule.Mode == RouteLogicalMode.And
+                ? children.Any(HasRuleSetScope) : children.All(HasRuleSetScope))
+            : rule.RuleSet is { Count: > 0 });
 
     private static void ValidateRuleSetHttpClients(
         List<SingboxRuleSet> ruleSets,
@@ -682,7 +724,8 @@ internal sealed class SingboxConfigValidator : ISingboxConfigValidator
         rule.RuleSet is not { Count: > 0 } && rule.Domain is not { Count: > 0 }
         && rule.DomainSuffix is not { Count: > 0 } && rule.DomainRegex is not { Count: > 0 }
         && rule.PreferredBy is not { Count: > 0 }
-        && rule.MatchResponse is null && rule.ResponseRcode is null && rule.IpCidr is not { Count: > 0 };
+        && rule.MatchResponse is null && rule.ResponseRcode is null && rule.IpCidr is not { Count: > 0 }
+        && rule.DefaultInterfaceAddress is not { Count: > 0 };
 
     private sealed record ValidationContext(
         List<ConfigDiagnostic> Diagnostics,

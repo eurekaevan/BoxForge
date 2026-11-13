@@ -169,9 +169,11 @@ python3 scripts/verify-generated-configs.py src/BoxForge.Cli/bin/Debug/net10.0/B
 
 内置校验器只检查 BoxForge 的生成约束，包括 DNS 地址族约束、标签与引用完整性、
 控制面策略和来源映射保真；路由策略由高层计划、发射器和产物测试保障，输入字段合法性由解析器和转换器检查。
-官方检查脚本默认下载并验证锁定核心，覆盖 60 份三平台 fixture 配置与核心反例，
-同时接入普通 CI 和发布前验证；已有核心可通过 `--core /path/to/sing-box` 指定。
-它不创建 TUN 或验证连通性；部署实际配置前仍可执行 `sing-box check -c <config.json>`。
+官方检查脚本默认下载并验证锁定核心，检查 60 份 RealIP 和 15 份 FakeIP 三平台配置，
+加上 6 个拒绝反例，共 81 次核心检查；同时接入普通 CI 和发布前验证。
+已有核心可通过 `--core /path/to/sing-box` 指定；`--runtime` 额外检查 15 份 FakeIP DualStack
+配置，并对 Linux/Android 的 IPv4/DualStack 四份配置运行本地受控 DNS 场景。
+脚本不创建 TUN；这些本地验证不代表实际代理链路可用，部署前仍应检查实际配置与连通性。
 
 当前资格验证采用上述锁定核心，并将单元测试、官方配置检查、
 本地协议回环与真实设备/网络验证分开记录。完整命令和未验证路径见

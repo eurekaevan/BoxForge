@@ -64,7 +64,7 @@ public sealed class DnsProfileBuilderTests
             DnsConfig emitted = SingboxDnsEmitter.Emit(plan);
             var evaluations = ResolverBlocks(emitted.Rules).Select(block => emitted.Rules[block.Start]).ToArray();
             var scopes = ExpectedResolverScopes(profile.Resolve(platform)).ToArray();
-            string suffix = settings.DnsSelectionMode == DnsResolverSelectionMode.ParallelFastest ? "-a" : "";
+            string suffix = "-a";
             Assert.That(evaluations.Select(rule => rule.Tag),
                 Is.EqualTo(scopes.Select(scope => $"response-{scope.Name}-primary{suffix}")));
             Assert.That(evaluations[0].RuleSet, Is.EqualTo(profile.Services.First().RuleSets));
@@ -172,7 +172,7 @@ public sealed class DnsProfileBuilderTests
         var dns = SingboxDnsEmitter.Emit(plan);
         Assert.That(dns.Timeout, Is.EqualTo("1500ms"));
         foreach (var rule in dns.Rules.Where(rule => rule.Action == DnsRuleAction.Evaluate))
-            Assert.That(rule.Timeout, Is.EqualTo(platform == TargetPlatform.Android && rule.Tag!.EndsWith("-primary", StringComparison.Ordinal)
+            Assert.That(rule.Timeout, Is.EqualTo(platform == TargetPlatform.Android && rule.Tag!.Contains("-primary", StringComparison.Ordinal)
                 ? "2s" : null));
     }
 
@@ -232,31 +232,21 @@ public sealed class DnsProfileBuilderTests
             Assert.That(fakeIp.Tag, Is.EqualTo(SingboxTags.FakeIpDns));
             Assert.That(fakeIp.Inet4Range, Is.EqualTo("198.18.0.0/15"));
             Assert.That(fakeIp.Inet6Range, Is.EqualTo(family == AddressFamilyPolicy.DualStack ? "2001:2::/48" : null));
-            Assert.That(dns.Servers[plan.Resolvers.Count], Is.SameAs(fakeIp));
+            Assert.That(dns.Servers[plan.Resolvers.Count + 1], Is.SameAs(fakeIp));
             Assert.That(dns.Rules[0].QueryType,
                 family == AddressFamilyPolicy.Ipv4Only ? Is.EqualTo(new[] { "AAAA" }) : Is.Null);
             Assert.That(fakeIpRules, Has.Length.EqualTo(plan.Pools.Count(pool => pool.Kind != DnsPoolKind.Domestic)));
-            Assert.That(fakeIpRules.All(rule => rule.Type == RouteRuleType.Logical
-                && rule.Mode == RouteLogicalMode.And
-                && rule.Action == DnsRuleAction.Route
-                && rule.Rules is not null), Is.True);
-            Assert.That(fakeIpRules.Count(rule => rule.Rules!.Any(child => child.RuleSet is not null)),
+            Assert.That(fakeIpRules.Count(rule => rule.Rules?.Any(child => child.RuleSet is not null) == true),
                 Is.EqualTo(servicePoolCount));
-            DnsRule globalFakeIpRule = fakeIpRules.Single(rule => rule.Rules!.All(child => child.RuleSet is null));
-            Assert.That(globalFakeIpRule.Rules, Has.Count.EqualTo(2));
-            Assert.That(globalFakeIpRule.Rules!.Single(child => child.Invert == true).DomainSuffix,
-                Is.EqualTo(new[] { "home.arpa", "internal", "lan", "local", "localdomain", "localhost" }));
-            Assert.That(fakeIpRules.All(rule =>
-            {
-                DnsRule query = rule.Rules!.Single(child => child.QueryType is not null);
-                return query.QueryType!.SequenceEqual(family == AddressFamilyPolicy.Ipv4Only ? ["A"] : ["A", "AAAA"]);
-            }), Is.True);
-            Assert.That(fakeIpRules.SelectMany(rule => rule.Rules!.SelectMany(child => child.RuleSet ?? []))
-                .Contains(RuleSetTags.Cn), Is.False);
+            DnsRule globalFakeIpRule = fakeIpRules.Single(rule => rule.Type is null);
+            Assert.That(globalFakeIpRule.QueryType,
+                Is.EqualTo(family == AddressFamilyPolicy.Ipv4Only ? new[] { "A" } : new[] { "A", "AAAA" }));
+            Assert.That(fakeIpRules.SelectMany(rule => rule.Rules ?? []).Any(child => child.Invert == true), Is.False,
+                "Local exceptions are handled before pools and need no per-pool exclusion.");
+            Assert.That(dns.Rules.Where(rule => rule.Action == DnsRuleAction.Evaluate && rule.QueryType is not null)
+                .All(rule => rule.RuleSet?.SequenceEqual([RuleSetTags.Cn]) == true), Is.True,
+                "Without nonlocal exceptions only the domestic pool needs real address queries.");
             Assert.That(domesticStart, Is.GreaterThan(0));
-            Assert.That(dns.Rules[domesticStart - 1].Server, Is.Not.EqualTo(SingboxTags.FakeIpDns));
-            Assert.That(fakeIpRules.All(rule =>
-                dns.Rules[dns.Rules.IndexOf(rule) + 1].Action == DnsRuleAction.Evaluate), Is.True);
         });
     }
 
@@ -336,6 +326,18 @@ public sealed class DnsProfileBuilderTests
         error = Assert.Throws<ConfigValidationException>(() => fake.Validate())!;
         Assert.That(error.Diagnostics.Select(item => (item.Code, item.Path)),
             Is.EqualTo(new[] { ("IR008", "plan.dns.fakeip") }));
+
+        foreach (string address in new[] { "198.18.0.2", "2001:2::2" })
+        {
+            var overlap = fake with
+            {
+                AddressFamily = AddressFamilyPolicy.DualStack,
+                FakeIp = new FakeIpPlan("198.18.0.0/15", "2001:2::/48", [], []),
+                Resolvers = [real.Resolvers[0] with { Address = address }, ..real.Resolvers.Skip(1)]
+            };
+            error = Assert.Throws<ConfigValidationException>(() => overlap.Validate())!;
+            Assert.That(error.Diagnostics.Select(item => item.Path), Does.Contain("plan.dns.resolvers[0].address"));
+        }
 
         DnsPlan invalidRanges = fake with
         {
@@ -959,6 +961,42 @@ public sealed class DnsProfileBuilderTests
             rule.PreferredBy?.Contains(SingboxTags.TailscaleDns) == true);
 
         Assert.That(tailscaleRule.DisableOptimisticCache, Is.True);
+    }
+
+    [TestCase(DnsAddressMode.RealIp)]
+    [TestCase(DnsAddressMode.FakeIp)]
+    public void LocalNamespacesUseSystemDnsBeforeAnyRemotePool(DnsAddressMode mode)
+    {
+        var plan = CreatePlan(TargetPlatform.Linux) with { AddressMode = mode,
+            FakeIp = mode == DnsAddressMode.FakeIp ? new FakeIpPlan("198.18.0.0/15", null, [], []) : null };
+        var dns = SingboxDnsEmitter.Emit(plan);
+        var local = dns.Rules.Single(rule => rule.Server == SingboxTags.LocalDns);
+        Assert.That(dns.Servers.OfType<LocalDnsServer>().Single().Tag, Is.EqualTo(SingboxTags.LocalDns));
+        Assert.That(local.DomainSuffix, Is.EqualTo(new[] { "home.arpa", "internal", "lan", "local", "localdomain", "localhost" }));
+        Assert.That(dns.Rules.IndexOf(local), Is.LessThan(dns.Rules.FindIndex(rule => rule.Action == DnsRuleAction.Evaluate)));
+        Assert.That(local.Action, Is.EqualTo(DnsRuleAction.Route));
+    }
+
+    [TestCase(AddressFamilyPolicy.Ipv4Only)]
+    [TestCase(AddressFamilyPolicy.DualStack)]
+    public void SequentialAddressFallbackRequiresAnAddressBeforeAcceptingPrimary(AddressFamilyPolicy family)
+    {
+        var dns = SingboxDnsEmitter.Emit(CreatePlan(TargetPlatform.Android, addressFamily: family));
+        foreach (string type in family == AddressFamilyPolicy.Ipv4Only ? new[] { "A" } : new[] { "A", "AAAA" })
+        {
+            var pool = GetPoolRules(dns.Rules, "response-service-ai-primary-" + type.ToLowerInvariant());
+            Assert.That(pool, Has.Count.EqualTo(9));
+            Assert.That(pool[0].Action, Is.EqualTo(DnsRuleAction.Evaluate));
+            Assert.That(pool[0].Timeout, Is.EqualTo("2s"));
+            Assert.That(pool[1].IpCidr, Is.EqualTo(new[] { type == "A" ? "0.0.0.0/0" : "::/0" }));
+            Assert.That(pool[2].Action, Is.EqualTo(DnsRuleAction.Evaluate));
+            Assert.That(pool[3].IpCidr, Is.EqualTo(pool[1].IpCidr));
+            Assert.That(pool.Skip(4).Take(4).Select(rule => rule.ResponseRcode), Is.EqualTo(new[]
+            {
+                DnsResponseCode.NoError, DnsResponseCode.NoError, DnsResponseCode.NameError, DnsResponseCode.NameError
+            }));
+            Assert.That(pool.All(rule => rule.Race is null), Is.True);
+        }
     }
 
     private static void AssertSequentialFallbackPool(

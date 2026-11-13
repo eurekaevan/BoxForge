@@ -44,12 +44,17 @@ SHA-256、版本及 revision；其他平台或已有核心可用 `--core` 指定
 python3 scripts/verify-generated-configs.py src/BoxForge.Cli/bin/Debug/net10.0/BoxForge.dll
 # 或复用本地锁定核心
 python3 scripts/verify-generated-configs.py src/BoxForge.Cli/bin/Debug/net10.0/BoxForge.dll --core /absolute/path/to/sing-box
+# 额外检查 FakeIP DualStack 并运行本地 DNS 场景
+python3 scripts/verify-generated-configs.py src/BoxForge.Cli/bin/Debug/net10.0/BoxForge.dll --runtime
 ```
 
-脚本检查 5 个 fixture × 3 平台 × Tailscale/API 开关组合的 60 份配置；在临时
-fixture 副本中追加 HY2 单端口、等端点范围、多标量、混合范围和重复/边界端口样本，
-断言目标端口表示并逐份交给官方核心，不修改仓库 fixture 或字节基线。另验证
-6 类核心反例会被拒绝。普通 CI 和发布前验证调用同一入口；生产 CLI
+脚本检查 5 个 fixture × 3 平台 × Tailscale/API 开关组合的 60 份 RealIP 配置，
+再检查 15 份 FakeIP 配置，加上 6 类拒绝反例，默认共执行 81 次官方核心检查。
+临时 fixture 副本追加 HY2 单端口、等端点范围、多标量、混合范围和重复/边界端口样本，
+断言目标端口表示，不修改仓库 fixture 或字节基线。`--runtime` 额外生成并检查
+15 份 FakeIP DualStack 配置，然后对 Linux/Android × IPv4/DualStack 的四份配置调用
+DNS 运行时验证脚本；每次调用内包含多个场景及独立的临时配置检查。
+普通 CI 和发布前验证调用同一入口；生产 CLI
 不下载或启动核心。输入字段合法性仍由解析器和转换器检查，官方 `check`
 不保证运行时可用性，例如空服务器地址和零端口并不一定在此阶段报错。
 内置校验器保留 DNS 地址族约束、标签与引用完整性、控制面和来源映射等项目约束；
@@ -92,15 +97,16 @@ node scripts/verify-session-protocols.mjs "$singbox_core" \
 ```
 
 上述本地协议验证显式使用 `Ipv4Only`（与内置默认一致），使 AAAA 预期不依赖宿主网卡。
-DNS 验证脚本读取真实生成的桌面 DNS 规则，将上游替换为本地受控 DoH，
+DNS 验证脚本读取真实生成的 DNS 规则，将上游替换为本地受控 DoH，
 将分类替换为同标签 inline 测试域名；不创建 TUN、不使用真实订阅或公网 DNS。
-脚本接受 `Ipv4Only` 或 `DualStack`，要求 `ParallelFastest` 和 `dns.timeout = 3s`，
-不匹配时会在启动核心前报错。核心版本查询限时 10 秒，配置检查和证书生成各限时 30 秒。
+脚本接受 `Ipv4Only` 或 `DualStack`，支持 `ParallelFastest` 和 `SequentialFallback`，
+要求 `dns.timeout = 3s`；顺序模式的首选 evaluate 使用 `2s`。规则结构不匹配时在启动核心前报错。核心版本查询限时 10 秒，配置检查和证书生成各限时 30 秒。
 需要 Python 3 和 OpenSSL，本地 DoH 通过显式信任证书使用 HTTP/1.1，不能据此
 证明生产 DoH 的 HTTP/2、代理链路或 Gmail 实际性能。它覆盖地址/空答竞争、
 CNAME、附加区与错误地址族、非地址查询、分类隔离、GitHub/Spotify/Games
 与 `cn` 重叠时的代理 DNS 优先和失败隔离、TTL/过期缓存和默认 3 秒
-负答等待；`DualStack` 还验证 AAAA 有效地址优先及其缓存边界。诊断和结果写入独立的 `/tmp/boxforge-dns-races.*` 目录。
+负答等待；`DualStack` 还验证 AAAA 有效地址优先及其缓存边界。FakeIP 配置还验证
+合成地址、国内真实解析、RealIP 例外、非地址查询及缓存重启。诊断和结果写入独立的 `/tmp/boxforge-dns-races.*` 目录。
 
 协议验证脚本使用真实生成的 Linux leaf，而不是重新手写客户端字段。对应范围：
 
@@ -126,7 +132,7 @@ SS obfs HTTP/TLS 目前只有 serializer/官方核心配置检查，
 回环脚本改写拨号地址时保留原 TLS 名称语义，避免证书名称随测试地址变化。
 
 常规验收包括 `dotnet format`、warnings-as-errors build、全部测试，以及统一
-脚本的 60 份 JSON 官方检查和 6 类拒绝反例。
+脚本的 75 份 JSON 官方检查和 6 类拒绝反例（共 81 次 check）。
 另外核对地区 AUTO 层级、有效默认选择、DNS/route 引用及控制面 resolver。
 单元测试覆盖循环和超限 YAML、指纹/Reality 拒绝、非 TCP network 和旧传输选项拒绝；
 真实 Kestrel 子进程覆盖环境开关和截断 multipart 的错误契约。

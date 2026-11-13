@@ -49,6 +49,6 @@ internal static class DnsProfileBuilder
     }
 
     private static DnsHttpsResolverPlan CreateResolver(
-        string name, BuiltInProfile.Resolver resolver, string? detour = null) =>
+        string name, DnsResolverProfile resolver, string? detour = null) =>
         new(name, resolver.Server, resolver.ServerName, detour);
 }

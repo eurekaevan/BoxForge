@@ -10,25 +10,25 @@ public sealed record TailscaleFeature(bool Enabled, string TaildropDirectory);
 public sealed record ApiFeature(bool Enabled);
 public sealed record PrivacyProfile;
 
-internal sealed record DnsProfile(
+public sealed record DnsProfile(
     AddressFamilyPolicy AddressFamily,
     DnsAddressMode AddressMode,
     [property: JsonPropertyName("fakeip")] FakeIpProfile FakeIp,
     DnsResolverSelectionMode SelectionMode,
     string Timeout,
     uint CacheCapacity,
-    ImmutableArray<BuiltInProfile.Resolver> Resolvers);
+    ImmutableArray<DnsResolverProfile> Resolvers);
 
-internal sealed record FakeIpProfile(
+public sealed record FakeIpProfile(
     string Inet4Range,
     string Inet6Range,
     [property: JsonPropertyName("realip_domains")] ImmutableArray<string> RealIpDomains,
     [property: JsonPropertyName("realip_domain_suffixes")] ImmutableArray<string> RealIpDomainSuffixes);
 
-internal sealed record RouteProfile(
-    ImmutableArray<BuiltInProfile.Region> Regions,
+public sealed record RouteProfile(
+    ImmutableArray<RouteRegionProfile> Regions,
     ImmutableArray<ServiceDefinition> Services,
-    ImmutableArray<BuiltInProfile.RuleSetSource> RuleSets,
+    ImmutableArray<RouteRuleSetProfile> RuleSets,
     string MainDefaultRegion,
     string SniffTimeout,
     ImmutableArray<int> SniffExcludedPorts,
@@ -38,7 +38,7 @@ internal sealed record RouteProfile(
     bool? AutoRedirect,
     bool? MultiQueue);
 
-internal sealed record DomainBlockProfile(
+public sealed record DomainBlockProfile(
     ImmutableArray<string> Domain,
     ImmutableArray<string> DomainSuffix,
     ImmutableArray<string> DomainWildcard)
@@ -57,3 +57,7 @@ public sealed record TuningProfile(
     string UrlTestUrl,
     int UrlTestTolerance,
     string UrlTestIdleTimeout);
+
+public sealed record DnsResolverProfile(string Id, string Server, string ServerName);
+public sealed record RouteRegionProfile(string Id, string DisplayName, string Pattern);
+public sealed record RouteRuleSetProfile(ImmutableArray<string> Tags, string Url, string UpdateInterval);

@@ -16,6 +16,19 @@ internal readonly record struct Cidr(AddressFamily Family, byte[] Network, int P
 
 internal static class CidrHelper
 {
+    internal static bool TryParseAddressPrefix(string value, out Cidr cidr)
+    {
+        cidr = default;
+        string[] parts = value.Split('/');
+        if (parts.Length != 2 || !IPAddress.TryParse(parts[0], out var address)
+            || address.IsIPv4MappedToIPv6
+            || !int.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out int prefix)
+            || prefix < 0 || prefix > (address.AddressFamily == AddressFamily.InterNetwork ? 32 : 128))
+            return false;
+        cidr = new Cidr(address.AddressFamily, address.GetAddressBytes(), prefix);
+        return true;
+    }
+
     internal static bool TryParseCanonical(string? value, out Cidr cidr)
     {
         cidr = default;

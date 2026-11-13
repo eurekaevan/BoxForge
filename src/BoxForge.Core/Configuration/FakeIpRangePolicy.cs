@@ -14,9 +14,7 @@ internal static class FakeIpRangePolicy
     internal static bool HasMinimumCapacity(Cidr range) =>
         CidrHelper.HasUsableAddressCount(range, MinimumUsableAddresses);
 
-    // ULA (fc00::/7) is deliberately excluded: the route emitter puts
-    // ip_is_private -> DIRECT before sniff, so an unmapped ULA FakeIP address
-    // would bypass domain recovery and leak to DIRECT.
+    // Keep synthetic addresses within the reserved benchmark ranges.
     internal static bool IsAllowed(Cidr range) =>
         range.Family switch
         {

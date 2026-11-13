@@ -28,7 +28,8 @@ public sealed class BoxForgeProfile
     public static BoxForgeProfile Default { get; } = new(BuiltInProfile.Default);
 
     public FeaturesProfile Features => data.Features;
-    internal RouteProfile Route => data.Route;
+    public DnsProfile Dns => data.Dns;
+    public RouteProfile Route => data.Route;
     public TuningProfile Tuning => data.Tuning;
     public PrivacyProfile Privacy => data.Privacy;
     public ImmutableArray<ServiceDefinition> Services => data.Route.Services;

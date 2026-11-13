@@ -149,6 +149,17 @@ public sealed class RouteProfileBuilderTests
     }
 
     [Test]
+    public void DomainBlocksPrecedePrivateAddressDirectRouting()
+    {
+        RouteConfig route = SingboxRouteEmitter.Emit(RouteProfileBuilder.Plan(BoxForgeProfile.Default.Resolve(TargetPlatform.Linux)));
+        int direct = route.Rules.FindIndex(rule => rule.IpIsPrivate == true);
+        int ads = route.Rules.FindIndex(rule => rule.RuleSet?.Contains(RuleSetTags.Ads) == true);
+        int custom = route.Rules.FindIndex(rule => rule.DomainSuffix?.Contains("mcdn.bilivideo.cn") == true);
+        Assert.That(ads, Is.GreaterThan(FindFirstSniffIndex(route)).And.LessThan(direct));
+        Assert.That(custom, Is.GreaterThan(ads).And.LessThan(direct));
+    }
+
+    [Test]
     public void EmissionExpandsSniffAndServicePriority()
     {
         RoutePlan plan = CreatePlan(TargetPlatform.Linux);
@@ -257,8 +268,8 @@ public sealed class RouteProfileBuilderTests
                 new[]
                 {
                     rejectIndex,
-                    route.Rules.FindIndex(rule => rule.IpIsPrivate == true),
-                    FindFirstSniffIndex(route)
+                    FindFirstSniffIndex(route),
+                    route.Rules.FindIndex(rule => rule.IpIsPrivate == true)
                 },
                 Is.Ordered.And.All.GreaterThanOrEqualTo(0));
             Assert.That(ipv6Rejects[0].Type, Is.Null);

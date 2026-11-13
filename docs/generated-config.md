@@ -81,8 +81,9 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
   覆盖方式及无域名／ECH 等限制见[自定义域名阻断](configuration.md#自定义域名阻断)。
 - 所有 DNS `respond` 通过唯一 `match_response` 标签继承 evaluate 范围，不重复输出 `rule_set`；evaluate 和终止 SERVFAIL 仍保留分类范围。
 - DNS 每次上游查询默认超时为 `3s`。Android 正常只查询首选 resolver，首选查询使用
-  `2s` 超时，失败后才查询备用；Linux/Windows 同时查询两家。A 和允许放行的
-  AAAA 查询优先让含对应地址族地址的 `NOERROR` 响应竞速，双方均无地址时才依次接受
+  `2s` 超时；A/AAAA 首选无有效地址时也会查询备用，非地址查询仍接受首选的空答或负答。
+  Linux/Windows 同时查询两家，让含对应地址族地址的 `NOERROR` 响应竞速。
+  地址查询双方均无地址时才依次接受
   primary、secondary 的空答或仅 CNAME 等 `NOERROR` 后备；非地址查询让最快的
   `NOERROR` 胜出。全局 `optimistic.enabled` 为 `false`，仅保留正常 TTL 缓存。
   NXDOMAIN 不参与竞速，双方没有 `NOERROR` 时依次接受 primary、secondary 的
@@ -98,8 +99,11 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
   `realip_domain_suffixes` 后路由到 FakeIP；`cn` 解析池保持真实 DNS。
   `Ipv4Only` 只下发 `inet4_range` 且 FakeIP 仅匹配 A，`DualStack` 同时下发
   `inet6_range` 并匹配 A/AAAA。地址池必须位于保留用途范围，且至少包含 1024 个可用地址；
-  IPv6 仅允许 `2001:2::/48`，避免 ULA 在映射丢失时被 `ip_is_private` 直接送 `DIRECT`。
-  FakeIP 只匹配 A/AAAA，HTTPS/SVCB 等非地址查询仍走真实 DoH。默认 RealIP 例外排除常见本地命名空间。
+  IPv6 仅允许基准测试保留范围 `2001:2::/48`，不使用普通私网 ULA。
+  FakeIP 只匹配 A/AAAA，HTTPS/SVCB 等非地址查询仍走真实 DoH。
+  固定本地命名空间通过 `type: local` 的 `dns-local` 交给系统 DNS，两种地址模式均生效；
+  自定义 RealIP 例外继续使用同池真实主备解析。没有非本地 RealIP 例外时（包括默认配置）省略不可达的非国内 A/AAAA 真实地址块，
+  全局 FakeIP 规则仅有查询类型条件时直接输出普通规则。
   已获得合成地址的连接可能降低 `cnip` 纯 IP 规则的覆盖，
   详见[DNS 分类与回退](routing-and-dns.md#dns-分类与控制面解析)。
 - 代理节点和 Tailscale endpoint 继承

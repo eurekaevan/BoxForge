@@ -49,10 +49,4 @@ internal sealed record BuiltInProfile(
         return Load(source);
     }
 
-    internal sealed record Region(string Id, string DisplayName, string Pattern);
-
-    internal sealed record RuleSetSource(
-        ImmutableArray<string> Tags, string Url, string UpdateInterval);
-
-    internal sealed record Resolver(string Id, string Server, string ServerName);
 }

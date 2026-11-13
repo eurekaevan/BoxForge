@@ -40,16 +40,16 @@ public sealed class ResolvedProfile
 
     public ImmutableArray<RegionDefinition> Regions { get; }
     public FeaturesProfile Features => data.Features;
-    internal DnsProfile Dns => data.Dns;
-    internal RouteProfile Route => data.Route;
+    public DnsProfile Dns => data.Dns;
+    public RouteProfile Route => data.Route;
     public TuningProfile Tuning => data.Tuning;
     public PrivacyProfile Privacy => data.Privacy;
     public ImmutableArray<ServiceDefinition> Services => data.Route.Services;
     public TargetPlatform Platform { get; }
     public PlatformProfile Settings { get; }
 
-    internal ImmutableArray<BuiltInProfile.RuleSetSource> RuleSets => data.Route.RuleSets;
-    internal BuiltInProfile.Resolver GetResolver(string id) => data.Dns.Resolvers.Single(resolver => resolver.Id == id);
+    internal ImmutableArray<RouteRuleSetProfile> RuleSets => data.Route.RuleSets;
+    internal DnsResolverProfile GetResolver(string id) => data.Dns.Resolvers.Single(resolver => resolver.Id == id);
     public bool IsReservedTag(string tag) => reservedTags.Contains(tag);
     public string ToResolvedJson() => JsonSerializer.Serialize(data, BuiltInProfile.SnapshotJsonOptions);
     internal JsonElement ToPlatformSnapshot()
@@ -111,6 +111,7 @@ public sealed class ResolvedProfile
             SingboxTags.DirectAliDns,
             SingboxTags.DirectAliDnsSecondary,
             SingboxTags.FakeIpDns,
+            SingboxTags.LocalDns,
             SingboxTags.ProxyGoogleDns,
             SingboxTags.ProxyCloudflareDns,
             SingboxTags.TunInbound,

@@ -7,6 +7,8 @@ namespace BoxForge.Builders;
 
 internal static class SingboxDnsEmitter
 {
+    private static readonly ImmutableArray<string> LocalSuffixes =
+        ["home.arpa", "internal", "lan", "local", "localdomain", "localhost"];
     internal static DnsConfig Emit(DnsPlan plan)
     {
         var dns = new DnsConfig
@@ -25,6 +27,7 @@ internal static class SingboxDnsEmitter
             Detour = resolver.Detour,
             Tls = new DnsTlsConfig { Enabled = true, ServerName = resolver.ServerName }
         }));
+        dns.Servers.Add(new LocalDnsServer { Tag = SingboxTags.LocalDns });
         if (plan.AddressMode == DnsAddressMode.FakeIp)
         {
             FakeIpPlan fakeIp = plan.FakeIp
@@ -53,6 +56,15 @@ internal static class SingboxDnsEmitter
 
     private static void EmitRules(List<DnsRule> rules, DnsPlan plan)
     {
+        if (plan.FakeIp is { } exceptions)
+            plan = plan with
+            {
+                FakeIp = exceptions with
+                {
+                    RealIpDomains = [.. exceptions.RealIpDomains.Where(name => !IsLocalName(name))],
+                    RealIpDomainSuffixes = [.. exceptions.RealIpDomainSuffixes.Where(name => !IsLocalName(name))]
+                }
+            };
         if (plan.AddressFamily == AddressFamilyPolicy.Ipv4Only)
             rules.Add(new DnsRule
             {
@@ -83,46 +95,53 @@ internal static class SingboxDnsEmitter
                 Action = DnsRuleAction.Predefined,
                 Rcode = DnsResponseCode.NameError
             });
+        rules.Add(new DnsRule
+        {
+            DomainSuffix = [.. LocalSuffixes],
+            Action = DnsRuleAction.Route,
+            Server = SingboxTags.LocalDns
+        });
         foreach (DnsResolverPoolPlan pool in plan.Pools)
         {
-            if (plan.AddressMode == DnsAddressMode.FakeIp && pool.Kind != DnsPoolKind.Domestic)
+            bool fakeIp = plan.AddressMode == DnsAddressMode.FakeIp && pool.Kind != DnsPoolKind.Domestic;
+            if (fakeIp)
                 AddFakeIpRule(rules, pool, plan);
-            switch (plan.SelectionMode)
-            {
-                case DnsResolverSelectionMode.SequentialFallback:
-                    AddEvaluate(rules, pool, primary: true, timeout: "2s");
-                    AddResponse(rules, pool, primary: true, DnsResponseCode.NoError);
-                    AddResponse(rules, pool, primary: true, DnsResponseCode.NameError);
-                    AddEvaluate(rules, pool, primary: false);
-                    AddResponse(rules, pool, primary: false, DnsResponseCode.NoError);
-                    AddResponse(rules, pool, primary: false, DnsResponseCode.NameError);
-                    break;
-                case DnsResolverSelectionMode.ParallelFastest:
-                    foreach (string queryType in plan.AddressFamily == AddressFamilyPolicy.Ipv4Only
-                        ? new[] { "A" } : new[] { "A", "AAAA" })
-                    {
-                        AddEvaluate(rules, pool, primary: true, queryType);
-                        AddEvaluate(rules, pool, primary: false, queryType);
+            bool hasRealAddresses = !fakeIp || plan.FakeIp!.RealIpDomains.Length > 0
+                || plan.FakeIp.RealIpDomainSuffixes.Length > 0;
+            bool parallel = plan.SelectionMode == DnsResolverSelectionMode.ParallelFastest;
+            if (hasRealAddresses)
+                foreach (string queryType in plan.AddressFamily == AddressFamilyPolicy.Ipv4Only
+                    ? new[] { "A" } : new[] { "A", "AAAA" })
+                {
+                    AddEvaluate(rules, pool, primary: true, queryType, timeout: parallel ? null : "2s");
+                    if (!parallel)
+                        AddResponse(rules, pool, primary: true, DnsResponseCode.NoError, queryType, requireAddress: true);
+                    AddEvaluate(rules, pool, primary: false, queryType);
+                    if (parallel)
                         AddResponse(rules, pool, primary: true, DnsResponseCode.NoError, queryType, race: true);
-                        AddResponse(rules, pool, primary: false, DnsResponseCode.NoError, queryType, race: true);
-                        // Empty answers and negative responses follow both address races.
-                        AddResponse(rules, pool, primary: true, DnsResponseCode.NoError, queryType);
-                        AddResponse(rules, pool, primary: false, DnsResponseCode.NoError, queryType);
-                        AddResponse(rules, pool, primary: true, DnsResponseCode.NameError, queryType);
-                        AddResponse(rules, pool, primary: false, DnsResponseCode.NameError, queryType);
-                        AddTerminalServfail(rules, pool, queryType);
-                    }
-                    // Scoped address terminals prevent repeated queries in the general pool.
-                    AddEvaluate(rules, pool, primary: true);
-                    AddEvaluate(rules, pool, primary: false);
-                    AddResponse(rules, pool, primary: true, DnsResponseCode.NoError, race: true);
-                    AddResponse(rules, pool, primary: false, DnsResponseCode.NoError, race: true);
-                    AddResponse(rules, pool, primary: true, DnsResponseCode.NameError);
-                    AddResponse(rules, pool, primary: false, DnsResponseCode.NameError);
-                    break;
-                default:
-                    throw new InvalidOperationException("Unsupported DNS selection mode.");
+                    AddResponse(rules, pool, primary: false, DnsResponseCode.NoError, queryType,
+                        race: parallel, requireAddress: true);
+                    // Prefer actual addresses before accepting empty or negative responses.
+                    AddResponse(rules, pool, primary: true, DnsResponseCode.NoError, queryType);
+                    AddResponse(rules, pool, primary: false, DnsResponseCode.NoError, queryType);
+                    AddResponse(rules, pool, primary: true, DnsResponseCode.NameError, queryType);
+                    AddResponse(rules, pool, primary: false, DnsResponseCode.NameError, queryType);
+                    AddTerminalServfail(rules, pool, queryType);
+                }
+            // Non-address queries preserve their original primary/fallback or race policy.
+            AddEvaluate(rules, pool, primary: true, timeout: parallel ? null : "2s");
+            if (!parallel)
+            {
+                AddResponse(rules, pool, primary: true, DnsResponseCode.NoError);
+                AddResponse(rules, pool, primary: true, DnsResponseCode.NameError);
             }
+            AddEvaluate(rules, pool, primary: false);
+            if (parallel)
+                AddResponse(rules, pool, primary: true, DnsResponseCode.NoError, race: true);
+            AddResponse(rules, pool, primary: false, DnsResponseCode.NoError, race: parallel);
+            if (parallel)
+                AddResponse(rules, pool, primary: true, DnsResponseCode.NameError);
+            AddResponse(rules, pool, primary: false, DnsResponseCode.NameError);
             // Catch non-address queries and act as the final per-pool terminal.
             AddTerminalServfail(rules, pool);
         }
@@ -146,11 +165,13 @@ internal static class SingboxDnsEmitter
                 Domain = fakeIp.RealIpDomains.IsDefaultOrEmpty ? null : [.. fakeIp.RealIpDomains],
                 DomainSuffix = fakeIp.RealIpDomainSuffixes.IsDefaultOrEmpty ? null : [.. fakeIp.RealIpDomainSuffixes]
             });
-        rules.Add(new DnsRule
+        rules.Add((conditions.Count == 1 ? conditions[0] : new DnsRule
         {
             Type = RouteRuleType.Logical,
             Mode = RouteLogicalMode.And,
-            Rules = conditions,
+            Rules = conditions
+        }) with
+        {
             Action = DnsRuleAction.Route,
             Server = SingboxTags.FakeIpDns
         });
@@ -178,12 +199,12 @@ internal static class SingboxDnsEmitter
         });
 
     private static void AddResponse(List<DnsRule> rules, DnsResolverPoolPlan pool, bool primary,
-        DnsResponseCode rcode, string? queryType = null, bool race = false) =>
+        DnsResponseCode rcode, string? queryType = null, bool race = false, bool requireAddress = false) =>
         rules.Add(new DnsRule
         {
             // The unique response tag already binds this rule to the evaluate scope.
             QueryType = queryType is null ? null : [queryType],
-            IpCidr = race && queryType is not null ? [queryType == "A" ? "0.0.0.0/0" : "::/0"] : null,
+            IpCidr = (race || requireAddress) && queryType is not null ? [queryType == "A" ? "0.0.0.0/0" : "::/0"] : null,
             MatchResponse = ResponseTag(pool, primary, queryType),
             ResponseRcode = rcode,
             Action = DnsRuleAction.Respond,
@@ -202,6 +223,10 @@ internal static class SingboxDnsEmitter
         string tag = $"response-{name}-{(primary ? "primary" : "secondary")}";
         return queryType is null ? tag : DnsResponseTags.ForAddressQuery(tag, queryType);
     }
+
+    private static bool IsLocalName(string name) =>
+        LocalSuffixes.Any(suffix => name.Equals(suffix, StringComparison.OrdinalIgnoreCase)
+            || name.EndsWith("." + suffix, StringComparison.OrdinalIgnoreCase));
 
     private static List<string>? Copy(ImmutableArray<string> values) => values.IsDefault ? null : [.. values];
 }

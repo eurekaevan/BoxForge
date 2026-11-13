@@ -117,15 +117,15 @@ FakeIP DNS 规则或 `store_fakeip`；`FakeIp` 仅让非国内解析池的 A/AAA
 `/21`，IPv6 不得大于 `/117`。过小的池会快速回绕并覆盖仍在使用的映射，`/31`、`/32`
 还会分配出范围外的地址。
 两组范围在 `FakeIp` 模式下不得与 TUN 捕获地址或 resolver 地址重叠。
-IPv6 不使用 ULA `fc00::/7`：路由规则在 sniff 前将 `ip_is_private` 送往 `DIRECT`，
-若 FakeIP 映射丢失，ULA 合成地址会绕过域名恢复直接走 `DIRECT`。
+IPv6 不使用普通私网 ULA `fc00::/7`，合成地址限定在上述基准测试保留范围。
 FakeIP 规则只匹配 A/AAAA；HTTPS/SVCB（Type 65）等非地址查询继续进入真实 DoH，
 以保留 ALPN、ECH 等记录。若客户端优先使用 HTTPS 记录中的 `ipv4hint`，可能直接使用真实 IP 连接。
 `realip_domains`、`realip_domain_suffixes` 是禁止生成 FakeIP 的例外域名，按小写下发；
-它们只排除对应解析池的 FakeIP 规则，仍使用该池原有的真实 DNS 主备解析，不会强制切换到 AliDNS。
+除下述固定本地命名空间外，它们只排除对应解析池的 FakeIP 规则，仍使用该池原有的真实 DNS 主备解析，不会强制切换到 AliDNS。
 `realip_domain_suffixes` 默认排除 `home.arpa`、`internal`、`lan`、`local`、`localdomain`、
-`localhost` 等本地命名空间，避免局域网名称被合成后送入代理路由；BoxForge 不内置本地 DNS
-服务器，这些名称仍由所选的真实上游解析，若需要局域网解析应另行提供本地解析器。
+`localhost`。这些固定本地命名空间在 `RealIp` 和 `FakeIp` 下均优先交给系统本地 DNS，
+不进入公网 DoH；这与可清空的 FakeIP 例外列表独立。能否解析局域网名称取决于系统及其
+上游，`type: local` 不等于提供 mDNS 服务。其他自定义 RealIP 例外仍使用所属池的真实主备解析。
 DNS 模式接受 `SequentialFallback` 或 `ParallelFastest`。超时和间隔必须是正 Go duration；DNS 缓存容量为正，URL test
 容差为 1–65535ms，默认 50ms；不接受 `0`，因为锁定核心会将它解释为默认 50ms，无法实现零容差。
 探测 URL 只接受不带用户信息和片段的 HTTP(S) URL。
@@ -414,6 +414,8 @@ kebab-case，并按对象用途区分。默认地区组如下，地区覆盖可�
 | Tailscale endpoint / DNS | `tailscale`、`dns-tailscale` |
 | 直连 DNS | `dns-direct-alidns`、`dns-direct-alidns-secondary` |
 | 代理 DNS | `dns-proxy-google`、`dns-proxy-cloudflare` |
+| 系统本地 DNS | `dns-local` |
+| FakeIP DNS（所有模式均保留名称） | `dns-fakeip` |
 | 服务 DNS | `dns-service-{id}-cloudflare`、`dns-service-{id}-google` |
 | rule-set HTTP client | `http-ruleset-proxy` |
 | 可选 Dashboard HTTP client | `http-dashboard-direct` |

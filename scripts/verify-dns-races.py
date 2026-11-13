@@ -190,7 +190,7 @@ async def main(core, generated):
         for server in dns["servers"]:
             if server["type"] == "tailscale":
                 continue
-            if server["type"] == "fakeip":
+            if server["type"] in ("fakeip", "local"):
                 servers.append(copy.deepcopy(server))
                 continue
             tag = server["tag"]
@@ -304,6 +304,12 @@ async def main(core, generated):
             else:
                 assert any(event[0] == name for event in events), name
 
+        local_rule = next(rule for rule in dns["rules"] if rule.get("server") == "dns-local")
+        assert set(local_rule["domain_suffix"]) == {"home.arpa", "internal", "lan", "local", "localdomain", "localhost"}
+        local = await query("system-localhost", "localhost", 1)
+        assert local["rcode"] == 0 and local["ipv4"] and all(ipaddress.ip_address(ip).is_loopback for ip in local["ipv4"]), local
+        assert not any(event[0] == "localhost" for event in events), "Local names must not reach DoH"
+
         if fakeip_mode:
             fakeip = fakeip_servers[0]
             if fakeip.get("tag") != "dns-fakeip":
@@ -320,7 +326,7 @@ async def main(core, generated):
             for rule in rules:
                 if any("cn" in child.get("rule_set", []) for child in rule.get("rules", [])):
                     raise ValueError("FakeIP rules must not override the domestic cn pool")
-                if not any(child.get("query_type") for child in rule.get("rules", [])):
+                if not rule.get("query_type") and not any(child.get("query_type") for child in rule.get("rules", [])):
                     raise ValueError("FakeIP rules must be limited to address queries")
             if generated.get("experimental", {}).get("cache_file", {}).get("store_fakeip") is not True:
                 raise ValueError("FakeIP mode must enable experimental.cache_file.store_fakeip")
@@ -352,6 +358,14 @@ async def main(core, generated):
                 observed = {event[1] for event in events if event[0] == "fallback.cn.test"}
                 assert 1 in observed, observed
                 assert fallback["ms"] > 1700, fallback
+
+            for qt, address_mode in [(1, "a")] + ([] if ipv4_only else [(28, "aaaa")]):
+                for primary in ("empty", "cname", "nx"):
+                    specs[0], specs[1] = (.03, primary, 60), (.03, address_mode, 60)
+                    name = f"fakeip-domestic-{qt}-{primary}.cn.test"
+                    result = await query(name, name, qt)
+                    assert (result["rcode"], result["answers"]) == (0, 1), result
+                    assert {event[1] for event in events if event[0] == name} == {0, 1}, (name, events)
 
             global_name = "global-only.test"
             global_result = await query("fakeip-global", global_name, 1)
@@ -392,6 +406,7 @@ async def main(core, generated):
                         continue
                     exception_names.extend(child.get("domain", []))
                     exception_names.extend(f"probe.{suffix}" for suffix in child.get("domain_suffix", []))
+            exception_names = [name for name in exception_names if not any(name == suffix or name.endswith("." + suffix) for suffix in local_rule["domain_suffix"])]
             if exception_names:
                 exception_name = exception_names[0]
                 specs[:] = [(0.01, "a", 60)] * 4
@@ -399,13 +414,6 @@ async def main(core, generated):
                 assert (exception["rcode"], exception["answers"]) == (0, 1), exception
                 assert exception["ipv4"] and ipaddress.ip_address(exception["ipv4"][0]) not in inet4, exception
                 assert any(event[0] == exception_name for event in events), "RealIP exceptions must reach a real resolver"
-
-            specs[:] = [(0.01, "a", 60)] * 4
-            local_name = "printer.local"
-            local = await query("fakeip-local-suffix", local_name, 1)
-            assert (local["rcode"], local["answers"]) == (0, 1), local
-            assert local["ipv4"] and ipaddress.ip_address(local["ipv4"][0]) not in inet4, local
-            assert any(event[0] == local_name for event in events), "Local names must bypass FakeIP"
 
             first_ipv4 = service["ipv4"][0]
             fakeip_scenario_count = len(results)
@@ -496,6 +504,27 @@ async def main(core, generated):
                 assert result["ms"] < 200, "Non-address queries must still race"
             observed = {event[1] for event in events if event[0] == name}
             assert observed == (set() if qt == 28 and ipv4_only else set(pair)), (label, observed)
+
+        if not parallel:
+            # Sequential address replies only stop at primary when it contains the requested address.
+            for suffix in ("cn", "google", "external"):
+                pair = (0, 1) if suffix == "cn" else (2, 3)
+                for qt, address_mode in [(1, "a")] + ([] if ipv4_only else [(28, "aaaa")]):
+                    for primary, secondary, rcode, answers, expected_queries in (
+                        (address_mode, address_mode, 0, 1, {pair[0]}),
+                        ("empty", address_mode, 0, 1, set(pair)),
+                        ("cname", "cname-" + address_mode, 0, 2, set(pair)),
+                        ("nx", address_mode, 0, 1, set(pair)),
+                        ("empty", "nx", 0, 0, set(pair)),
+                        ("nx", "nx", 3, 0, set(pair)),
+                        ("servfail", "refused", 2, 0, set(pair)),
+                    ):
+                        specs[:] = [(0.01, "a", 60)] * 4
+                        specs[pair[0]], specs[pair[1]] = (.03, primary, 60), (.03, secondary, 60)
+                        name = f"sequential-{qt}-{primary}-{secondary}.{suffix}.test"
+                        result = await query(name, name, qt)
+                        assert (result["rcode"], result["answers"]) == (rcode, answers), result
+                        assert {event[1] for event in events if event[0] == name} == expected_queries, (name, events)
 
         # Non-address replies preserve RDATA, except the core removes HTTPS ipv6hint in IPv4-only mode.
         for suffix in ("cn", "google", "external"):

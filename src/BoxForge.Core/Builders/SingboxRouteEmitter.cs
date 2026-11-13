@@ -36,7 +36,6 @@ internal static class SingboxRouteEmitter
                 Action = RouteRuleAction.Route,
                 Outbound = SingboxTags.TailscaleEndpoint
             });
-        AddDirect(new RouteRule { IpIsPrivate = true });
         rules.Add(new RouteRule
         {
             Type = RouteRuleType.Logical,
@@ -75,6 +74,7 @@ internal static class SingboxRouteEmitter
                 DomainRegex = plan.Block.RegexPatterns(),
                 Action = RouteRuleAction.Reject
             });
+        AddDirect(new RouteRule { IpIsPrivate = true });
         AddServices(priority: true);
         foreach (string scope in new[] { RuleSetTags.Cn, RuleSetTags.CnIp })
             AddDirect(new RouteRule { RuleSet = [scope] });

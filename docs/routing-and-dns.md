@@ -13,10 +13,10 @@ Tailscale 阶段仅在对应平台启用 Tailscale 时生成规则；最终出�
 1. **`DnsHijack`**：以 `inbound: tun-in` 和 `port: 53` 兜底劫持 TCP/UDP DNS；主要入口是 TUN 自身的 `dns_mode: hijack`，不依赖后续 sniff 的协议识别。
 2. **`Ipv4OnlyGuard`**（在 `DnsHijack` 之后）：仅 `Ipv4Only` 生成，以全局 `ip_version: 6` 拒绝全部 IPv6，先于 Tailscale、DIRECT 和 sniff。
 3. **`Tailscale`**（启用 Tailscale 时，在 `Ipv4OnlyGuard` 之后）：路由 endpoint 声明为首选的目标，优先于私网直连。
-4. **`PreSniffDirect`**（在 `Tailscale` 之后）：直连私网地址。
-5. **`Sniff`**（在 `PreSniffDirect` 之后）：依次嗅探 TCP HTTP/TLS 与 UDP QUIC/STUN；TCP 跳过 FTP、SSH、MySQL、VNC 常用端口 21/22/3306/5900，继续后续路由，8080/8443 仍嗅探。
-6. **`BlockStunAndAds`**（在 `Sniff` 之后）：依次拒绝识别出的 UDP STUN 和 ads。
-7. **`PriorityServices`**（在 `BlockStunAndAds` 之后）：按列表顺序路由 `precedes_domestic_routes: true` 的服务；该字段默认 `true`，内置 AI、Google、GitHub、Spotify、Games 均在此阶段。
+4. **`Sniff`**（在 `Tailscale` 之后）：依次嗅探 TCP HTTP/TLS 与 UDP QUIC/STUN；TCP 跳过 FTP、SSH、MySQL、VNC 常用端口 21/22/3306/5900，继续后续路由，8080/8443 仍嗅探。
+5. **`BlockStunAndDomains`**（在 `Sniff` 之后）：依次拒绝识别出的 UDP STUN、ads 和 `route.block` 自定义屏蔽域名。
+6. **`PrivateDirect`**（在域名阻断之后）：直连私网地址；已有域名信息的私网目标也先执行广告和自定义域名阻断。
+7. **`PriorityServices`**（在 `PrivateDirect` 之后）：按列表顺序路由 `precedes_domestic_routes: true` 的服务；该字段默认 `true`，内置 AI、Google、GitHub、Spotify、Games 均在此阶段。
 8. **`DomesticDirect`**（在 `PriorityServices` 之后）：依次按 cn、cnip 直连国内目标，TCP、UDP 的所有端口使用相同优先级。
 9. **`OtherServices`**（在 `DomesticDirect` 之后）：按列表顺序路由显式设置 `precedes_domestic_routes: false` 的服务；默认没有此阶段。
 10. **`FinalOutbound`**（在 `OtherServices` 之后）：未命中规则的流量使用 route.final 的 🚀 PROXIES；不额外生成 catch-all 规则。
@@ -42,7 +42,7 @@ Tailscale 阶段仅在对应平台启用 Tailscale 时生成规则；最终出�
 对业务分流而言，核心优先级是：
 
 ```text
-IPv6 早期拒绝 → 广告拒绝 → 优先服务 → 国内 IPv4 → 普通服务 → 最终代理
+IPv6 早期拒绝 → Tailscale → 嗅探 → STUN／广告／自定义域名拒绝 → 私网直连 → 优先服务 → 国内目标 → 普通服务 → 最终代理
 ```
 
 `Ipv4Only` 下，单道 IPv6 拒绝位于 Tailscale 和全部直连及代理路由之前，确保业务流量只处理 IPv4 目标。
@@ -78,26 +78,33 @@ DIRECT 显式使用上述 `prefer_ipv4`／`ipv4_only` 绑定。Dashboard HTTP cl
 解析器地址不生成客户端直连例外，应用访问这些地址仍按普通路由规则处理。
 
 `dns.address_mode` 默认为 `RealIp`，此时 DNS 分类只使用真实解析池。选择 `FakeIp` 时，
-非 DOMESTIC 的每个解析池会在原有 `evaluate` 规则前增加一条逻辑 `and` 的 `route` 动作规则：
+非 DOMESTIC 的每个解析池会在原有 `evaluate` 规则前增加一条 `route` 动作规则：
 解析池范围 AND A/AAAA AND NOT RealIP 例外 → `dns-fakeip`。因此优先服务仍先于 `cn`，
 普通服务和全局池位于 `cn` 之后，DOMESTIC 永不生成 FakeIP 规则。
 命中该规则的查询直接获得合成地址，不再发起真实 DNS 查询；例外域名和非 A/AAAA 查询
 跳过 FakeIP 规则，继续进入同一解析池原有的真实主备解析。例外只排除 FakeIP，
-不会把服务域名改交给 AliDNS，也不改变服务优先级。
+不会把服务域名改交给 AliDNS，也不改变服务优先级。固定本地命名空间在分类前交给系统 DNS，见下文。
+没有非本地 RealIP 例外时（包括默认配置），非国内池省略不可达的真实 A/AAAA 地址块，保留非地址查询；
+全局 FakeIP 规则只有查询类型条件时直接输出普通规则，不包装单条件逻辑规则。
 `FakeIp` 下 FakeIP DNS server 位于 HTTPS resolver 之后、Tailscale DNS 之前；
 `inet6_range` 仅在 `DualStack` 输出，`Ipv4Only` 的 AAAA 空 `NOERROR` 仍是首条规则，
 FakeIP 查询条件在 `Ipv4Only` 下仅为 A，`DualStack` 下为 A/AAAA。
 `experimental.cache_file.store_fakeip` 只在 `FakeIp` 模式启用。
 FakeIP 地址池必须位于保留用途范围并至少包含 1024 个可用地址（IPv4 `/21`、IPv6 `/117`
 或更短前缀），否则锁定内核的地址分配会回绕并覆盖旧映射。
-IPv4 仅允许 `198.18.0.0/15`，IPv6 仅允许 `2001:2::/48`；不使用 ULA `fc00::/7`，
-因为 `ip_is_private -> DIRECT` 位于 sniff 之前，映射丢失时 ULA 合成地址会绕过域名恢复。
+IPv4 仅允许 `198.18.0.0/15`，IPv6 仅允许 `2001:2::/48`；合成地址限定在
+基准测试保留范围，不使用普通私网 ULA `fc00::/7`。
 HTTPS/SVCB（Type 65）等非地址查询不命中 FakeIP，继续走真实 DoH 以保留 ALPN、ECH；
 若客户端优先使用 HTTPS 记录中的 `ipv4hint`，可能改用真实 IP 连接。
-默认 RealIP 例外包含 `home.arpa`、`internal`、`lan`、`local`、`localdomain`、`localhost`，
-这些本地名称不会获得合成地址；BoxForge 不内置本地 DNS 服务器，若需解析局域网名称应另行配置。
+`home.arpa`、`internal`、`lan`、`local`、`localdomain`、`localhost` 固定交给系统本地 DNS，
+在 `RealIp` 和 `FakeIp` 下均不进入公网 DoH 或 FakeIP。局域网名称能否解析取决于系统及其上游；
+`type: local` 不等于 BoxForge 提供 mDNS 服务。自定义 RealIP 例外仍按所属解析池处理。
 已获得合成地址、尚未由核心还原域名的连接可能失去 `cnip` 的纯 IP 判断依据；
 BoxForge 首版保留 `cnip` 规则且不增加无条件 `resolve`，因此 `cnip` 分流不作为 FakeIP 模式的完整保证。
+锁定核心在执行路由规则前恢复当前 FakeIP 地址池的映射；记录不存在时直接返回错误，
+不会把该地址交给最终代理，因此无需追加路由层 reject。此保证只覆盖当前配置的 FakeIP 范围；
+更换地址池后仍被应用持有的旧范围地址不属于当前 store 的识别范围。
+参见[锁定核心的路由实现](https://github.com/SagerNet/sing-box/blob/25b0d5ea3e466d246c708ac0f20d0448110e566c/route/route.go)。
 
 client DNS 依次分类：
 
@@ -105,15 +112,16 @@ client DNS 依次分类：
 2. 启用 Tailscale 时，`preferred_by` 命中的 MagicDNS 和 split DNS 交给
    `dns-tailscale`，禁用 optimistic 缓存；`Ipv4Only` 下位于 AAAA 空答规则之后。
 3. `ads` 返回 `NXDOMAIN`，随后 `route.block` 的自定义域名阻断也返回 `NXDOMAIN`。
-4. 从有效 profile 的 `route.services` 为每个服务生成独立 pool，先处理 `PrecedesDomesticRoutes` 为真的服务；
+4. 固定本地命名空间交给 `dns-local` 系统解析器。
+5. 从有效 profile 的 `route.services` 为每个服务生成独立 pool，先处理 `PrecedesDomesticRoutes` 为真的服务；
    该字段默认 `true`，内置 AI、Google、GitHub、Spotify 和 Games 均通过自己的服务选择组解析，优先于 `cn`。
-5. `cn` 进入 DOMESTIC pool。
-6. 处理 `PrecedesDomesticRoutes` 为假的普通服务 pool；同时命中 `cn` 的域名已在前一步进入 DOMESTIC。
-7. 其余查询进入 GLOBAL pool。
+6. `cn` 进入 DOMESTIC pool。
+7. 处理 `PrecedesDomesticRoutes` 为假的普通服务 pool；同时命中 `cn` 的域名已在前一步进入 DOMESTIC。
+8. 其余查询进入 GLOBAL pool。
 
 DNS 与业务路由均按优先服务 → 国内 → 普通服务排序，各服务阶段保留列表顺序；
 自定义域名阻断在这些分类之前执行：DNS 在广告规则之后，业务路由在嗅探和广告规则之后。
-私网与 Tailscale 的前置路径保留；没有可用域名的直连 IP 无法保证被域名阻断覆盖。
+Tailscale 的前置路径保留；私网直连在域名阻断之后。没有可用域名的直连 IP 无法保证被域名阻断覆盖。
 同时命中多个同阶段服务时采用最先匹配的服务，TCP、UDP 的所有端口使用相同优先级。
 
 ## Resolver pool 响应语义
@@ -133,11 +141,14 @@ DNS 构建器从本次编译的 `ResolvedProfile.Settings` 读取
 `DnsSelectionMode`：默认 Android 使用 `SequentialFallback`，Linux/Windows 使用
 `ParallelFastest`。
 
-顺序回退模式（默认 Android）先 `evaluate` primary（`timeout: 2s`），随后按顺序判断 primary 的
-`NOERROR` 和 `NXDOMAIN`。只有这两个规则都不接受 primary 结果时，才会执行
-secondary `evaluate`；secondary 继承全局 `dns.timeout`（默认 `3s`）。健康情况下因此
-只产生一个上游请求。两家都不响应时，顺序预算可能累计至约 `2s + 3s`；
-这不是整条连接的总超时。
+顺序回退模式（默认 Android）先 `evaluate` primary（`timeout: 2s`）。A 和允许放行的
+AAAA 查询先要求对应地址族的有效地址；若 primary 返回空 `NOERROR`、仅 CNAME、
+`NXDOMAIN` 或查询失败，再查询 secondary，并优先接受其有效地址。双方均无有效地址时，
+依次接受 primary/secondary 的 `NOERROR` 后备，再依次接受 primary/secondary 的 `NXDOMAIN`，
+否则返回 `SERVFAIL`。非地址查询仍先接受 primary 的 `NOERROR` 或 `NXDOMAIN`，
+不因空答额外查询 secondary。secondary 继承全局 `dns.timeout`（默认 `3s`）；
+primary 健康且答案可用时只产生一个上游请求。两家都不响应时，顺序预算可能累计至
+约 `2s + 3s`；这不是整条连接的总超时。
 
 并行模式（默认 Linux/Windows）先连续执行两个 `evaluate`，让 primary 和 secondary 并行查询。
 A 和允许放行的 AAAA 查询分别进入独立的地址池，两条 `NOERROR` `respond`

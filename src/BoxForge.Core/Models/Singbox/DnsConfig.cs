@@ -29,6 +29,7 @@ public record DnsResolverOptions
 }
 
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
+[JsonDerivedType(typeof(LocalDnsServer), typeDiscriminator: "local")]
 [JsonDerivedType(typeof(HttpsDnsServer), typeDiscriminator: "https")]
 [JsonDerivedType(typeof(TailscaleDnsServer), typeDiscriminator: "tailscale")]
 [JsonDerivedType(typeof(FakeIpDnsServer), typeDiscriminator: "fakeip")]
@@ -37,6 +38,8 @@ public abstract record DnsServer
     [JsonPropertyOrder(-100)]
     [JsonPropertyName("tag")] public string? Tag { get; init; }
 }
+
+public record LocalDnsServer : DnsServer;
 
 public record HttpsDnsServer : DnsServer
 {

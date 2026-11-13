@@ -346,6 +346,7 @@ public sealed class ProfileConfigurationTests
         using var document = await Generate(profile, TargetPlatform.Linux, Yaml("US01"));
         foreach (string section in new[] { "dns", "route" })
             Assert.That(document.RootElement.GetProperty(section).GetProperty("rules").EnumerateArray()
+                .Where(rule => rule.GetProperty("action").GetString() == (section == "dns" ? "predefined" : "reject"))
                 .Any(rule => rule.TryGetProperty("domain_regex", out _) || rule.TryGetProperty("domain_suffix", out _)
                     || rule.TryGetProperty("domain", out _)), Is.False);
     }

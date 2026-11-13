@@ -3,6 +3,10 @@ using BoxForge.Configuration;
 using BoxForge.Models;
 using BoxForge.Models.Singbox;
 using BoxForge.Services;
+using BoxForge.Builders;
+using BoxForge.Builders.Components;
+using BoxForge.Parsers;
+using System.Text.Json.Nodes;
 
 namespace BoxForge.Tests;
 
@@ -10,6 +14,60 @@ namespace BoxForge.Tests;
 public sealed class SingboxConfigValidatorTests
 {
     private readonly SingboxConfigValidator validator = new();
+
+    [TestCase("or")]
+    [TestCase("invert")]
+    [TestCase("aaaa")]
+    [TestCase("cn")]
+    [TestCase("early-global")]
+    [TestCase("narrow-terminal")]
+    [TestCase("interface-terminal")]
+    [TestCase("bounded-or")]
+    [TestCase("tun4")]
+    [TestCase("tun6")]
+    [TestCase("resolver4")]
+    [TestCase("resolver6")]
+    public void FakeIpValidationRejectsUnsafeScopesAndOverlappingAddresses(string mutation)
+    {
+        var family = mutation == "aaaa" ? AddressFamilyPolicy.Ipv4Only : AddressFamilyPolicy.DualStack;
+        var profile = BoxForgeProfile.Default.Resolve(TargetPlatform.Linux,
+            new JsonObject { ["dns"] = new JsonObject { ["address_mode"] = "FakeIp", ["address_family"] = family.ToString() } });
+        var nodes = NodeCatalogBuilder.Build(new ClashParser().Parse(ProfileConfigurationTests.Yaml("test"))!);
+        var config = new SingboxConfigBuilder().Build(ConfigurationPlanner.Plan(nodes, profile), new string('a', 64));
+        Assert.DoesNotThrow(() => validator.Validate(config, family, DnsAddressMode.FakeIp));
+        int index = config.Dns.Rules.FindIndex(rule => rule.Server == SingboxTags.FakeIpDns);
+        DnsRule rule = config.Dns.Rules[index];
+        switch (mutation)
+        {
+            case "or": config.Dns.Rules[index] = rule with { Mode = RouteLogicalMode.Or }; break;
+            case "invert": config.Dns.Rules[index] = rule with { Rules = [new DnsRule { QueryType = ["A"], Invert = true }] }; break;
+            case "aaaa": config.Dns.Rules[index] = rule with { Rules = [new DnsRule { QueryType = ["A", "AAAA"] }] }; break;
+            case "cn": config.Dns.Rules[index] = rule with { Rules = [new DnsRule { RuleSet = [RuleSetTags.Cn] }, new DnsRule { QueryType = ["A"] }] }; break;
+            case "early-global": config.Dns.Rules.Insert(index, new DnsRule { QueryType = ["A"], Action = DnsRuleAction.Route, Server = SingboxTags.FakeIpDns }); break;
+            case "narrow-terminal":
+            case "interface-terminal":
+                int terminal = config.Dns.Rules.FindIndex(candidate => candidate.RuleSet?.Contains(RuleSetTags.Cn) == true
+                    && candidate.QueryType is null && candidate.Rcode == DnsResponseCode.ServerFailure);
+                config.Dns.Rules[terminal] = mutation == "narrow-terminal"
+                    ? config.Dns.Rules[terminal] with { Domain = ["only-one.example"] }
+                    : config.Dns.Rules[terminal] with { DefaultInterfaceAddress = ["127.0.0.0/8"] };
+                break;
+            case "bounded-or":
+                // Keep this now-global rule behind the domestic terminal.
+                config.Dns.Rules.RemoveAt(index);
+                config.Dns.Rules.Add(rule with { Mode = RouteLogicalMode.Or,
+                    Rules = [new DnsRule { QueryType = ["A"] }, new DnsRule { QueryType = ["AAAA"] }] });
+                Assert.DoesNotThrow(() => validator.Validate(config, family, DnsAddressMode.FakeIp));
+                return;
+            case "tun4": config.Inbounds[0] = config.Inbounds[0] with { Address = ["198.18.0.1/30"] }; break;
+            case "tun6": config.Inbounds[0] = config.Inbounds[0] with { Address = ["2001:2::1/126"] }; break;
+            case "resolver4": config.Dns.Servers[0] = ((HttpsDnsServer)config.Dns.Servers[0]) with { Server = "198.18.0.2" }; break;
+            case "resolver6": config.Dns.Servers[0] = ((HttpsDnsServer)config.Dns.Servers[0]) with { Server = "2001:2::2" }; break;
+        }
+        var error = Assert.Throws<ConfigValidationException>(() => validator.Validate(config, family, DnsAddressMode.FakeIp))!;
+        Assert.That(error.Diagnostics.Select(diagnostic => diagnostic.Code), Does.Contain(
+            mutation.StartsWith("tun", StringComparison.Ordinal) || mutation.StartsWith("resolver", StringComparison.Ordinal) ? "SB098" : "SB096"));
+    }
 
     [Test]
     public void BypassWithoutOutboundRequiresAutoRedirect(

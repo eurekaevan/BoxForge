@@ -17,6 +17,18 @@ namespace BoxForge.Tests;
 [TestFixture]
 public sealed class ProfilePlannerTests
 {
+    [TestCase("198.18.0.1/30")]
+    [TestCase("2001:2::1/126")]
+    public void ConfigurationPlanRejectsTunAddressesOverlappingFakeIp(string address)
+    {
+        var profile = BoxForgeProfile.Default.Resolve(TargetPlatform.Linux,
+            JsonNode.Parse("""{"dns":{"address_mode":"FakeIp","address_family":"DualStack"}}""")!.AsObject());
+        var plan = ConfigurationPlanner.Plan(CreateCatalog("美国 01"), profile);
+        var mutated = plan with { Tun = plan.Tun with { Addresses = [address] } };
+        var error = Assert.Throws<ConfigValidationException>(() => mutated.Validate())!;
+        Assert.That(error.Diagnostics.Select(diagnostic => diagnostic.Path), Does.Contain("plan.tun.addresses[0]"));
+    }
+
     [Test]
     public void EmptySniffExclusionsKeepAnUnrestrictedTcpSniffCondition()
     {

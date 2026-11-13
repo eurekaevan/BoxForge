@@ -123,6 +123,12 @@ internal sealed record DnsPlan(
         }
         else if (AddressFamily == AddressFamilyPolicy.DualStack)
             diagnostics.Add(new("IR008", "plan.dns.fakeip.inet6_range", "DualStack 的 FakeIP 必须提供 IPv6 范围。"));
+        foreach (string? value in new[] { fakeIp.Inet4Range, fakeIp.Inet6Range })
+            if (CidrHelper.TryParseCanonical(value, out Cidr range))
+                for (int index = 0; index < Resolvers.Count; index++)
+                    if (IPAddress.TryParse(Resolvers[index].Address, out var address) && range.Contains(address))
+                        diagnostics.Add(new("IR008", $"plan.dns.resolvers[{index}].address",
+                            "DNS resolver 地址不能位于 FakeIP 范围内。"));
         ValidateDomainList(fakeIp.RealIpDomains, "plan.dns.fakeip.realip_domains", diagnostics);
         ValidateDomainList(fakeIp.RealIpDomainSuffixes, "plan.dns.fakeip.realip_domain_suffixes", diagnostics);
     }

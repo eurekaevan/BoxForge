@@ -61,7 +61,8 @@ profile 根分区为 `features`、`dns`、`route`、`tuning`、`privacy`；`plat
 保持根错误先于平台结构错误。已完成结构校验的平台层及数组 patch payload 在合并时不重复
 解析叶值类型；数组匹配、删除、身份约束及最终对象构造仍执行。
 `BoxForgeProfile.Resolve(platform, request)` 在构建前一次性应用覆盖层，返回绑定单个平台的
-`ResolvedProfile`。文档上的分区属性表示根值；已解析配置保存最终分区、平台参数、
+`ResolvedProfile`。两者均公开 `Features`、`Dns`、`Route`、`Tuning`、`Privacy` 五分区属性；
+文档对象的属性表示根值，已解析对象的属性表示目标平台最终值。已解析配置保存最终分区、平台参数、
 地区匹配表达式与保留名称，不支持继续叠加或切换平台。节点名称检查和策略规划只接收已解析配置；来源解析不接收平台配置。
 目标构建器只接收计划和缓存 ID，不持有宿主文档，也没有可选配置回退。
 无状态的节点、DNS、路由和 Tailscale 构建组件使用静态调用。
@@ -472,9 +473,11 @@ Android 不输出未实现的 strict_route；本地静态验证不等于真机�
 outbound、endpoint 和 inbound 各自的 tag 必须唯一，outbound 与 endpoint
 共享路由目标命名空间，tag 也不得互相重复。
 内置校验器不会启动 sing-box 或下载核心。`scripts/verify-generated-configs.py`
-在独立临时目录中生成 5 个 fixture × 3 平台 × Tailscale/API 开关两种状态的
-60 份配置，交给固定版本和 revision 的官方核心检查；下载模式同时校验固定
-归档 SHA-256。普通 CI 和发布前验证使用同一脚本。部署实际配置时的核心检查和
-运行时验证仍是独立步骤。
+在独立临时目录中生成 5 个 fixture × 3 平台 × Tailscale/API 开关组合的
+60 份 RealIP 配置，并额外生成 15 份 FakeIP 配置，连同 6 个拒绝反例共执行
+81 次官方核心检查；下载模式同时校验固定归档 SHA-256。`--runtime` 额外检查
+15 份 FakeIP DualStack 配置，并对 Linux/Android 的 IPv4/DualStack 四份配置调用
+本地 DNS 运行时验证。普通 CI 和发布前验证使用同一脚本；实际 TUN、代理链路和
+部署网络连通性仍需单独验证。
 
 [返回 README](../README.md)
