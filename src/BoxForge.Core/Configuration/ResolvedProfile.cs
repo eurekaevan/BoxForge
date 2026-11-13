@@ -247,6 +247,18 @@ public sealed class ResolvedProfile
                 "profile.dns.fakeip.inet6_range: 必须为规范的 IPv6 CIDR 网络地址。");
         if (addressMode == DnsAddressMode.FakeIp)
         {
+            if (!FakeIpRangePolicy.HasMinimumCapacity(inet4))
+                throw new ProfileValidationException("profile.dns.fakeip.inet4_range",
+                    "profile.dns.fakeip.inet4_range: 至少需要 1024 个可用地址，前缀长度不能大于 /21。");
+            if (!FakeIpRangePolicy.HasMinimumCapacity(inet6))
+                throw new ProfileValidationException("profile.dns.fakeip.inet6_range",
+                    "profile.dns.fakeip.inet6_range: 至少需要 1024 个可用地址，前缀长度不能大于 /117。");
+            if (!FakeIpRangePolicy.IsAllowed(inet4))
+                throw new ProfileValidationException("profile.dns.fakeip.inet4_range",
+                    "profile.dns.fakeip.inet4_range: 必须位于保留用途的 198.18.0.0/15 内。");
+            if (!FakeIpRangePolicy.IsAllowed(inet6))
+                throw new ProfileValidationException("profile.dns.fakeip.inet6_range",
+                    "profile.dns.fakeip.inet6_range: 必须位于 2001:2::/48 内。");
             foreach (Cidr tun in tunCidrs)
             {
                 if (CidrHelper.Overlaps(inet4, tun) || CidrHelper.Overlaps(inet6, tun))

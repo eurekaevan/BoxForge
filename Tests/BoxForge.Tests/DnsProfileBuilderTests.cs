@@ -242,7 +242,10 @@ public sealed class DnsProfileBuilderTests
                 && rule.Rules is not null), Is.True);
             Assert.That(fakeIpRules.Count(rule => rule.Rules!.Any(child => child.RuleSet is not null)),
                 Is.EqualTo(servicePoolCount));
-            Assert.That(fakeIpRules.Single(rule => rule.Rules!.All(child => child.RuleSet is null)).Rules, Has.Count.EqualTo(1));
+            DnsRule globalFakeIpRule = fakeIpRules.Single(rule => rule.Rules!.All(child => child.RuleSet is null));
+            Assert.That(globalFakeIpRule.Rules, Has.Count.EqualTo(2));
+            Assert.That(globalFakeIpRule.Rules!.Single(child => child.Invert == true).DomainSuffix,
+                Is.EqualTo(new[] { "home.arpa", "internal", "lan", "local", "localdomain", "localhost" }));
             Assert.That(fakeIpRules.All(rule =>
             {
                 DnsRule query = rule.Rules!.Single(child => child.QueryType is not null);
@@ -352,6 +355,36 @@ public sealed class DnsProfileBuilderTests
             FakeIp = new FakeIpPlan("198.18.0.0/15", null, [], [])
         };
         error = Assert.Throws<ConfigValidationException>(() => dualStack.Validate())!;
+        Assert.That(error.Diagnostics.Select(item => (item.Code, item.Path)),
+            Is.EqualTo(new[] { ("IR008", "plan.dns.fakeip.inet6_range") }));
+
+        DnsPlan undersized = dualStack with
+        {
+            FakeIp = new FakeIpPlan("198.18.0.0/22", "2001:2::/118", [], [])
+        };
+        error = Assert.Throws<ConfigValidationException>(() => undersized.Validate())!;
+        Assert.That(error.Diagnostics.Select(item => (item.Code, item.Path)), Is.EqualTo(new[]
+        {
+            ("IR008", "plan.dns.fakeip.inet4_range"),
+            ("IR008", "plan.dns.fakeip.inet6_range")
+        }));
+
+        DnsPlan nonReserved = dualStack with
+        {
+            FakeIp = new FakeIpPlan("203.0.0.0/16", "2001:3::/48", [], [])
+        };
+        error = Assert.Throws<ConfigValidationException>(() => nonReserved.Validate())!;
+        Assert.That(error.Diagnostics.Select(item => (item.Code, item.Path)), Is.EqualTo(new[]
+        {
+            ("IR008", "plan.dns.fakeip.inet4_range"),
+            ("IR008", "plan.dns.fakeip.inet6_range")
+        }));
+
+        DnsPlan ula = dualStack with
+        {
+            FakeIp = new FakeIpPlan("198.18.0.0/15", "fd00:1234::/64", [], [])
+        };
+        error = Assert.Throws<ConfigValidationException>(() => ula.Validate())!;
         Assert.That(error.Diagnostics.Select(item => (item.Code, item.Path)),
             Is.EqualTo(new[] { ("IR008", "plan.dns.fakeip.inet6_range") }));
     }

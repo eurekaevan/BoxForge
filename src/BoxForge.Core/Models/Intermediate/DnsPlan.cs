@@ -109,11 +109,17 @@ internal sealed record DnsPlan(
         if (!CidrHelper.TryParseCanonical(fakeIp.Inet4Range, out Cidr inet4)
             || inet4.Family != System.Net.Sockets.AddressFamily.InterNetwork)
             diagnostics.Add(new("IR008", "plan.dns.fakeip.inet4_range", "FakeIP IPv4 范围无效。"));
+        else if (!FakeIpRangePolicy.HasMinimumCapacity(inet4) || !FakeIpRangePolicy.IsAllowed(inet4))
+            diagnostics.Add(new("IR008", "plan.dns.fakeip.inet4_range",
+                "FakeIP IPv4 范围必须位于 198.18.0.0/15 且至少包含 1024 个可用地址。"));
         if (fakeIp.Inet6Range is { } inet6Range)
         {
             if (!CidrHelper.TryParseCanonical(inet6Range, out Cidr inet6)
                 || inet6.Family != System.Net.Sockets.AddressFamily.InterNetworkV6)
                 diagnostics.Add(new("IR008", "plan.dns.fakeip.inet6_range", "FakeIP IPv6 范围无效。"));
+            else if (!FakeIpRangePolicy.HasMinimumCapacity(inet6) || !FakeIpRangePolicy.IsAllowed(inet6))
+                diagnostics.Add(new("IR008", "plan.dns.fakeip.inet6_range",
+                    "FakeIP IPv6 范围必须位于 2001:2::/48 且至少包含 1024 个可用地址。"));
         }
         else if (AddressFamily == AddressFamilyPolicy.DualStack)
             diagnostics.Add(new("IR008", "plan.dns.fakeip.inet6_range", "DualStack 的 FakeIP 必须提供 IPv6 范围。"));

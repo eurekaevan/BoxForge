@@ -506,6 +506,12 @@ public sealed class ProfileConfigurationTests
     [TestCase("{\"dns\":{\"address_mode\":\"FakeIp\",\"fakeip\":{\"inet4_range\":\"172.19.0.0/30\"}}}")]
     [TestCase("{\"dns\":{\"address_mode\":\"FakeIp\",\"fakeip\":{\"inet6_range\":\"fd32:f937:4cd0:1::/126\"}}}")]
     [TestCase("{\"dns\":{\"address_mode\":\"FakeIp\",\"fakeip\":{\"inet4_range\":\"223.5.5.0/24\"}}}")]
+    [TestCase("{\"dns\":{\"address_mode\":\"FakeIp\",\"fakeip\":{\"inet4_range\":\"198.18.0.0/22\"}}}")]
+    [TestCase("{\"dns\":{\"address_mode\":\"FakeIp\",\"fakeip\":{\"inet4_range\":\"203.0.0.0/16\"}}}")]
+    [TestCase("{\"dns\":{\"address_mode\":\"FakeIp\",\"fakeip\":{\"inet6_range\":\"2001:2::/118\"}}}")]
+    [TestCase("{\"dns\":{\"address_mode\":\"FakeIp\",\"fakeip\":{\"inet6_range\":\"2001:3::/48\"}}}")]
+    [TestCase("{\"dns\":{\"address_mode\":\"FakeIp\",\"fakeip\":{\"inet6_range\":\"fc00::/48\"}}}")]
+    [TestCase("{\"dns\":{\"address_mode\":\"FakeIp\",\"fakeip\":{\"inet6_range\":\"fd00:1234::/64\"}}}")]
     [TestCase("{\"tuning\":{\"url_test_tolerance\":-1}}")]
     [TestCase("{\"tuning\":{\"url_test_tolerance\":65536}}")]
     [TestCase("{\"platforms\":{\"Linux\":{\"tuning\":{\"url_test_tolerance\":65536}}}}")]
@@ -522,7 +528,7 @@ public sealed class ProfileConfigurationTests
     {
         var profile = Load("""
             {"dns":{"address_mode":"FakeIp","fakeip":{
-              "inet4_range":"198.19.0.0/16","inet6_range":"2001:3::/48",
+              "inet4_range":"198.19.0.0/16","inet6_range":"2001:2:0:1::/64",
               "realip_domains":{"replace":["Example.COM"]},"realip_domain_suffixes":{"replace":["Internal.Example"]}}}}
             """);
         var dns = profile.Resolve(TargetPlatform.Linux).Dns;
@@ -531,10 +537,33 @@ public sealed class ProfileConfigurationTests
             Assert.That(profile.Resolve(TargetPlatform.Linux).Settings.DnsAddressMode,
                 Is.EqualTo(DnsAddressMode.FakeIp));
             Assert.That(dns.FakeIp.Inet4Range, Is.EqualTo("198.19.0.0/16"));
-            Assert.That(dns.FakeIp.Inet6Range, Is.EqualTo("2001:3::/48"));
+            Assert.That(dns.FakeIp.Inet6Range, Is.EqualTo("2001:2:0:1::/64"));
             Assert.That(dns.FakeIp.RealIpDomains, Is.EqualTo(new[] { "Example.COM" }));
             Assert.That(dns.FakeIp.RealIpDomainSuffixes, Is.EqualTo(new[] { "Internal.Example" }));
         });
+    }
+
+    [TestCase("198.18.0.0/15", null)]
+    [TestCase("198.19.0.0/16", null)]
+    [TestCase("198.18.0.0/21", "2001:2::/117")]
+    [TestCase(null, "2001:2::/48")]
+    [TestCase(null, "2001:2:0:1::/64")]
+    [TestCase(null, "2001:2::/117")]
+    public void FakeIpModeAcceptsReservedRangesWithMinimumCapacity(string? inet4Range, string? inet6Range)
+    {
+        var fakeIp = new JsonObject();
+        if (inet4Range is not null) fakeIp["inet4_range"] = inet4Range;
+        if (inet6Range is not null) fakeIp["inet6_range"] = inet6Range;
+        var profile = Load(new JsonObject
+        {
+            ["dns"] = new JsonObject
+            {
+                ["address_mode"] = "FakeIp",
+                ["fakeip"] = fakeIp
+            }
+        }.ToJsonString());
+        Assert.That(profile.Resolve(TargetPlatform.Linux).Settings.DnsAddressMode,
+            Is.EqualTo(DnsAddressMode.FakeIp));
     }
 
     [Test]

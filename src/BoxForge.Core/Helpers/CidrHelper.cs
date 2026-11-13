@@ -57,6 +57,22 @@ internal static class CidrHelper
         && (NetworkEquals(left.Network, right.Network, left.PrefixLength)
             || NetworkEquals(right.Network, left.Network, right.PrefixLength));
 
+    internal static bool Contains(Cidr outer, Cidr inner) =>
+        outer.Family == inner.Family
+        && inner.PrefixLength >= outer.PrefixLength
+        && NetworkEquals(outer.Network, inner.Network, outer.PrefixLength);
+
+    // sing-box reserves 1024 addresses per family and skips the network, first
+    // usable and broadcast addresses, so smaller pools wrap and may leak outside
+    // the configured prefix.
+    internal static bool HasUsableAddressCount(Cidr cidr, int minimum)
+    {
+        if (cidr.Family is not (AddressFamily.InterNetwork or AddressFamily.InterNetworkV6)) return false;
+        int hostBits = (cidr.Family == AddressFamily.InterNetwork ? 32 : 128) - cidr.PrefixLength;
+        if (hostBits >= 63) return true;
+        return (1L << hostBits) - 3 >= minimum;
+    }
+
     internal static bool NetworkEquals(byte[] left, byte[] right, int prefixLength)
     {
         if (left.Length != right.Length || prefixLength < 0 || prefixLength > left.Length * 8) return false;

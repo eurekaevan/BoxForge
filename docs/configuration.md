@@ -25,7 +25,7 @@ Core 的 profile 错误使用 `ProfileValidationException`（直接继承 `Excep
 | `dns.fakeip.inet4_range` | `"198.18.0.0/15"` | — |
 | `dns.fakeip.inet6_range` | `"2001:2::/48"` | — |
 | `dns.fakeip.realip_domains` | `[]` | — |
-| `dns.fakeip.realip_domain_suffixes` | `[]` | — |
+| `dns.fakeip.realip_domain_suffixes` | `["home.arpa","internal","lan","local","localdomain","localhost"]` | — |
 | `dns.selection_mode` | `"ParallelFastest"` | Android: `"SequentialFallback"` |
 | `dns.timeout` | `"3s"` | — |
 | `dns.cache_capacity` | `4096` | — |
@@ -109,11 +109,23 @@ DIRECT 在 `Ipv4Only` 下使用 `ipv4_only`，在 `DualStack` 下使用 `prefer_
 FakeIP DNS 规则或 `store_fakeip`；`FakeIp` 仅让非国内解析池的 A/AAAA 查询返回合成地址，
 国内 `cn` 域名始终进入真实解析池。非地址查询、广告与自定义阻断、Tailscale DNS、
 主备回退和并行竞速语义保持不变。
-`dns.fakeip.inet4_range`（默认 `198.18.0.0/15`）必须为规范 IPv4 CIDR；
-`inet6_range`（默认 `2001:2::/48`）仅在 `DualStack` 输出，`Ipv4Only` 仍保留最前面的
-AAAA 空 `NOERROR`。两组范围在 `FakeIp` 模式下不得与 TUN 捕获地址或 resolver 地址重叠。
+`dns.fakeip.inet4_range`（默认 `198.18.0.0/15`）必须为规范 IPv4 CIDR，且位于保留用途的
+`198.18.0.0/15` 内；`inet6_range`（默认 `2001:2::/48`）必须位于 `2001:2::/48` 内，
+仅在 `DualStack` 输出，`Ipv4Only` 仍保留最前面的 AAAA 空 `NOERROR`。
+锁定内核的 FakeIP store 在首次分配时会跳过 1024 个地址，并跳过网络、首个可用和广播地址；
+为保证跳过之后仍有足够的分配空间，每个范围至少需要 1024 个可用地址：IPv4 前缀不得大于
+`/21`，IPv6 不得大于 `/117`。过小的池会快速回绕并覆盖仍在使用的映射，`/31`、`/32`
+还会分配出范围外的地址。
+两组范围在 `FakeIp` 模式下不得与 TUN 捕获地址或 resolver 地址重叠。
+IPv6 不使用 ULA `fc00::/7`：路由规则在 sniff 前将 `ip_is_private` 送往 `DIRECT`，
+若 FakeIP 映射丢失，ULA 合成地址会绕过域名恢复直接走 `DIRECT`。
+FakeIP 规则只匹配 A/AAAA；HTTPS/SVCB（Type 65）等非地址查询继续进入真实 DoH，
+以保留 ALPN、ECH 等记录。若客户端优先使用 HTTPS 记录中的 `ipv4hint`，可能直接使用真实 IP 连接。
 `realip_domains`、`realip_domain_suffixes` 是禁止生成 FakeIP 的例外域名，按小写下发；
 它们只排除对应解析池的 FakeIP 规则，仍使用该池原有的真实 DNS 主备解析，不会强制切换到 AliDNS。
+`realip_domain_suffixes` 默认排除 `home.arpa`、`internal`、`lan`、`local`、`localdomain`、
+`localhost` 等本地命名空间，避免局域网名称被合成后送入代理路由；BoxForge 不内置本地 DNS
+服务器，这些名称仍由所选的真实上游解析，若需要局域网解析应另行提供本地解析器。
 DNS 模式接受 `SequentialFallback` 或 `ParallelFastest`。超时和间隔必须是正 Go duration；DNS 缓存容量为正，URL test
 容差为 1–65535ms，默认 50ms；不接受 `0`，因为锁定核心会将它解释为默认 50ms，无法实现零容差。
 探测 URL 只接受不带用户信息和片段的 HTTP(S) URL。

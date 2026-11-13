@@ -48,7 +48,14 @@
       "inet4_range": "198.18.0.0/15",
       "inet6_range": "2001:2::/48",
       "realip_domains": [],
-      "realip_domain_suffixes": []
+      "realip_domain_suffixes": [
+        "home.arpa",
+        "internal",
+        "lan",
+        "local",
+        "localdomain",
+        "localhost"
+      ]
     },
     "selection_mode": "ParallelFastest",
     "timeout": "3s",

@@ -5,8 +5,8 @@ Usage: python3 scripts/verify-dns-races.py /path/to/sing-box /path/to/platform/c
 Requires generated Ipv4Only or DualStack DNS with a 3s query timeout,
 the default services/domain blocks, Python 3 and OpenSSL.
 FakeIp configurations additionally exercise synthetic answers, domestic RealIP
-fallback, exceptions and non-address queries; RealIP configurations exercise the
-full resolver race and cache matrix.
+fallback, exceptions, local names, non-address queries and mapping persistence
+across a restart; RealIP configurations exercise the full resolver race and cache matrix.
 No TUN, real upstreams, or proxy credentials are used.
 """
 
@@ -228,12 +228,12 @@ async def main(core, generated):
                   "route": {"rules": [{"inbound": ["dns-test"], "action": "hijack-dns"}],
                             "rule_set": rule_sets, "final": "DIRECT",
                             "default_domain_resolver": generated["route"]["default_domain_resolver"]}}
+        if fakeip_mode:
+            # Exercise the FakeIP store rather than the DNS cache across restarts.
+            config["dns"]["disable_cache"] = True
         config_path = root / "config.json"
         config_path.write_text(json.dumps(config, indent=2))
         subprocess.run([str(core), "check", "-c", str(config_path)], check=True, timeout=30)
-        log = (root / "core.log").open("w")
-        process = subprocess.Popen([str(core), "run", "-c", str(config_path)],
-                                   stdout=log, stderr=subprocess.STDOUT, cwd=root)
         results = []
 
         async def query(label, name, query_type=1, timeout=8):
@@ -253,16 +253,36 @@ async def main(core, generated):
             print(json.dumps(result), flush=True)
             return result
 
-        for attempt in range(20):
-            if process.poll() is not None:
-                raise RuntimeError(f"Core exited; see {root / 'core.log'}")
-            try:
-                await query("ready", "ready.google.test", 1, 0.1)
-                break
-            except asyncio.TimeoutError:
-                await asyncio.sleep(0.05)
-        else:
+        async def start_core(log_name):
+            nonlocal log, process
+            log = (root / log_name).open("w")
+            process = subprocess.Popen([str(core), "run", "-c", str(config_path)],
+                                       stdout=log, stderr=subprocess.STDOUT, cwd=root)
+            for attempt in range(100):
+                if process.poll() is not None:
+                    raise RuntimeError(f"Core exited; see {root / log_name}")
+                try:
+                    await query("ready", "ready.google.test", 1, 0.1)
+                    return
+                except asyncio.TimeoutError:
+                    await asyncio.sleep(0.05)
             raise RuntimeError("Core did not become ready")
+
+        async def stop_core():
+            nonlocal log, process
+            if process is not None:
+                process.terminate()
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=3)
+                process = None
+            if log is not None:
+                log.close()
+                log = None
+
+        await start_core("core.log")
         results.clear()
         blocked_names = [
             "foo-pcdn-bar.biliapi.net", "pcdn.biliapi.net", "PCDN.BILIAPI.NET",
@@ -325,6 +345,14 @@ async def main(core, generated):
             observed = {event[1] for event in events if event[0] == "domestic.cn.test"}
             assert observed and observed <= {0, 1}, observed
 
+            if not parallel:
+                specs[0], specs[1] = (0, "drop", 60), (0.03, "a", 60)
+                fallback = await query("fakeip-domestic-fallback", "fallback.cn.test", 1)
+                assert (fallback["rcode"], fallback["answers"]) == (0, 1), fallback
+                observed = {event[1] for event in events if event[0] == "fallback.cn.test"}
+                assert 1 in observed, observed
+                assert fallback["ms"] > 1700, fallback
+
             global_name = "global-only.test"
             global_result = await query("fakeip-global", global_name, 1)
             assert global_result["rcode"] == 0 and len(global_result["ipv4"]) == 1, global_result
@@ -335,12 +363,26 @@ async def main(core, generated):
             assert overlap["rcode"] == 0 and len(overlap["ipv4"]) == 1, overlap
             assert ipaddress.ip_address(overlap["ipv4"][0]) in inet4, overlap
             assert not any(event[0] == "google-overlap.test" for event in events), "Priority services must stay ahead of domestic"
+            assert len({service["ipv4"][0], global_result["ipv4"][0], overlap["ipv4"][0]}) == 3, \
+                "Distinct FakeIP domains must receive distinct addresses"
 
             specs[2], specs[3] = (0.03, "record", 60), (0.05, "record", 60)
             non_address = await query("fakeip-non-address", "records.google.test", 16)
             assert (non_address["rcode"], non_address["answers"]) == (0, 1), non_address
             assert non_address["records"] == [NON_ADDRESS_RECORDS[16].hex()], non_address
             observed = {event[1] for event in events if event[0] == "records.google.test"}
+            assert observed and observed <= {2, 3}, observed
+
+            # HTTPS/SVCB must bypass FakeIP to preserve ALPN/ECH and address hints.
+            https_name = "_7826._https.records.google.test"
+            https = await query("fakeip-https", https_name, 65)
+            assert (https["rcode"], https["answers"]) == (0, 1), https
+            expected_https = NON_ADDRESS_RECORDS[65]
+            if ipv4_only:
+                expected_https = expected_https[:-20]
+            assert https["records"] == [expected_https.hex()], https
+            assert not https["ipv4"], https
+            observed = {event[1] for event in events if event[0] == https_name}
             assert observed and observed <= {2, 3}, observed
 
             exception_names = []
@@ -358,7 +400,26 @@ async def main(core, generated):
                 assert exception["ipv4"] and ipaddress.ip_address(exception["ipv4"][0]) not in inet4, exception
                 assert any(event[0] == exception_name for event in events), "RealIP exceptions must reach a real resolver"
 
-            print(f"PASS: {len(results)} FakeIP DNS scenarios", flush=True)
+            specs[:] = [(0.01, "a", 60)] * 4
+            local_name = "printer.local"
+            local = await query("fakeip-local-suffix", local_name, 1)
+            assert (local["rcode"], local["answers"]) == (0, 1), local
+            assert local["ipv4"] and ipaddress.ip_address(local["ipv4"][0]) not in inet4, local
+            assert any(event[0] == local_name for event in events), "Local names must bypass FakeIP"
+
+            first_ipv4 = service["ipv4"][0]
+            fakeip_scenario_count = len(results)
+            await stop_core()
+            await start_core("core-restart.log")
+            results.clear()
+            persisted = await query("fakeip-cache-after-restart", "google.test", 1)
+            assert persisted["rcode"] == 0 and persisted["ipv4"] == [first_ipv4], persisted
+            fresh = await query("fakeip-cache-new-domain", "cache-new.google.test", 1)
+            assert fresh["rcode"] == 0 and len(fresh["ipv4"]) == 1, fresh
+            assert fresh["ipv4"][0] != first_ipv4, fresh
+            assert ipaddress.ip_address(fresh["ipv4"][0]) in inet4, fresh
+
+            print(f"PASS: {fakeip_scenario_count} FakeIP DNS scenarios + cache restart", flush=True)
             return
 
         # Each row uses a unique name to prevent earlier cases from warming its cache.

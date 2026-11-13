@@ -457,11 +457,19 @@ internal sealed class SingboxConfigValidator : ISingboxConfigValidator
                     || inet4.Family != System.Net.Sockets.AddressFamily.InterNetwork)
                     context.Diagnostics.Add(new ConfigDiagnostic("SB098", $"dns.servers[{index}].inet4_range",
                         "FakeIP IPv4 范围必须是规范 CIDR。"));
-                if (fakeIpServer.Inet6Range is { } inet6Range
-                    && (!CidrHelper.TryParseCanonical(inet6Range, out Cidr inet6)
-                        || inet6.Family != System.Net.Sockets.AddressFamily.InterNetworkV6))
-                    context.Diagnostics.Add(new ConfigDiagnostic("SB098", $"dns.servers[{index}].inet6_range",
-                        "FakeIP IPv6 范围必须是规范 CIDR。"));
+                else if (!FakeIpRangePolicy.HasMinimumCapacity(inet4) || !FakeIpRangePolicy.IsAllowed(inet4))
+                    context.Diagnostics.Add(new ConfigDiagnostic("SB098", $"dns.servers[{index}].inet4_range",
+                        "FakeIP IPv4 范围必须位于 198.18.0.0/15 且至少包含 1024 个可用地址。"));
+                if (fakeIpServer.Inet6Range is { } inet6Range)
+                {
+                    if (!CidrHelper.TryParseCanonical(inet6Range, out Cidr inet6)
+                        || inet6.Family != System.Net.Sockets.AddressFamily.InterNetworkV6)
+                        context.Diagnostics.Add(new ConfigDiagnostic("SB098", $"dns.servers[{index}].inet6_range",
+                            "FakeIP IPv6 范围必须是规范 CIDR。"));
+                    else if (!FakeIpRangePolicy.HasMinimumCapacity(inet6) || !FakeIpRangePolicy.IsAllowed(inet6))
+                        context.Diagnostics.Add(new ConfigDiagnostic("SB098", $"dns.servers[{index}].inet6_range",
+                            "FakeIP IPv6 范围必须位于 2001:2::/48 且至少包含 1024 个可用地址。"));
+                }
             }
         }
     }

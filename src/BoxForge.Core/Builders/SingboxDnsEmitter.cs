@@ -123,6 +123,7 @@ internal static class SingboxDnsEmitter
                 default:
                     throw new InvalidOperationException("Unsupported DNS selection mode.");
             }
+            // Catch non-address queries and act as the final per-pool terminal.
             AddTerminalServfail(rules, pool);
         }
     }

@@ -86,7 +86,16 @@ DIRECT 显式使用上述 `prefer_ipv4`／`ipv4_only` 绑定。Dashboard HTTP cl
 不会把服务域名改交给 AliDNS，也不改变服务优先级。
 `FakeIp` 下 FakeIP DNS server 位于 HTTPS resolver 之后、Tailscale DNS 之前；
 `inet6_range` 仅在 `DualStack` 输出，`Ipv4Only` 的 AAAA 空 `NOERROR` 仍是首条规则，
-FakeIP 查询条件仅为 A。`experimental.cache_file.store_fakeip` 只在 `FakeIp` 模式启用。
+FakeIP 查询条件在 `Ipv4Only` 下仅为 A，`DualStack` 下为 A/AAAA。
+`experimental.cache_file.store_fakeip` 只在 `FakeIp` 模式启用。
+FakeIP 地址池必须位于保留用途范围并至少包含 1024 个可用地址（IPv4 `/21`、IPv6 `/117`
+或更短前缀），否则锁定内核的地址分配会回绕并覆盖旧映射。
+IPv4 仅允许 `198.18.0.0/15`，IPv6 仅允许 `2001:2::/48`；不使用 ULA `fc00::/7`，
+因为 `ip_is_private -> DIRECT` 位于 sniff 之前，映射丢失时 ULA 合成地址会绕过域名恢复。
+HTTPS/SVCB（Type 65）等非地址查询不命中 FakeIP，继续走真实 DoH 以保留 ALPN、ECH；
+若客户端优先使用 HTTPS 记录中的 `ipv4hint`，可能改用真实 IP 连接。
+默认 RealIP 例外包含 `home.arpa`、`internal`、`lan`、`local`、`localdomain`、`localhost`，
+这些本地名称不会获得合成地址；BoxForge 不内置本地 DNS 服务器，若需解析局域网名称应另行配置。
 已获得合成地址、尚未由核心还原域名的连接可能失去 `cnip` 的纯 IP 判断依据；
 BoxForge 首版保留 `cnip` 规则且不增加无条件 `resolve`，因此 `cnip` 分流不作为 FakeIP 模式的完整保证。
 

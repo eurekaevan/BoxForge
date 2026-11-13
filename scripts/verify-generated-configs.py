@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Check generated configurations and representative invalid cases with the pinned core.
 
-Usage: python3 scripts/verify-generated-configs.py path/to/BoxForge.dll [--core path/to/sing-box]
+Usage: python3 scripts/verify-generated-configs.py path/to/BoxForge.dll [--core path/to/sing-box] [--runtime]
 The default downloads the official Linux amd64 core into a temporary directory.
+--runtime also exercises FakeIp DNS answers, exceptions and cache restarts with local DoH servers.
 """
 
 import argparse
@@ -14,6 +15,7 @@ from pathlib import Path
 import platform
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import urllib.request
@@ -31,6 +33,7 @@ ARCHIVE_URL = f"https://github.com/SagerNet/sing-box/releases/download/v{VERSION
 VERSION_TIMEOUT = 10
 GENERATION_TIMEOUT = 60
 CHECK_TIMEOUT = 30
+RUNTIME_TIMEOUT = 120
 
 
 def run_command(command, root, context, *, timeout=CHECK_TIMEOUT, environment=None, expected_error=None):
@@ -110,7 +113,7 @@ def verify_rejections(core, root, generated):
     return len(cases)
 
 
-def verify(cli, supplied_core):
+def verify(cli, supplied_core, runtime=False):
     repository = Path(__file__).resolve().parent.parent
     fixtures = repository / "Tests/BoxForge.Tests/Fixtures"
     with tempfile.TemporaryDirectory(prefix="boxforge-core-check-") as temporary:
@@ -187,6 +190,45 @@ def verify(cli, supplied_core):
                         f"Official core FakeIp positive case {config.relative_to(output)}")
             count += 1
         rejected = verify_rejections(core, root, output)
+        if runtime:
+            dual_output = root / "fakeip-dual"
+            dual_environment = environment.copy()
+            dual_environment["BOXFORGE_dns__address_family"] = "DualStack"
+            run_command([
+                "dotnet", str(cli), "generate", "--input-dir", str(fixtures),
+                "--output-dir", str(dual_output), "--platform", "all",
+            ], root, "CLI FakeIp DualStack generation", timeout=GENERATION_TIMEOUT,
+               environment=dual_environment)
+            dual_configs = sorted(dual_output.glob("*/*/config.json"))
+            if len(dual_configs) != 15:
+                raise RuntimeError(f"Expected 15 FakeIp DualStack configurations, found {len(dual_configs)}")
+            for config in dual_configs:
+                payload = json.loads(config.read_text())
+                fakeip = next((server for server in payload["dns"]["servers"]
+                               if server.get("type") == "fakeip"), None)
+                if fakeip is None or "inet6_range" not in fakeip:
+                    raise RuntimeError(f"FakeIp DualStack generation omitted the IPv6 range: {config}")
+                if payload["experimental"]["cache_file"].get("store_fakeip") is not True:
+                    raise RuntimeError(f"FakeIp DualStack generation omitted store_fakeip: {config}")
+                run_command([str(core), "check", "-c", str(config)], root,
+                            f"Official core FakeIp DualStack positive case {config.relative_to(dual_output)}")
+                count += 1
+
+            runtime_configs = [
+                output / "profiles/Linux/config.json",
+                output / "profiles/Android/config.json",
+                dual_output / "profiles/Linux/config.json",
+                dual_output / "profiles/Android/config.json",
+            ]
+            runtime_environment = os.environ.copy()
+            runtime_environment["TMPDIR"] = str(root)
+            for config in runtime_configs:
+                result = run_command([
+                    sys.executable, str(repository / "scripts/verify-dns-races.py"),
+                    str(core), str(config),
+                ], root, f"DNS runtime {config.relative_to(root)}", timeout=RUNTIME_TIMEOUT,
+                   environment=runtime_environment)
+                print(result.strip().splitlines()[-1])
         print(f"Official sing-box {VERSION} check passed: {count} generated configurations, {rejected} invalid configurations rejected.")
 
 
@@ -194,10 +236,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("cli", type=Path, help="Path to the already built BoxForge.dll")
     parser.add_argument("--core", type=Path, help="Use an existing pinned official sing-box binary")
+    parser.add_argument("--runtime", action="store_true",
+                        help="Also run FakeIp DNS runtime scenarios against the generated configurations")
     arguments = parser.parse_args()
     cli = arguments.cli.resolve(strict=True)
     core = arguments.core.resolve(strict=True) if arguments.core else None
-    verify(cli, core)
+    verify(cli, core, arguments.runtime)
 
 
 if __name__ == "__main__":

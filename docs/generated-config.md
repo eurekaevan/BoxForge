@@ -97,7 +97,10 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
   `evaluate` 前生成 scoped 逻辑规则：仅 A/AAAA 且排除 `realip_domains`／
   `realip_domain_suffixes` 后路由到 FakeIP；`cn` 解析池保持真实 DNS。
   `Ipv4Only` 只下发 `inet4_range` 且 FakeIP 仅匹配 A，`DualStack` 同时下发
-  `inet6_range` 并匹配 A/AAAA。已获得合成地址的连接可能降低 `cnip` 纯 IP 规则的覆盖，
+  `inet6_range` 并匹配 A/AAAA。地址池必须位于保留用途范围，且至少包含 1024 个可用地址；
+  IPv6 仅允许 `2001:2::/48`，避免 ULA 在映射丢失时被 `ip_is_private` 直接送 `DIRECT`。
+  FakeIP 只匹配 A/AAAA，HTTPS/SVCB 等非地址查询仍走真实 DoH。默认 RealIP 例外排除常见本地命名空间。
+  已获得合成地址的连接可能降低 `cnip` 纯 IP 规则的覆盖，
   详见[DNS 分类与回退](routing-and-dns.md#dns-分类与控制面解析)。
 - 代理节点和 Tailscale endpoint 继承
   `route.default_domain_resolver`：直连固定 tag `dns-direct-alidns`（默认 AliDNS，可覆盖端点）、禁用 optimistic

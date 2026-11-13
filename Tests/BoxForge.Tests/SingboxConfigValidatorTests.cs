@@ -874,6 +874,28 @@ public sealed class SingboxConfigValidatorTests
         };
         Assert.DoesNotThrow(() => validator.Validate(validIpv4, AddressFamilyPolicy.Ipv4Only, DnsAddressMode.FakeIp));
 
+        AssertDiagnostic(config with
+        {
+            Dns = config.Dns with
+            {
+                Servers = [.. valid.Dns.Servers, fakeIpServer with { Inet4Range = "198.18.0.0/22" }]
+            }
+        }, DnsAddressMode.FakeIp, "SB098");
+        AssertDiagnostic(config with
+        {
+            Dns = config.Dns with
+            {
+                Servers = [.. valid.Dns.Servers, fakeIpServer with { Inet6Range = "2001:3::/48" }]
+            }
+        }, DnsAddressMode.FakeIp, "SB098");
+        AssertDiagnostic(config with
+        {
+            Dns = config.Dns with
+            {
+                Servers = [.. valid.Dns.Servers, fakeIpServer with { Inet6Range = "fd00:1234::/64" }]
+            }
+        }, DnsAddressMode.FakeIp, "SB098");
+
         void AssertDiagnostic(SingboxConfig candidate, DnsAddressMode mode, params string[] codes)
         {
             var error = Assert.Throws<ConfigValidationException>(() =>
