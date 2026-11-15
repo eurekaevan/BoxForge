@@ -31,6 +31,62 @@ public sealed class BoxForgeEngineTests
             password: test-only
         """;
 
+    [Test]
+    public async Task InlineServerCertificateSurvivesYamlConversionOnEveryPlatform()
+    {
+        using var key = ECDsa.Create();
+        var request = new System.Security.Cryptography.X509Certificates.CertificateRequest(
+            "CN=node.example.com", key, HashAlgorithmName.SHA256);
+        using var certificate = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(1));
+        string pem = certificate.ExportCertificatePem();
+        string yaml = """
+            proxies:
+              - name: test-ca
+                type: trojan
+                server: node.example.com
+                port: 443
+                password: test-only
+                certificate: |-
+            """ + "\n" + string.Join("\n", pem.Split('\n').Select(line => "      " + line));
+        using ServiceProvider provider = CreateProvider();
+        var bundle = await provider.GetRequiredService<IBoxForgeEngine>().ConvertAsync(
+            new ConversionRequest("certificate", yaml, Enum.GetValues<TargetPlatform>()));
+        Assert.That(bundle.Artifacts, Has.Count.EqualTo(3));
+        foreach (var artifact in bundle.Artifacts)
+        {
+            using var document = JsonDocument.Parse(artifact.Content);
+            JsonElement outbound = document.RootElement.GetProperty("outbounds").EnumerateArray()
+                .Single(item => item.GetProperty("tag").GetString() == "test-ca");
+            Assert.That(outbound.GetProperty("tls").GetProperty("certificate").GetString(), Is.EqualTo(pem));
+        }
+    }
+
+    [Test]
+    public async Task CertificateFingerprintSurvivesYamlConversionOnEveryPlatform()
+    {
+        const string yaml = """
+            proxies:
+              - name: pinned
+                type: trojan
+                server: node.example.com
+                port: 443
+                password: test-only
+                fingerprint: "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+            """;
+        using ServiceProvider provider = CreateProvider();
+        var bundle = await provider.GetRequiredService<IBoxForgeEngine>().ConvertAsync(
+            new ConversionRequest("fingerprint", yaml, Enum.GetValues<TargetPlatform>()));
+        Assert.That(bundle.Artifacts, Has.Count.EqualTo(3));
+        foreach (var artifact in bundle.Artifacts)
+        {
+            using var document = JsonDocument.Parse(artifact.Content);
+            JsonElement outbound = document.RootElement.GetProperty("outbounds").EnumerateArray()
+                .Single(item => item.GetProperty("tag").GetString() == "pinned");
+            Assert.That(outbound.GetProperty("tls").GetProperty("certificate_sha256")[0].GetString(),
+                Is.EqualTo("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="));
+        }
+    }
+
     [TestCase("sample")]
     [TestCase("Sample")]
     [TestCase("配置名 ")]

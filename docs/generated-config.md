@@ -242,15 +242,55 @@ TLS，Trojan 始终启用 TLS；两者保留受支持的 uTLS 与 Reality 映射
 对照来源为锁定的 [Mihomo 指纹实现](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/component/tls/utls.go)
 和 [sing-box 指纹实现](https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/common/tls/utls_client.go)。
 
-TLS 仍拒绝 `fingerprint`、`name-cert-verify`、`certificate`/`private-key`，以及
+节点级 `certificate` 是 BoxForge 扩展：指定用于校验服务端的 PEM 证书，
+映射到 `tls.certificate`，支持 PEM 字符串或 PEM 行字符串列表（按换行连接）。
+缺失时省略；显式 null、空内容、无效证书、文件路径、未启用 TLS 或 Reality 组合均拒绝。
+适用于 VLESS、Trojan、AnyTLS、Hysteria2；不会自动开启 `skip-cert-verify`。
+这与 Mihomo 同名字段的 mTLS 用途不同，不能直接导入其客户端证书配置。
+
+TLS 仍拒绝 `name-cert-verify`、`private-key`，以及
 ShadowTLS、Restls、JLS、tlsmirror、ECH；非空 VLESS encryption 和 Trojan
 ss-opts 也不支持。name-cert-verify 不能映射为改变 SNI 的 server_name；mTLS
 的路径/inline PEM、链与密钥处理未完成可靠转换。
 
-证书指纹的两端 hash 都可使用整张 DER 的 SHA-256，叶证书 pin 都替代普通
-CA/名称验证，而非叠加校验。但 Mihomo 还能匹配中间/根证书，并在该分支验证
-证书链和名称；目标 `certificate_sha256` 只匹配叶证书。仅凭源 hash 无法判断
-层级，所以不生成该字段，也不进行未经证明的 hex→base64 转换。
+### 证书指纹固定（fingerprint）
+
+源节点的 `fingerprint` 映射为 `tls.certificate_sha256`，适用于 VLESS、Trojan、
+AnyTLS、Hysteria2。输入必须是整张叶证书 DER 的 SHA-256 十六进制字符串：
+64 个十六进制字符，大小写均可，可带冒号及首尾空白；转换为 Base64 后输出单元素数组。
+请在 YAML 中加引号，避免纯数字指纹被解析为数值。缺失时省略；显式 null、
+空值、错误长度、非十六进制、列表及对象均拒绝。VLESS 必须启用 TLS。
+`fingerprint` 不能与 `certificate` 或 Reality 同时使用。
+
+**使用前必须确认指纹来自叶证书。** Mihomo 还能匹配中间/根证书指纹，
+并在该分支校验证书链与名称；sing-box 此字段仅匹配叶证书。
+BoxForge 无法从摘要判断证书层级，按叶证书转换，不会连接服务器或获取证书；
+中间/根证书指纹即使格式正确也不受此转换支持，转换成功不代表连接可用。
+
+叶证书 pin 替代普通 CA、名称和有效期校验，并非额外叠加校验；
+只有指纹匹配才接受证书，证书更换后须同步更新指纹。
+保留原有 `skip-cert-verify` 值，不主动开启它；指纹校验仍由目标核心执行。
+`client-fingerprint` 是浏览器握手模拟，继续映射到 `tls.utls.fingerprint`，
+与此证书指纹无关，也不能用 `certificate_public_key_sha256` 替代整张证书 hash。
+
+示例（仅展示字段及编码，示例指纹不是实际服务器证书）：
+
+```yaml
+fingerprint: "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+```
+
+```json
+"tls": {
+  "enabled": true,
+  "server_name": "node.example.com",
+  "certificate_sha256": ["AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="]
+}
+```
+
+该字段自 sing-box 1.15.0 引入，项目锁定的 `1.15.0-alpha.12` 已包含支持；
+旧核心（例如 1.14.x）不可使用。参考
+[Mihomo fingerprint](https://wiki.metacubex.one/config/proxies/tls/#fingerprint) 和
+[sing-box certificate_sha256](https://sing-box.sagernet.org/configuration/shared/tls/#certificate_sha256)。
 
 ### 源码依据与验证边界
 

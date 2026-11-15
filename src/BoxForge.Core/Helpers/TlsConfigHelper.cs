@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using BoxForge.Converters;
 using BoxForge.Models.Intermediate;
 
@@ -70,7 +72,50 @@ internal static class TlsConfigHelper
             node.Value("alpn") is IEnumerable<object?> alpn
                 ? Array.AsReadOnly(alpn.Cast<string>().ToArray()) : null,
             effectiveFingerprint,
-            realityConfig);
+            realityConfig,
+            node.Value("certificate") switch
+            {
+                string pem => pem,
+                IEnumerable<object?> lines => string.Join("\n", lines.Cast<string>()),
+                _ => null
+            },
+            node.RawString("fingerprint") is { } certificateFingerprint
+                ? Convert.ToBase64String(Convert.FromHexString(certificateFingerprint.Replace(":", "").Trim()))
+                : null);
+    }
+
+    internal static string? ValidateCertificateFingerprint(object? value)
+    {
+        if (value is string text)
+        {
+            string hex = text.Replace(":", "").Trim();
+            if (hex.Length == 64 && hex.All(Uri.IsHexDigit)) return null;
+        }
+        return "必须是叶证书的 SHA-256 十六进制字符串（64 位，可带冒号），不是 client-fingerprint";
+    }
+
+    internal static string? ValidateCertificate(object? value)
+    {
+        string pem;
+        if (value is string text) pem = text;
+        else if (value is IEnumerable<object?> lines && lines.All(line => line is string))
+            pem = string.Join("\n", lines.Cast<string>());
+        else return "必须是 PEM 字符串或 PEM 行字符串列表";
+
+        var certificates = new X509Certificate2Collection();
+        try
+        {
+            certificates.ImportFromPem(pem);
+            return certificates.Count > 0 ? null : "必须包含有效的 PEM 证书，不接受文件路径";
+        }
+        catch (CryptographicException)
+        {
+            return "包含无效的 PEM 证书";
+        }
+        finally
+        {
+            foreach (var certificate in certificates) certificate.Dispose();
+        }
     }
 
     internal static bool IsSupportedFingerprint(string fingerprint) =>

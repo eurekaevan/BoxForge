@@ -1155,6 +1155,136 @@ public sealed class ProxyNodeParserTests
     [TestCase("trojan")]
     [TestCase("anytls")]
     [TestCase("hysteria2")]
+    public void CertificateFingerprintConvertsDigestBytesAndPreservesTlsSettings(string protocol)
+    {
+        const string hex = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+        const string expected = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
+        var fields = new Hashtable
+        {
+            [protocol == "vless" ? "uuid" : "password"] = protocol == "vless"
+                ? "00000000-0000-4000-8000-000000000001" : "test-only",
+            ["tls"] = true
+        };
+        Assert.That(SerializeOutbound(Convert<ProxyOutbound>(CreateNode(protocol, fields))),
+            Does.Not.Contain("certificate_sha256"));
+        foreach (string value in new[] { hex, hex.ToUpperInvariant(), " \t" + string.Join(":", Enumerable.Range(0, 32).Select(i => hex.Substring(i * 2, 2))) + "\r\n" })
+        foreach (bool? insecure in new bool?[] { null, false, true })
+        {
+            fields["fingerprint"] = value;
+            if (insecure.HasValue) fields["skip-cert-verify"] = insecure.Value;
+            else fields.Remove("skip-cert-verify");
+            ProxyNode source = ProxyNodeParser.Parse(CreateNode(protocol, fields));
+            foreach (TargetPlatform platform in Enum.GetValues<TargetPlatform>())
+            {
+                ProxyOutbound outbound = SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(
+                    source, BoxForgeProfile.Default.Resolve(platform).Settings));
+                using var json = System.Text.Json.JsonDocument.Parse(SerializeOutbound(outbound));
+                var hashes = json.RootElement.GetProperty("outbounds")[0].GetProperty("tls").GetProperty("certificate_sha256");
+                Assert.That(hashes.GetArrayLength(), Is.EqualTo(1));
+                Assert.That(hashes[0].GetString(), Is.EqualTo(expected));
+                Assert.That(GetTls(outbound)!.Insecure, Is.EqualTo(insecure));
+                Assert.That(GetTls(outbound)!.Utls, Is.Null);
+            }
+        }
+        foreach (object? malformed in new object?[] { null, "", "chrome", new string('a', 63), new string('a', 65), new string('g', 64), hex[..32] + " " + hex[32..], 42, new[] { hex }, new Hashtable() })
+        {
+            fields["fingerprint"] = malformed;
+            var error = Assert.Throws<NodeParseException>(() => ParseAndEmit(CreateNode(protocol, fields)))!;
+            Assert.That(error.Diagnostics.Single().Path, Is.EqualTo("source.fingerprint"));
+        }
+    }
+
+    [Test]
+    public void CertificateFingerprintRejectsDisabledTlsRealityAndTrustCertificate()
+    {
+        var fields = new Hashtable
+        {
+            ["uuid"] = "00000000-0000-4000-8000-000000000001",
+            ["fingerprint"] = new string('a', 64)
+        };
+        Assert.That(Assert.Throws<NodeParseException>(() => ParseAndEmit(CreateNode("vless", fields)))!.Message,
+            Does.Contain("需要启用 TLS"));
+        fields["tls"] = true;
+        fields["reality-opts"] = new Hashtable { ["public-key"] = RealityPublicKey, ["short-id"] = "00" };
+        Assert.That(Assert.Throws<NodeParseException>(() => ParseAndEmit(CreateNode("vless", fields)))!.Message,
+            Does.Contain("Reality 不支持"));
+        fields.Remove("reality-opts");
+        using var key = System.Security.Cryptography.ECDsa.Create();
+        var request = new System.Security.Cryptography.X509Certificates.CertificateRequest(
+            "CN=node.example.com", key, System.Security.Cryptography.HashAlgorithmName.SHA256);
+        using var certificate = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(1));
+        fields["certificate"] = certificate.ExportCertificatePem();
+        Assert.That(Assert.Throws<NodeParseException>(() => ParseAndEmit(CreateNode("vless", fields)))!.Message,
+            Does.Contain("不能与 certificate 同时使用"));
+    }
+
+    [TestCase("vless")]
+    [TestCase("trojan")]
+    [TestCase("anytls")]
+    [TestCase("hysteria2")]
+    public void SharedTlsCertificatePreservesPemAndRejectsMalformedInput(string protocol)
+    {
+        using var key = System.Security.Cryptography.ECDsa.Create();
+        var request = new System.Security.Cryptography.X509Certificates.CertificateRequest(
+            "CN=node.example.com", key, System.Security.Cryptography.HashAlgorithmName.SHA256);
+        using var certificate = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(1));
+        string pem = certificate.ExportCertificatePem();
+        var fields = new Hashtable
+        {
+            [protocol == "vless" ? "uuid" : "password"] = protocol == "vless"
+                ? "00000000-0000-4000-8000-000000000001" : "test-only",
+            ["tls"] = true
+        };
+        Assert.That(SerializeOutbound(Convert<ProxyOutbound>(CreateNode(protocol, fields))),
+            Does.Not.Contain("\"certificate\""));
+        foreach (object value in new object[] { pem, pem.Split('\n'), new[] { pem, pem } })
+        {
+            fields["certificate"] = value;
+            string expected = value is string text ? text : string.Join("\n", (string[])value);
+            ProxyNode source = ProxyNodeParser.Parse(CreateNode(protocol, fields));
+            foreach (TargetPlatform platform in Enum.GetValues<TargetPlatform>())
+            {
+                ProxyOutbound outbound = SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(
+                    source, BoxForgeProfile.Default.Resolve(platform).Settings));
+                using var json = System.Text.Json.JsonDocument.Parse(SerializeOutbound(outbound));
+                Assert.That(json.RootElement.GetProperty("outbounds")[0].GetProperty("tls").GetProperty("certificate").GetString(), Is.EqualTo(expected));
+                Assert.That(GetTls(outbound)!.Insecure, Is.Null);
+            }
+        }
+        foreach (object? malformed in new object?[]
+        {
+            null, "", " ", "/tmp/ca.pem", "-----BEGIN CERTIFICATE-----\ninvalid\n-----END CERTIFICATE-----",
+            42, Array.Empty<string>(), new object[] { pem, 42 }, new Hashtable()
+        })
+        {
+            fields["certificate"] = malformed;
+            var error = Assert.Throws<NodeParseException>(() => ParseAndEmit(CreateNode(protocol, fields)))!;
+            Assert.That(error.Diagnostics.Single().Path, Is.EqualTo("source.certificate"));
+            Assert.That(error.Message, Does.Not.Contain(pem));
+        }
+    }
+
+    [Test]
+    public void ServerCertificateRequiresTlsAndRejectsRealityAndClientKey()
+    {
+        var fields = new Hashtable { ["uuid"] = "00000000-0000-4000-8000-000000000001", ["certificate"] = "unused" };
+        Assert.That(Assert.Throws<NodeParseException>(() => ParseAndEmit(CreateNode("vless", fields)))!.Message,
+            Does.Contain("需要启用 TLS"));
+        fields["tls"] = true;
+        fields["reality-opts"] = new Hashtable { ["public-key"] = RealityPublicKey, ["short-id"] = "00" };
+        Assert.That(Assert.Throws<NodeParseException>(() => ParseAndEmit(CreateNode("vless", fields)))!.Message,
+            Does.Contain("Reality 不使用"));
+        fields.Remove("certificate");
+        fields.Remove("reality-opts");
+        fields["private-key"] = "test-only-secret";
+        Assert.That(Assert.Throws<NodeParseException>(() => ParseAndEmit(CreateNode("vless", fields)))!.Message,
+            Does.Contain("private-key").And.Not.Contain("test-only-secret"));
+    }
+
+    [TestCase("vless")]
+    [TestCase("trojan")]
+    [TestCase("anytls")]
+    [TestCase("hysteria2")]
     public void SharedTlsAlpnPreservesOrderDuplicatesAndAbsence(string protocol)
     {
         var fields = new Hashtable

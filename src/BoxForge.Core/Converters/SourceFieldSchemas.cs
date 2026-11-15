@@ -48,9 +48,20 @@ internal static class SourceFieldSchemas
             .Conditional("alpn", SourceFieldDisposition.Mapped,
                 (node, value) => RequireTlsActivation(node, forceTls)
                     ?? TlsConfigHelper.ValidateAlpn(value), SourceFieldValueKind.Sequence)
-            .Unsupported("源指纹可匹配中间/根证书，但目标 certificate_sha256 仅匹配叶证书，无法保证等价", "fingerprint")
+            .Conditional("fingerprint", SourceFieldDisposition.Mapped,
+                (node, value) => RequireTlsActivation(node, forceTls)
+                    ?? (node.OptionalObject("reality-opts") is not null
+                        ? "Reality 不支持证书指纹固定"
+                        : node.PresentField("certificate") is not null
+                            ? "不能与 certificate 同时使用"
+                            : TlsConfigHelper.ValidateCertificateFingerprint(value)))
             .Unsupported("独立证书名称校验不能映射为改变实际 SNI 的 server_name", "name-cert-verify")
-            .Unsupported("客户端证书尚未映射", "certificate", "private-key")
+            .Conditional("certificate", SourceFieldDisposition.Mapped,
+                (node, value) => RequireTlsActivation(node, forceTls)
+                    ?? (node.OptionalObject("reality-opts") is not null
+                        ? "Reality 不使用自定义服务端信任证书"
+                        : TlsConfigHelper.ValidateCertificate(value)), SourceFieldValueKind.Any)
+            .Unsupported("客户端私钥尚未映射；certificate 是 BoxForge 的服务端信任证书扩展", "private-key")
             .Unsupported("TLS 扩展尚未映射", "ech-opts", "ech_opts",
                 "shadow-tls-opts", "shadow_tls_opts", "restls-opts", "restls_opts",
                 "jls-opts", "jls_opts", "tlsmirror-opts", "tlsmirror_opts");

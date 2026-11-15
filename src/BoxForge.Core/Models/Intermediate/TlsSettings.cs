@@ -8,7 +8,9 @@ internal sealed record TlsSettings(
     bool? AllowInvalidCertificate,
     IReadOnlyList<string>? ApplicationProtocols,
     string? ClientFingerprint,
-    RealitySettings? Reality)
+    RealitySettings? Reality,
+    string? Certificate,
+    string? CertificateSha256)
 {
     internal void Validate()
     {

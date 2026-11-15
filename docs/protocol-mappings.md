@@ -232,4 +232,11 @@
 - 目标解释：Emit the accepted value as reality.short_id, including an explicitly empty string.
 - 固定源码：[来源](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/trojan.go)、[目标](https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/common/tls/reality_client.go)。
 
+### `tls.certificate-fingerprint`
+
+- 来源字段：`fingerprint`；状态：`Mapped`。
+- 来源解释：SHA-256 of the whole DER certificate, in hex with optional colons. Mihomo can match leaf, intermediate or root certificates; BoxForge assumes leaf input and cannot infer its level.
+- 目标解释：Convert 32 digest bytes to a single Base64 certificate_sha256 entry (sing-box 1.15.0). Leaf pin replaces normal CA/name/expiry validation. Intermediate/root pins are not equivalent; reject certificate and Reality combinations.
+- 固定源码：[来源](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/component/ca/fingerprint.go)、[目标](https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/common/tls/std_client.go)。
+
 [返回协议验证边界](protocol-validation.md) · [返回 README](../README.md)

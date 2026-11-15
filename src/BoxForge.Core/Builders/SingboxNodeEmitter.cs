@@ -171,6 +171,8 @@ internal static class SingboxNodeEmitter
             Enabled = true,
             ServerName = tls.ServerName,
             Insecure = tls.AllowInvalidCertificate,
+            Certificate = tls.Certificate,
+            CertificateSha256 = tls.CertificateSha256 is { } hash ? [hash] : null,
             Alpn = tls.ApplicationProtocols?.ToList(),
             Utls = tls.ClientFingerprint is { } fingerprint
                 ? new Utls { Enabled = true, Fingerprint = fingerprint } : null,

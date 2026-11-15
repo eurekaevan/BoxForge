@@ -112,6 +112,8 @@ public record OutboundTls
     [JsonPropertyName("enabled")] public bool? Enabled { get; init; }
     [JsonPropertyName("server_name")] public required string ServerName { get; init; }
     [JsonPropertyName("insecure")] public bool? Insecure { get; init; }
+    [JsonPropertyName("certificate")] public string? Certificate { get; init; }
+    [JsonPropertyName("certificate_sha256")] public List<string>? CertificateSha256 { get; init; }
     [JsonPropertyName("alpn")] public List<string>? Alpn { get; init; }
     [JsonPropertyName("utls")] public Utls? Utls { get; init; }
     [JsonPropertyName("reality")] public OutboundReality? Reality { get; init; }
