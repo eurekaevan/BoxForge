@@ -511,6 +511,7 @@ public sealed class SingboxConfigBuilderTests
                 TrojanOutbound trojan => trojan.Tls,
                 Hysteria2Outbound hysteria2 => hysteria2.Tls,
                 AnyTlsOutbound anyTls => anyTls.Tls,
+                TuicOutbound tuic => tuic.Tls,
                 _ => null
             };
             tls?.Alpn?.Clear();

@@ -13,7 +13,7 @@ CLI 会为 Windows、Android 和 Linux 批量生成平台化配置，并在
 
 ## 特性
 
-- 支持 `trojan`、`vless`、`hysteria2`、`shadowsocks` (`ss`) 和 `anytls`；
+- 支持 `trojan`、`vless`、`hysteria2`、`shadowsocks` (`ss`)、`anytls` 和 `tuic`（v5）；
   VLESS/Trojan 仅接受原生 TCP，可使用受支持的 TLS、uTLS 与 Reality
 - 自动生成地区 URLTest AUTO、人工 selector、DNS、路由规则和远程 rule-set
 - 默认 `Ipv4Only` 地址族策略（全局 IPv4）：AAAA 返回空答、IPv6 目标在所有 DIRECT 和代理路由之前被拒绝，TUN 仍保留双栈捕获地址

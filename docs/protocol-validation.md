@@ -22,6 +22,27 @@ VLESS/Trojan 只支持省略或显式 `tcp` 的 `network`，不再生成 V2Ray
 选项均拒绝，不能按原生 TCP 继续转换。保留原生 TCP、TLS、uTLS 和 Reality。
 Shadowsocks 保留普通 SS、UoT 和 obfs HTTP/TLS，拒绝 `v2ray-plugin`。
 
+## TUIC v5 支持范围
+
+TUIC 使用 `uuid` / `password`，不支持 v4 `token`；TLS、默认 h3 ALPN、
+两种原生 UDP 中继、显式 UoT v2、0-RTT、IPv4 地址覆盖和证书校验的具体规则见
+[生成配置说明](generated-config.md#tuic-v5)。QUIC 保活与 TUIC 协议心跳不同，
+`heartbeat-interval` 转成 `keep_alive_period`。未映射的调优选项明确拒绝。
+
+已有 .NET 回归覆盖字段合法性、共享 TLS、完整三平台配置、分组和地址族约束。
+提供包含 TUIC 节点的生成配置后，可用现有回环脚本逐个验证 TCP HTTP：
+
+```bash
+node scripts/verify-session-protocols.mjs /absolute/path/to/sing-box /absolute/path/to/config.json tuic
+```
+
+脚本验证锁定核心版本，将连接地址、TLS 名称及服务端证书替换为临时回环服务器，保留
+生成的 TUIC 认证、中继、0-RTT 与保活设置；它验证传输连通，不验证原远程证书、
+原地址或生产部署。原证书指纹/PEM 会被临时测试证书替代。
+本次本地验证还检查了 native / quic / UoT v2 的 UDP 回显（8 与 4096 字节），
+空密码、disable-sni、正确叶证书 pin，以及错误 pin/名称拒绝；该 UDP 检查为临时
+验证，未集成到上述脚本。不代表真实设备、公网、性能或 0-RTT 会话恢复已验证。
+
 ## 可重复的本地验证
 
 从仓库根目录运行 .NET 验证：
@@ -51,7 +72,8 @@ python3 scripts/verify-generated-configs.py src/BoxForge.Cli/bin/Debug/net10.0/B
 脚本检查 5 个 fixture × 3 平台 × Tailscale/API 开关组合的 60 份 RealIP 配置，
 再检查 15 份 FakeIP 配置，加上 6 类拒绝反例，默认共执行 81 次官方核心检查。
 临时 fixture 副本追加 HY2 单端口、等端点范围、多标量、混合范围和重复/边界端口样本，
-断言目标端口表示，不修改仓库 fixture 或字节基线。`--runtime` 额外生成并检查
+断言目标端口表示；TLS 临时副本追加 TUIC native / quic / UoT v2 节点，
+不修改仓库 fixture 或字节基线。`--runtime` 额外生成并检查
 15 份 FakeIP DualStack 配置，然后对 Linux/Android × IPv4/DualStack 的四份配置调用
 DNS 运行时验证脚本；每次调用内包含多个场景及独立的临时配置检查。
 普通 CI 和发布前验证调用同一入口；生产 CLI

@@ -87,6 +87,40 @@ public sealed class BoxForgeEngineTests
         }
     }
 
+    [Test]
+    public async Task TuicRelayModesSurviveCompleteMultiPlatformConversion()
+    {
+        string yaml = "proxies:\n";
+        foreach (string mode in new[] { "native", "quic", "uos" })
+        {
+            yaml += $"  - name: tuic-{mode}\n    type: tuic\n    server: node.example.com\n    port: 443\n"
+                + "    uuid: 00000000-0000-4000-8000-000000000001\n    password: \"\"\n"
+                + (mode == "uos" ? "    udp-over-stream: true\n    udp-over-stream-version: 2\n"
+                    : $"    udp-relay-mode: {mode}\n");
+        }
+        using ServiceProvider provider = CreateProvider();
+        var bundle = await provider.GetRequiredService<IBoxForgeEngine>().ConvertAsync(
+            new ConversionRequest("tuic", yaml, Enum.GetValues<TargetPlatform>()));
+        Assert.That(bundle.Artifacts, Has.Count.EqualTo(3));
+        foreach (var artifact in bundle.Artifacts)
+        {
+            using var document = JsonDocument.Parse(artifact.Content);
+            var outbounds = document.RootElement.GetProperty("outbounds").EnumerateArray().ToArray();
+            var nodes = outbounds.Where(item => item.GetProperty("type").GetString() == "tuic").ToArray();
+            Assert.That(nodes, Has.Length.EqualTo(3));
+            foreach (var node in nodes)
+            {
+                Assert.That(node.GetProperty("tls").GetProperty("alpn")[0].GetString(), Is.EqualTo("h3"));
+                Assert.That(node.GetProperty("password").GetString(), Is.Empty);
+                string tag = node.GetProperty("tag").GetString()!;
+                Assert.That(outbounds.Any(group => group.GetProperty("type").GetString() == "selector"
+                    && group.GetProperty("outbounds").EnumerateArray().Any(member => member.GetString() == tag)), Is.True);
+                if (tag == "tuic-uos") Assert.That(node.GetProperty("udp_over_stream").GetBoolean(), Is.True);
+                else Assert.That(node.GetProperty("udp_relay_mode").GetString(), Is.EqualTo(tag[5..]));
+            }
+        }
+    }
+
     [TestCase("sample")]
     [TestCase("Sample")]
     [TestCase("配置名 ")]
@@ -289,7 +323,7 @@ public sealed class BoxForgeEngineTests
 
     [Test]
     public async Task SourceIpv4ConstraintUsesOverrideOnlyWhenGlobalResolverAllowsIpv6(
-        [Values("vless", "trojan", "ss", "hysteria2", "anytls")] string protocol,
+        [Values("vless", "trojan", "ss", "hysteria2", "anytls", "tuic")] string protocol,
         [Values] AddressFamilyPolicy family)
     {
         using ServiceProvider provider = CreateProvider();
@@ -337,6 +371,7 @@ public sealed class BoxForgeEngineTests
     [TestCase("ss")]
     [TestCase("hysteria2")]
     [TestCase("anytls")]
+    [TestCase("tuic")]
     public async Task SourceAddressFamilyResolversBelongToEachNodeAndEachOutput(string protocol)
     {
         RecordingConfigBuilder? recordingBuilder = null;
@@ -384,7 +419,7 @@ public sealed class BoxForgeEngineTests
     {
         using ServiceProvider provider = CreateProvider();
         var engine = provider.GetRequiredService<IBoxForgeEngine>();
-        foreach (string protocol in new[] { "vless", "trojan", "ss", "hysteria2", "anytls" })
+        foreach (string protocol in new[] { "vless", "trojan", "ss", "hysteria2", "anytls", "tuic" })
         {
             var request = new ConversionRequest("unsupported-family",
                 AddressFamilyYaml(protocol, ("unsafe", sourceFamily)), [TargetPlatform.Linux])
@@ -918,6 +953,7 @@ public sealed class BoxForgeEngineTests
         "proxies:\n" + string.Concat(nodes.Select(node =>
             $"  - name: {node.Name}\n    type: {protocol}\n    server: node.example.com\n    port: 443\n"
             + (protocol == "vless" ? "    uuid: 00000000-0000-4000-8000-000000000001\n" : "    password: test-only\n")
+            + (protocol == "tuic" ? "    uuid: 00000000-0000-4000-8000-000000000001\n" : "")
             + (protocol == "ss" ? "    cipher: aes-128-gcm\n" : "")
             + (node.Family is null ? "" : $"    ip-version: {node.Family}\n")));
 

@@ -78,7 +78,7 @@ public sealed class ProtocolSourceMappingTests
                 Assert.That(members, Does.Contain(selected.GetString()));
             if (group.GetProperty("type").GetString() == "urltest")
                 Assert.That(members, Is.All.Matches<string>(tag => outbounds[tag].GetProperty("type").GetString()
-                    is "shadowsocks" or "vless" or "trojan" or "hysteria2" or "anytls"));
+                    is "shadowsocks" or "vless" or "trojan" or "hysteria2" or "anytls" or "tuic"));
         }
         JsonElement tun = config.GetProperty("inbounds").EnumerateArray().Single(inbound => inbound.GetProperty("type").GetString() == "tun");
         Assert.That(tun.TryGetProperty("strict_route", out _), Is.EqualTo(platform != TargetPlatform.Android));

@@ -18,6 +18,7 @@ internal static class ProxyNodeParser
             "hysteria2" => ("Hysteria2", Hysteria2Protocol.Schema, Hysteria2Protocol.Parse),
             "ss" or "shadowsocks" => ("Shadowsocks", ShadowsocksProtocol.Schema, ShadowsocksProtocol.Parse),
             "anytls" => ("AnyTLS", AnyTlsProtocol.Schema, AnyTlsProtocol.Parse),
+            "tuic" => ("TUIC", TuicProtocol.Schema, TuicProtocol.Parse),
             null => throw new NodeParseException($"节点 '{proxy.Name ?? "<未命名>"}' 缺少 type 字段",
                 new ConfigDiagnostic("SRC002", "source.type", "节点协议类型缺失或不受支持。")),
             _ => throw new NodeParseException($"节点 '{proxy.Name ?? "<未命名>"}' 使用了不支持的类型: {type}",

@@ -279,6 +279,105 @@
       "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/component/ca/fingerprint.go",
       "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/common/tls/std_client.go",
       "status": "Mapped"
+    },
+    {
+      "id": "tuic.authentication",
+      "source_field": "uuid",
+      "source_meaning": "UUID/password selects TUIC v5; token selects incompatible v4.",
+      "target_meaning": "Require a standard UUID and explicit non-null raw password (empty allowed); reject any token field.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/tuic.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/tuic/outbound.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "tuic.ip",
+      "source_field": "ip",
+      "source_meaning": "Override the dial address while retaining original server/SNI for TLS.",
+      "target_meaning": "Accept an IPv4 override as server, preserving TLS server_name.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/tuic.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/tuic/outbound.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "tuic.tls",
+      "source_field": "tls",
+      "source_meaning": "TUIC always uses QUIC TLS; tls is a BoxForge compatibility switch.",
+      "target_meaning": "Always enable TLS; explicit false/null is rejected. Default omitted ALPN to h3.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/tuic.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/tuic/outbound.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "tuic.heartbeat",
+      "source_field": "heartbeat-interval",
+      "source_meaning": "Integer milliseconds sets QUIC KeepAlivePeriod. Missing or nonpositive values become 10000ms.",
+      "target_meaning": "Emit keep_alive_period in milliseconds, not the separate TUIC protocol heartbeat. Core protocol heartbeats retain their defaults.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/tuic.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/tuic/outbound.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "tuic.disable-sni",
+      "source_field": "disable-sni",
+      "source_meaning": "Clear TLS ServerName and force InsecureSkipVerify.",
+      "target_meaning": "Emit disable_sni and force insecure true when enabled, retaining the interpreted name in IR.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/tuic.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/tuic/outbound.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "tuic.zero-rtt",
+      "source_field": "reduce-rtt",
+      "source_meaning": "Select early QUIC dialing; default false.",
+      "target_meaning": "Emit zero_rtt_handshake without enabling it on omission.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/tuic.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/tuic/outbound.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "tuic.congestion",
+      "source_field": "congestion-controller",
+      "source_meaning": "Named congestion algorithms cubic, new_reno, bbr; omitted uses QUIC cubic.",
+      "target_meaning": "Emit the shared algorithm names only; algorithm implementations and performance are not claimed equivalent.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/tuic.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/tuic/outbound.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "tuic.udp-relay",
+      "source_field": "udp-relay-mode",
+      "source_meaning": "quic uses TUIC streams; native/default uses datagrams.",
+      "target_meaning": "Accept native or quic; reject unknown modes and a nonempty mode combined with UDP over stream.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/tuic.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/tuic/outbound.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "tuic.udp-over-stream",
+      "source_field": "udp-over-stream",
+      "source_meaning": "Optional UoT extension defaults to legacy version 1.",
+      "target_meaning": "Enabled UoT requires explicit source version 2; emit udp_over_stream. Reject legacy/default version when enabled.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/tuic.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/tuic/outbound.go",
+      "status": "Mapped"
+    },
+    {
+      "id": "tuic.request-timeout",
+      "source_field": "request-timeout",
+      "source_meaning": "Only passed to the v4 client; unused by v5.",
+      "target_meaning": "Validate integer shape and ignore for v5, without changing connect_timeout.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/tuic.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/tuic/outbound.go",
+      "status": "IgnoredByDesign"
+    },
+    {
+      "id": "tuic.v4",
+      "source_field": "token",
+      "source_meaning": "Nonempty token selects TUIC v4.",
+      "target_meaning": "Target supports v5 only; reject token rather than changing authentication.",
+      "source_evidence": "https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/tuic.go",
+      "target_evidence": "https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/tuic/outbound.go",
+      "status": "UnsupportedSemantic"
     }
   ]
 }

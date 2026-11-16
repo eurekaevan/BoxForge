@@ -136,6 +136,23 @@ public sealed class SingboxConfigValidatorTests
     }
 
     [Test]
+    public void TuicTlsParticipatesInTargetValidation()
+    {
+        SingboxConfig valid = CreateValidConfig();
+        var config = valid with
+        {
+            Outbounds = [.. valid.Outbounds, new TuicOutbound
+            {
+                Tag = "tuic", Server = "node.example.com", ServerPort = 443,
+                Uuid = "00000000-0000-4000-8000-000000000001", Password = "",
+                KeepAlivePeriod = "10000ms", Tls = new OutboundTls { Enabled = true, ServerName = "" }
+            }]
+        };
+        AssertDiagnostics(config, new ConfigDiagnostic("SB044", $"outbounds[{valid.Outbounds.Count}].tls.server_name",
+            "TLS server_name 不能为空。"));
+    }
+
+    [Test]
     public void WhitespacePasswordsAreValidAuthenticationMaterial()
     {
         SingboxConfig valid = CreateValidConfig();

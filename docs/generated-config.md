@@ -222,6 +222,66 @@ Tailscale；未命中的私网地址仍按原策略走 DIRECT。
   UDP/443 不因端口统一拒绝，也不强制 QUIC 回退 TCP；STUN、广告以及 `Ipv4Only` 的 IPv6 拒绝仍生效。
   实际 QUIC/HTTP/3 可用性取决于所选代理和网络的 UDP 支持。
 
+## TUIC v5
+
+支持 Mihomo `type: tuic` 的 UUID/密码认证（TUIC v5）。`token` 属于 v4，
+目标 sing-box 不支持，明确拒绝，不能把 v4 token 当作 v5 密码。
+`uuid` 必须是标准 UUID，`password` 必填且保留原值及首尾空白；无密码时
+请显式填写 `password: ""`，缺失/null 拒绝。端口为 1–65535。
+TLS 始终启用，`tls` 可省略或为 true，显式 false/null 拒绝。
+
+```yaml
+proxies:
+  - name: tuic-example
+    type: tuic
+    server: node.example.com
+    port: 443
+    uuid: "00000000-0000-4000-8000-000000000001"
+    password: "replace-with-your-password"
+    congestion-controller: cubic
+    udp-relay-mode: native
+    heartbeat-interval: 10000
+    reduce-rtt: false
+    alpn: [h3]
+    skip-cert-verify: false
+```
+
+| 来源字段 | sing-box 输出与约束 |
+| --- | --- |
+| `uuid` / `password` | `uuid` / `password`，仅 v5 |
+| `ip` | 可选 IPv4 连接地址覆盖；TLS 名称仍来自原 `server` 或 `sni` |
+| `sni` / `servername` | `tls.server_name`，缺失时使用原服务器名称 |
+| `alpn` | `tls.alpn`，缺失时输出 `["h3"]`；空列表拒绝，其他值保持顺序和重复项 |
+| `skip-cert-verify` | `tls.insecure`；缺失时不主动跳过验证 |
+| `disable-sni` | `tls.disable_sni`；true 时按 Mihomo 行为同时输出 `tls.insecure: true`，即使来源 skip-cert-verify 为 false |
+| `reduce-rtt` | `zero_rtt_handshake`；缺失不主动启用；0-RTT 存在重放风险 |
+| `congestion-controller` | `congestion_control`，支持 cubic / new_reno / bbr；缺失或空值沿用核心默认 cubic |
+| `udp-relay-mode` | `udp_relay_mode`，native / quic；缺失或空值默认 native |
+| `heartbeat-interval` | **32 位整数毫秒** → QUIC `keep_alive_period`；缺失、0 或负数采用源默认 10000ms，不接受 `10s` 等 duration 字符串 |
+| `udp-over-stream` | `udp_over_stream`；启用时必须显式提供 `udp-over-stream-version: 2`，且不能指定非空 udp-relay-mode |
+| `request-timeout` | 整数，TUIC v4 专用；v5 来源不使用，忽略，不映射为全局连接超时 |
+| `fast-open` | 只接受 false/null；v4 Fast Open 的 true 不映射为 0-RTT |
+
+`heartbeat-interval` 在固定 Mihomo 源码中设置的是 QUIC 保活，不是 TUIC
+协议的 Heartbeat 数据报周期，因此不映射为目标 `heartbeat`；sing-box 自身的
+TUIC Heartbeat 仍使用核心默认值。两端拥塞控制实现、连接池和 QUIC 默认值
+并不完全相同，此转换不承诺性能或数据包行为完全一致。
+
+`udp-over-stream` 的 Mihomo 默认版本是 1，sing-box 使用版本 2，所以开启时
+必须显式选版本 2；该扩展要求服务端也兼容。关闭时版本 0/1/2 可接受但不输出。
+`quic` 模式是 TUIC 原生的 QUIC 流中继，与 `udp-over-stream` 的额外协议不同。
+
+可使用 BoxForge 的 `certificate` 服务端 PEM 扩展及叶证书 `fingerprint` 转换，
+约束见下文。QUIC 不支持 uTLS / Reality；客户端私钥与 ECH 也未映射。
+以下选项明确拒绝：`max-open-streams`、`max-udp-relay-packet-size`、`cwnd`、
+`bbr-profile`、`recv-window-conn`、`recv-window`、`disable-mtu-discovery`、
+`max-datagram-frame-size` 和 `network`，不将连接池限制误作 QUIC 流限制。
+不支持的其他字段同样报错，不会静默丢弃。
+
+固定实现证据及状态见[协议映射证据](protocol-mappings.md#tuic)；
+官方说明：[Mihomo TUIC](https://wiki.metacubex.one/config/proxies/tuic/)、
+[sing-box TUIC](https://sing-box.sagernet.org/configuration/outbound/tuic/)。
+
 ## TCP、TLS 与 Reality
 
 VLESS 和 Trojan 只支持原生 TCP，`network` 可以省略或设为 `tcp`。
@@ -245,7 +305,7 @@ TLS，Trojan 始终启用 TLS；两者保留受支持的 uTLS 与 Reality 映射
 节点级 `certificate` 是 BoxForge 扩展：指定用于校验服务端的 PEM 证书，
 映射到 `tls.certificate`，支持 PEM 字符串或 PEM 行字符串列表（按换行连接）。
 缺失时省略；显式 null、空内容、无效证书、文件路径、未启用 TLS 或 Reality 组合均拒绝。
-适用于 VLESS、Trojan、AnyTLS、Hysteria2；不会自动开启 `skip-cert-verify`。
+适用于 VLESS、Trojan、AnyTLS、Hysteria2、TUIC；不会自动开启 `skip-cert-verify`。
 这与 Mihomo 同名字段的 mTLS 用途不同，不能直接导入其客户端证书配置。
 
 TLS 仍拒绝 `name-cert-verify`、`private-key`，以及
@@ -256,7 +316,7 @@ ss-opts 也不支持。name-cert-verify 不能映射为改变 SNI 的 server_nam
 ### 证书指纹固定（fingerprint）
 
 源节点的 `fingerprint` 映射为 `tls.certificate_sha256`，适用于 VLESS、Trojan、
-AnyTLS、Hysteria2。输入必须是整张叶证书 DER 的 SHA-256 十六进制字符串：
+AnyTLS、Hysteria2、TUIC。输入必须是整张叶证书 DER 的 SHA-256 十六进制字符串：
 64 个十六进制字符，大小写均可，可带冒号及首尾空白；转换为 Base64 后输出单元素数组。
 请在 YAML 中加引号，避免纯数字指纹被解析为数值。缺失时省略；显式 null、
 空值、错误长度、非十六进制、列表及对象均拒绝。VLESS 必须启用 TLS。
@@ -298,7 +358,7 @@ fingerprint: "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
 [协议映射数据表](data/protocol-mappings.json)，由脚本生成[证据参考](protocol-mappings.md)。
 表中 ID 仅用于文档和测试；内部 IR 保存解释后的值，仅在校验确需区分缺失与显式 null 时保留显式标记，
 不携带来源字段路径或规则 ID。
-五个协议统一通过 Schema 校验与协议解释钩子构建中立节点；目标发射不读取证据表。
+六个协议统一通过 Schema 校验与协议解释钩子构建中立节点；目标发射不读取证据表。
 
 研究基线：Mihomo Meta `88dcbf7f1614a67c3b36b848ee3592dfa92ada36`，
 sing-box `1.15.0-alpha.8` / `b609f959f57ce34416c51c7b87ce4a76f2e1df56`。

@@ -12,6 +12,8 @@ internal sealed record TlsSettings(
     string? Certificate,
     string? CertificateSha256)
 {
+    internal bool? DisableSni { get; init; }
+
     internal void Validate()
     {
         if (Reality is not null && string.IsNullOrEmpty(ClientFingerprint))

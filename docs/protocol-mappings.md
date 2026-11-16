@@ -239,4 +239,83 @@
 - 目标解释：Convert 32 digest bytes to a single Base64 certificate_sha256 entry (sing-box 1.15.0). Leaf pin replaces normal CA/name/expiry validation. Intermediate/root pins are not equivalent; reject certificate and Reality combinations.
 - 固定源码：[来源](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/component/ca/fingerprint.go)、[目标](https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/common/tls/std_client.go)。
 
+## tuic
+
+### `tuic.authentication`
+
+- 来源字段：`uuid`；状态：`Mapped`。
+- 来源解释：UUID/password selects TUIC v5; token selects incompatible v4.
+- 目标解释：Require a standard UUID and explicit non-null raw password (empty allowed); reject any token field.
+- 固定源码：[来源](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/tuic.go)、[目标](https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/tuic/outbound.go)。
+
+### `tuic.ip`
+
+- 来源字段：`ip`；状态：`Mapped`。
+- 来源解释：Override the dial address while retaining original server/SNI for TLS.
+- 目标解释：Accept an IPv4 override as server, preserving TLS server_name.
+- 固定源码：[来源](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/tuic.go)、[目标](https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/tuic/outbound.go)。
+
+### `tuic.tls`
+
+- 来源字段：`tls`；状态：`Mapped`。
+- 来源解释：TUIC always uses QUIC TLS; tls is a BoxForge compatibility switch.
+- 目标解释：Always enable TLS; explicit false/null is rejected. Default omitted ALPN to h3.
+- 固定源码：[来源](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/tuic.go)、[目标](https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/tuic/outbound.go)。
+
+### `tuic.heartbeat`
+
+- 来源字段：`heartbeat-interval`；状态：`Mapped`。
+- 来源解释：Integer milliseconds sets QUIC KeepAlivePeriod. Missing or nonpositive values become 10000ms.
+- 目标解释：Emit keep_alive_period in milliseconds, not the separate TUIC protocol heartbeat. Core protocol heartbeats retain their defaults.
+- 固定源码：[来源](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/tuic.go)、[目标](https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/tuic/outbound.go)。
+
+### `tuic.disable-sni`
+
+- 来源字段：`disable-sni`；状态：`Mapped`。
+- 来源解释：Clear TLS ServerName and force InsecureSkipVerify.
+- 目标解释：Emit disable_sni and force insecure true when enabled, retaining the interpreted name in IR.
+- 固定源码：[来源](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/tuic.go)、[目标](https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/tuic/outbound.go)。
+
+### `tuic.zero-rtt`
+
+- 来源字段：`reduce-rtt`；状态：`Mapped`。
+- 来源解释：Select early QUIC dialing; default false.
+- 目标解释：Emit zero_rtt_handshake without enabling it on omission.
+- 固定源码：[来源](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/tuic.go)、[目标](https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/tuic/outbound.go)。
+
+### `tuic.congestion`
+
+- 来源字段：`congestion-controller`；状态：`Mapped`。
+- 来源解释：Named congestion algorithms cubic, new_reno, bbr; omitted uses QUIC cubic.
+- 目标解释：Emit the shared algorithm names only; algorithm implementations and performance are not claimed equivalent.
+- 固定源码：[来源](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/tuic.go)、[目标](https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/tuic/outbound.go)。
+
+### `tuic.udp-relay`
+
+- 来源字段：`udp-relay-mode`；状态：`Mapped`。
+- 来源解释：quic uses TUIC streams; native/default uses datagrams.
+- 目标解释：Accept native or quic; reject unknown modes and a nonempty mode combined with UDP over stream.
+- 固定源码：[来源](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/tuic.go)、[目标](https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/tuic/outbound.go)。
+
+### `tuic.udp-over-stream`
+
+- 来源字段：`udp-over-stream`；状态：`Mapped`。
+- 来源解释：Optional UoT extension defaults to legacy version 1.
+- 目标解释：Enabled UoT requires explicit source version 2; emit udp_over_stream. Reject legacy/default version when enabled.
+- 固定源码：[来源](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/tuic.go)、[目标](https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/tuic/outbound.go)。
+
+### `tuic.request-timeout`
+
+- 来源字段：`request-timeout`；状态：`IgnoredByDesign`。
+- 来源解释：Only passed to the v4 client; unused by v5.
+- 目标解释：Validate integer shape and ignore for v5, without changing connect_timeout.
+- 固定源码：[来源](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/tuic.go)、[目标](https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/tuic/outbound.go)。
+
+### `tuic.v4`
+
+- 来源字段：`token`；状态：`UnsupportedSemantic`。
+- 来源解释：Nonempty token selects TUIC v4.
+- 目标解释：Target supports v5 only; reject token rather than changing authentication.
+- 固定源码：[来源](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/adapter/outbound/tuic.go)、[目标](https://github.com/SagerNet/sing-box/blob/b609f959f57ce34416c51c7b87ce4a76f2e1df56/protocol/tuic/outbound.go)。
+
 [返回协议验证边界](protocol-validation.md) · [返回 README](../README.md)

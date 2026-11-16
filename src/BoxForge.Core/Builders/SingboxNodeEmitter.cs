@@ -11,6 +11,7 @@ internal static class SingboxNodeEmitter
         VlessNode vless => Emit(vless),
         TrojanNode trojan => Emit(trojan),
         AnyTlsNode anyTls => Emit(anyTls),
+        TuicNode tuic => Emit(tuic),
         Hysteria2Node hysteria2 => Emit(hysteria2),
         ShadowsocksNode shadowsocks => Emit(shadowsocks),
         _ => throw new InvalidOperationException("Unknown intermediate node type.")
@@ -77,6 +78,28 @@ internal static class SingboxNodeEmitter
             MinIdleSession = node.MinimumIdleSessions,
             ClientMetadata = node.ClientMetadata,
             Tls = EmitTls(node.Tls)
+        };
+    }
+
+    internal static TuicOutbound Emit(TuicNode node)
+    {
+        node.Validate();
+        return new TuicOutbound
+        {
+            Tag = node.Name,
+            Server = node.Server,
+            ServerPort = node.Port,
+            ConnectTimeout = node.Connection.ConnectTimeout,
+            TcpKeepAlive = node.Connection.TcpKeepAlive,
+            TcpKeepAliveInterval = node.Connection.TcpKeepAliveInterval,
+            Uuid = node.UserId,
+            Password = node.Password,
+            CongestionControl = node.CongestionControl,
+            UdpRelayMode = node.UdpRelayMode,
+            UdpOverStream = node.UdpOverStream,
+            ZeroRttHandshake = node.ZeroRttHandshake,
+            KeepAlivePeriod = node.KeepAlivePeriod,
+            Tls = EmitTls(node.Tls)!
         };
     }
 
@@ -171,6 +194,7 @@ internal static class SingboxNodeEmitter
             Enabled = true,
             ServerName = tls.ServerName,
             Insecure = tls.AllowInvalidCertificate,
+            DisableSni = tls.DisableSni,
             Certificate = tls.Certificate,
             CertificateSha256 = tls.CertificateSha256 is { } hash ? [hash] : null,
             Alpn = tls.ApplicationProtocols?.ToList(),

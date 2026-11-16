@@ -119,7 +119,7 @@ SHA-256：5 份 YAML × 3 个平台 × 8 种桌面 Tailscale、Android Tailscale
 
 ### 内部编译流水线：协议解释、catalog 与配置计划
 
-VLESS、Trojan、AnyTLS、Hysteria2 与 Shadowsocks 共用 `ProxyNodeParser` 入口，
+VLESS、Trojan、AnyTLS、Hysteria2、TUIC 与 Shadowsocks 共用 `ProxyNodeParser` 入口，
 由协议 Schema 绑定 `NodeFieldReader` 后调用解释钩子，构建中立节点。协议、catalog 和各层
 计划均属于内部实现；对外转换使用 `IBoxForgeEngine`：
 
@@ -137,7 +137,7 @@ ClashProxyNode → ProxyNodeParser → Schema + 协议解释 → NodeCatalog（�
         既有 TUN / endpoint / service 组合 → 完整配置校验 → JSON
 ```
 
-五个协议的节点 IR、共用 `TlsSettings` 和 `RealitySettings` 不引用 sing-box 模型或 JSON 属性。
+六个协议的节点 IR、共用 `TlsSettings` 和 `RealitySettings` 不引用 sing-box 模型或 JSON 属性。
 flow 与 UDP 编码使用语义枚举，其他字段直接保存解释后的值。
 只有强制 TLS 协议的激活开关及 Gecko 包大小校验需要区分缺失和显式 null，
 这些字段使用包含值与 `IsSpecified` 的只读 `SourceValue<T>`；不保存字段名、字段路径或证据 ID。
@@ -195,11 +195,11 @@ UoT 省略、null 和版本 0 均解释为 v1，禁用时仍省略整个目标�
 共用 TLS 解析先产生中立设置；后端为每次输出复制 ALPN 和 Hysteria2 端口列表，
 避免输出修改污染共享 IR。
 
-内置五个协议在 catalog 中保留中立节点；分组规划使用节点名称，完整规划还保留来源地址族约束，
+内置六个协议在 catalog 中保留中立节点；分组规划使用节点名称，完整规划还保留来源地址族约束，
 不提前发射目标模型。
 连接超时、平台 keep-alive 和 Hysteria2 hop/BBR 默认值在 IR 副本上施加，
 然后统一校验并发射；同一个 catalog 可以供多个平台并行构建，来源节点不变。
-`ProxyNode` 和 `ConnectionSettings` 只承载当前五种节点共有的数据与调优值。
+`ProxyNode` 和 `ConnectionSettings` 只承载当前六种节点共有的数据与调优值。
 
 `NodeCatalog` 保存中立节点与名称。每次构建都从节点 IR 调优并发射独立的目标模型，
 读取 catalog 不会改变后续构建行为。
@@ -357,7 +357,7 @@ AAAA 空答。
 
 ### 现有协议扩展入口
 
-五个协议共用 `ProxyNodeParser` 的单一解析入口；各 `*Protocol` 声明 `Schema` 并提供
+六个协议共用 `ProxyNodeParser` 的单一解析入口；各 `*Protocol` 声明 `Schema` 并提供
 接收 `NodeFieldReader` 的解释钩子；TLS 与嵌套选项也共用读取器，不直接读取原始对象。
 路径固定为名称与来源字段绑定 → 协议解释及类型化读取 → 节点 IR →
 调优与发射。
@@ -378,7 +378,7 @@ sing-box 运行时默认值。BoxForge 不保证逐字段原样复制；它保�
 不再提供字符串、整数、端口和布尔 Getter。`ClashProxyNode.Name`／`Type` 仅对标量返回字符串，
 容器或缺失值返回 null；标准来源类型错误由 `NodeFieldReader` 报告。
 `ProxyNodeParser` 在协议解释前按 `Schema` 逐项检查 `ClashObject.Properties`。
-五个协议的字段声明与解释钩子集中在各自的 `*Protocol` 中；`NodeCatalogBuilder` 仅编排
+六个协议的字段声明与解释钩子集中在各自的 `*Protocol` 中；`NodeCatalogBuilder` 仅编排
 严格转换，不重复协议选择和字段解释。已知但未支持的连接字段、尚未分类的字段、冲突的别名和无效的
 显式值都会形成包含协议、节点名、字段名及原因的错误。schema 同时声明值形状，
 避免把列表或对象转换成字符串；嵌套 Reality 和 Shadowsocks 插件对象也逐项检查。

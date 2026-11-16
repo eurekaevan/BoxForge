@@ -132,6 +132,14 @@ def verify(cli, supplied_core, runtime=False):
             for tag, (ports, _) in port_cases.items():
                 source.write(f"\n  - name: {tag}\n    type: hysteria2\n    server: node.example.com\n"
                              f"    port: 0\n    ports: {json.dumps(ports)}\n    password: test-only\n")
+        # Exercise TUIC without changing the committed fixtures or byte baselines.
+        with (fixtures / "tls.yaml").open("a", encoding="utf-8") as source:
+            for mode in ("native", "quic", "uos"):
+                source.write(f"\n  - name: tuic-{mode}\n    type: tuic\n    server: node.example.com\n"
+                             "    port: 443\n    uuid: 00000000-0000-4000-8000-000000000001\n"
+                             "    password: \"\"\n    heartbeat-interval: 2500\n")
+                source.write("    udp-over-stream: true\n    udp-over-stream-version: 2\n" if mode == "uos"
+                             else f"    udp-relay-mode: {mode}\n")
         core = supplied_core or download_core(root)
         version = run_command([str(core), "version"], root, "Official core version", timeout=VERSION_TIMEOUT)
         if f"sing-box version {VERSION}\n" not in version or REVISION not in version:

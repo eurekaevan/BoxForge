@@ -1155,6 +1155,7 @@ public sealed class ProxyNodeParserTests
     [TestCase("trojan")]
     [TestCase("anytls")]
     [TestCase("hysteria2")]
+    [TestCase("tuic")]
     public void CertificateFingerprintConvertsDigestBytesAndPreservesTlsSettings(string protocol)
     {
         const string hex = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
@@ -1165,6 +1166,7 @@ public sealed class ProxyNodeParserTests
                 ? "00000000-0000-4000-8000-000000000001" : "test-only",
             ["tls"] = true
         };
+        if (protocol == "tuic") fields["uuid"] = "00000000-0000-4000-8000-000000000001";
         Assert.That(SerializeOutbound(Convert<ProxyOutbound>(CreateNode(protocol, fields))),
             Does.Not.Contain("certificate_sha256"));
         foreach (string value in new[] { hex, hex.ToUpperInvariant(), " \t" + string.Join(":", Enumerable.Range(0, 32).Select(i => hex.Substring(i * 2, 2))) + "\r\n" })
@@ -1222,6 +1224,7 @@ public sealed class ProxyNodeParserTests
     [TestCase("trojan")]
     [TestCase("anytls")]
     [TestCase("hysteria2")]
+    [TestCase("tuic")]
     public void SharedTlsCertificatePreservesPemAndRejectsMalformedInput(string protocol)
     {
         using var key = System.Security.Cryptography.ECDsa.Create();
@@ -1235,6 +1238,7 @@ public sealed class ProxyNodeParserTests
                 ? "00000000-0000-4000-8000-000000000001" : "test-only",
             ["tls"] = true
         };
+        if (protocol == "tuic") fields["uuid"] = "00000000-0000-4000-8000-000000000001";
         Assert.That(SerializeOutbound(Convert<ProxyOutbound>(CreateNode(protocol, fields))),
             Does.Not.Contain("\"certificate\""));
         foreach (object value in new object[] { pem, pem.Split('\n'), new[] { pem, pem } })
@@ -1339,6 +1343,131 @@ public sealed class ProxyNodeParserTests
         }
     }
 
+    [Test]
+    public void TuicDefaultsAndOptionsPreserveV5AuthenticationAndQuicTls()
+    {
+        const string uuid = "00000000-0000-4000-8000-000000000001";
+        var fields = new Hashtable { ["uuid"] = uuid, ["password"] = "  secret  " };
+        var source = (TuicNode)ProxyNodeParser.Parse(CreateNode("tuic", fields));
+        foreach (TargetPlatform platform in Enum.GetValues<TargetPlatform>())
+        {
+            var outbound = (TuicOutbound)SingboxNodeEmitter.Emit(OutboundTuningPolicy.Apply(
+                source, BoxForgeProfile.Default.Resolve(platform).Settings));
+            Assert.Multiple(() =>
+            {
+                Assert.That(outbound.Uuid, Is.EqualTo(uuid));
+                Assert.That(outbound.Password, Is.EqualTo("  secret  "));
+                Assert.That(outbound.ServerPort, Is.EqualTo(443));
+                Assert.That(outbound.KeepAlivePeriod, Is.EqualTo("10000ms"));
+                Assert.That(outbound.Tls.Enabled, Is.True);
+                Assert.That(outbound.Tls.Alpn, Is.EqualTo(new[] { "h3" }));
+                Assert.That(outbound.Tls.Utls, Is.Null);
+                Assert.That(outbound.Tls.Insecure, Is.Null);
+                Assert.That(outbound.ZeroRttHandshake, Is.Null);
+                Assert.That(outbound.UdpRelayMode, Is.Null);
+            });
+            using var json = System.Text.Json.JsonDocument.Parse(SerializeOutbound(outbound));
+            Assert.That(json.RootElement.GetProperty("outbounds")[0].GetProperty("type").GetString(), Is.EqualTo("tuic"));
+        }
+        fields["password"] = "";
+        Assert.That(Convert<TuicOutbound>(CreateNode("tuic", fields)).Password, Is.Empty);
+        fields.Remove("password");
+        Assert.That(Assert.Throws<NodeParseException>(() => ParseAndEmit(CreateNode("tuic", fields)))!.Message,
+            Does.Contain("password"));
+        fields["password"] = "  secret  ";
+        fields["congestion-controller"] = "bbr";
+        fields["udp-relay-mode"] = "quic";
+        fields["reduce-rtt"] = true;
+        fields["heartbeat-interval"] = 2500;
+        fields["ip"] = "192.0.2.10";
+        fields["alpn"] = new[] { "custom", "h3", "custom" };
+        fields["disable-sni"] = true;
+        fields["skip-cert-verify"] = false;
+        var configured = Convert<TuicOutbound>(CreateNode("tuic", fields));
+        Assert.Multiple(() =>
+        {
+            Assert.That(configured.Server, Is.EqualTo("192.0.2.10"));
+            Assert.That(configured.Tls.ServerName, Is.EqualTo("node.example.com"));
+            Assert.That(configured.Tls.DisableSni, Is.True);
+            Assert.That(configured.Tls.Insecure, Is.True);
+            Assert.That(configured.Tls.Alpn, Is.EqualTo(new[] { "custom", "h3", "custom" }));
+            Assert.That(configured.KeepAlivePeriod, Is.EqualTo("2500ms"));
+            Assert.That(configured.CongestionControl, Is.EqualTo("bbr"));
+            Assert.That(configured.UdpRelayMode, Is.EqualTo("quic"));
+            Assert.That(configured.ZeroRttHandshake, Is.True);
+        });
+        foreach (int heartbeat in new[] { 0, -1 })
+        {
+            fields["heartbeat-interval"] = heartbeat;
+            Assert.That(Convert<TuicOutbound>(CreateNode("tuic", fields)).KeepAlivePeriod, Is.EqualTo("10000ms"));
+        }
+        fields.Remove("udp-relay-mode");
+        fields["udp-over-stream"] = true;
+        fields["udp-over-stream-version"] = 2;
+        Assert.That(Convert<TuicOutbound>(CreateNode("tuic", fields)).UdpOverStream, Is.True);
+    }
+
+    [TestCase("uuid", null)]
+    [TestCase("uuid", "invalid")]
+    [TestCase("password", null)]
+    [TestCase("port", 0)]
+    [TestCase("tls", false)]
+    [TestCase("tls", null)]
+    [TestCase("heartbeat-interval", "10s")]
+    [TestCase("heartbeat-interval", "2147483648")]
+    [TestCase("disable-sni", "invalid")]
+    [TestCase("reduce-rtt", "invalid")]
+    [TestCase("ip", "not-an-ip")]
+    [TestCase("ip", " ")]
+    [TestCase("ip", "::1")]
+    [TestCase("congestion-controller", "bbr_meta_v2")]
+    [TestCase("udp-relay-mode", "invalid")]
+    [TestCase("token", "test-secret-token")]
+    [TestCase("max-open-streams", 20)]
+    [TestCase("max-udp-relay-packet-size", 1500)]
+    [TestCase("recv-window", 1000)]
+    [TestCase("fast-open", true)]
+    [TestCase("client-fingerprint", "chrome")]
+    [TestCase("udp-over-stream-version", 3)]
+    public void TuicRejectsInvalidOrUnmappedFieldsWithoutLeakingCredentials(string field, object? value)
+    {
+        var fields = new Hashtable
+        {
+            ["uuid"] = "00000000-0000-4000-8000-000000000001",
+            ["password"] = "test-secret-password",
+            [field] = value
+        };
+        var error = Assert.Throws<NodeParseException>(() => ParseAndEmit(CreateNode("tuic", fields)))!;
+        Assert.That(error.Diagnostics.Single().Path, Is.EqualTo("source." + field));
+        Assert.That(error.Message, Does.Not.Contain("test-secret-password").And.Not.Contain("test-secret-token"));
+    }
+
+    [Test]
+    public void TuicRejectsEmptyAlpnAndLegacyUdpOverStream()
+    {
+        var fields = new Hashtable
+        {
+            ["uuid"] = "00000000-0000-4000-8000-000000000001",
+            ["password"] = "test-only",
+            ["alpn"] = Array.Empty<string>()
+        };
+        Assert.That(Assert.Throws<NodeParseException>(() => ParseAndEmit(CreateNode("tuic", fields)))!.Message,
+            Does.Contain("ALPN"));
+        fields.Remove("alpn");
+        fields["udp-over-stream"] = true;
+        foreach (int? version in new int?[] { null, 0, 1 })
+        {
+            if (version.HasValue) fields["udp-over-stream-version"] = version.Value;
+            else fields.Remove("udp-over-stream-version");
+            Assert.That(Assert.Throws<NodeParseException>(() => ParseAndEmit(CreateNode("tuic", fields)))!.Message,
+                Does.Contain("版本 2"));
+        }
+        fields["udp-over-stream-version"] = 2;
+        fields["udp-relay-mode"] = "native";
+        Assert.That(Assert.Throws<NodeParseException>(() => ParseAndEmit(CreateNode("tuic", fields)))!.Message,
+            Does.Contain("不能与 udp-over-stream 同时指定"));
+    }
+
     private static ShadowsocksNode ParseShadowsocks(ClashProxyNode source) =>
         (ShadowsocksNode)ProxyNodeParser.Parse(source);
 
@@ -1371,6 +1500,7 @@ public sealed class ProxyNodeParserTests
         TrojanOutbound trojan => trojan.Tls,
         Hysteria2Outbound hysteria2 => hysteria2.Tls,
         AnyTlsOutbound anyTls => anyTls.Tls,
+        TuicOutbound tuic => tuic.Tls,
         _ => throw new AssertionException("Expected a TLS-capable outbound.")
     };
 

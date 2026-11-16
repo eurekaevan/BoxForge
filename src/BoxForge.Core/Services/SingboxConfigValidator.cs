@@ -393,6 +393,7 @@ internal sealed class SingboxConfigValidator : ISingboxConfigValidator
             TrojanOutbound trojan => trojan.Tls,
             Hysteria2Outbound hysteria2 => hysteria2.Tls,
             AnyTlsOutbound anyTls => anyTls.Tls,
+            TuicOutbound tuic => tuic.Tls,
             _ => null
         };
         if (tls is { Enabled: true }

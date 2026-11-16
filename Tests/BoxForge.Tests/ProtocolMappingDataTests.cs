@@ -107,6 +107,7 @@ public sealed class ProtocolMappingDataTests
             "vless" => VlessProtocol.Schema,
             "trojan" or "tls" => TrojanProtocol.Schema,
             "anytls" => AnyTlsProtocol.Schema,
+            "tuic" => TuicProtocol.Schema,
             "hysteria2" => Hysteria2Protocol.Schema,
             "shadowsocks" => ShadowsocksProtocol.Schema,
             _ => throw new AssertionException($"Unknown protocol evidence ID: {id}")

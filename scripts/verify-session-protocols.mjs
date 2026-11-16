@@ -15,14 +15,17 @@ import { freePort, launch, waitListening, stop } from './verification-process.mj
 const coreLock = JSON.parse(await readFile(new URL('../docs/data/sing-box-core.json', import.meta.url), 'utf8'));
 const run = promisify(execFile);
 const [coreArgument, configArgument, selection = 'all'] = process.argv.slice(2);
-assert.ok(coreArgument && configArgument && ['hysteria2', 'anytls', 'all'].includes(selection),
-    'Usage: node scripts/verify-session-protocols.mjs <core> <generated config.json> [hysteria2|anytls|all]');
+assert.ok(coreArgument && configArgument && ['hysteria2', 'anytls', 'tuic', 'all'].includes(selection),
+    'Usage: node scripts/verify-session-protocols.mjs <core> <generated config.json> [hysteria2|anytls|tuic|all]');
 const core = resolve(coreArgument);
 const { stdout: version } = await run(core, ['version']);
 assert.ok(version.includes(`sing-box version ${coreLock.version}\n`) && version.includes(coreLock.revision), version);
 const generated = JSON.parse(await readFile(resolve(configArgument), 'utf8'));
-const tags = selection === 'anytls' ? ['anytls-session'] : ['hy2-default', 'hy2-bandwidth', 'hy2-gecko', 'hy2-hop'];
-if (selection === 'all') tags.push('anytls-session');
+const tuicTags = generated.outbounds.filter(item => item.type === 'tuic').map(item => item.tag);
+const tags = selection === 'tuic' ? tuicTags : selection === 'anytls' ? ['anytls-session']
+    : ['hy2-default', 'hy2-bandwidth', 'hy2-gecko', 'hy2-hop'];
+assert.ok(tags.length > 0, 'The supplied configuration has no selected protocol leaves');
+if (selection === 'all') tags.push('anytls-session', ...tuicTags);
 const directory = await mkdtemp(join(tmpdir(), 'boxforge-session-protocols-'));
 const certificate = join(directory, 'certificate.pem');
 const key = join(directory, 'key.pem');
@@ -73,7 +76,7 @@ try {
     await once(httpServer, 'listening');
     for (const tag of tags) {
         const outbound = structuredClone(generated.outbounds.find(item => item.tag === tag));
-        assert.ok(outbound && ['hysteria2', 'anytls'].includes(outbound.type), `Missing generated leaf: ${tag}`);
+        assert.ok(outbound && ['hysteria2', 'anytls', 'tuic'].includes(outbound.type), `Missing generated leaf: ${tag}`);
         if (tag === 'hy2-bandwidth') {
             assert.equal(outbound.up_mbps, 100);
             assert.equal(outbound.down_mbps, 80);
@@ -89,15 +92,18 @@ try {
             assert.equal(outbound.min_idle_session, 1);
             assert.equal(outbound.client_metadata, 'test-only');
         }
-        const serverPort = await freePort(outbound.type === 'hysteria2' ? 'udp' : 'tcp');
+        const serverPort = await freePort(outbound.type === 'anytls' ? 'tcp' : 'udp');
         const clientPort = await freePort();
         const readinessPort = await freePort();
         let relay;
         let server;
         let client;
         try {
-            outbound.tls.server_name ??= outbound.server;
+            outbound.tls.server_name = 'node.example.com';
             outbound.server = '127.0.0.1';
+            // The loopback server owns a temporary certificate, replacing source trust material.
+            delete outbound.tls.certificate;
+            delete outbound.tls.certificate_sha256;
             outbound.tls.certificate_path = certificate;
             if (tag === 'hy2-hop') {
                 assert.equal(outbound.hop_interval, '20s');
@@ -107,8 +113,13 @@ try {
                 delete outbound.server_port;
             } else outbound.server_port = serverPort;
             const inbound = { type: outbound.type, tag: 'server', listen: '127.0.0.1', listen_port: serverPort,
-                users: [{ password: outbound.password }],
+                users: [outbound.type === 'tuic' ? { uuid: outbound.uuid, password: outbound.password }
+                    : { password: outbound.password }],
                 tls: { enabled: true, certificate_path: certificate, key_path: key } };
+            if (outbound.type === 'tuic') {
+                inbound.zero_rtt_handshake = true;
+                inbound.tls.alpn = outbound.tls.alpn;
+            }
             if (outbound.obfs) inbound.obfs = structuredClone(outbound.obfs);
             const serverConfig = { log: { level: 'error' },
                 inbounds: [inbound, { type: 'mixed', tag: 'ready', listen: '127.0.0.1', listen_port: readinessPort }],

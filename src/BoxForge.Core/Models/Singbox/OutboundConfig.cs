@@ -11,6 +11,7 @@ namespace BoxForge.Models.Singbox;
 [JsonDerivedType(typeof(Hysteria2Outbound), typeDiscriminator: "hysteria2")]
 [JsonDerivedType(typeof(ShadowsocksOutbound), typeDiscriminator: "shadowsocks")]
 [JsonDerivedType(typeof(AnyTlsOutbound), typeDiscriminator: "anytls")]
+[JsonDerivedType(typeof(TuicOutbound), typeDiscriminator: "tuic")]
 public abstract record Outbound
 {
     [JsonPropertyName("tag")] public required string Tag { get; init; }
@@ -101,6 +102,18 @@ public record AnyTlsOutbound : ProxyOutbound
     [JsonPropertyName("tls")] public OutboundTls? Tls { get; init; }
 }
 
+public record TuicOutbound : ProxyOutbound
+{
+    [JsonPropertyName("uuid")] public required string Uuid { get; init; }
+    [JsonPropertyName("password")] public required string Password { get; init; }
+    [JsonPropertyName("congestion_control")] public string? CongestionControl { get; init; }
+    [JsonPropertyName("udp_relay_mode")] public string? UdpRelayMode { get; init; }
+    [JsonPropertyName("udp_over_stream")] public bool? UdpOverStream { get; init; }
+    [JsonPropertyName("zero_rtt_handshake")] public bool? ZeroRttHandshake { get; init; }
+    [JsonPropertyName("keep_alive_period")] public required string KeepAlivePeriod { get; init; }
+    [JsonPropertyName("tls")] public required OutboundTls Tls { get; init; }
+}
+
 public record Utls
 {
     [JsonPropertyName("enabled")] public bool Enabled { get; init; }
@@ -112,6 +125,7 @@ public record OutboundTls
     [JsonPropertyName("enabled")] public bool? Enabled { get; init; }
     [JsonPropertyName("server_name")] public required string ServerName { get; init; }
     [JsonPropertyName("insecure")] public bool? Insecure { get; init; }
+    [JsonPropertyName("disable_sni")] public bool? DisableSni { get; init; }
     [JsonPropertyName("certificate")] public string? Certificate { get; init; }
     [JsonPropertyName("certificate_sha256")] public List<string>? CertificateSha256 { get; init; }
     [JsonPropertyName("alpn")] public List<string>? Alpn { get; init; }
